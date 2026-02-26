@@ -19,7 +19,7 @@ st.set_page_config(
 from presentation.session_state import inicializar_estado
 from presentation.components.sidebar import render_sidebar
 
-# Importación de las Vistas 
+# Importación de las Vistas
 from presentation.views import selector_empresa
 from presentation.views import maestro_trabajadores
 from presentation.views import ingreso_asistencias
@@ -27,6 +27,19 @@ from presentation.views import calculo_mensual
 from presentation.views import parametros_legales
 from presentation.views import maestro_conceptos
 from presentation.views import emision_boletas
+
+# ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
+# Se ejecuta una sola vez por sesión de navegador para no penalizar cada clic.
+if not st.session_state.get('_tablas_verificadas'):
+    try:
+        from infrastructure.database.connection import engine, Base
+        import infrastructure.database.models  # noqa: registra todos los modelos en Base.metadata
+        Base.metadata.create_all(bind=engine)
+        st.session_state['_tablas_verificadas'] = True
+    except Exception as _err_tablas:
+        st.error(f"❌ No se pudo conectar a la base de datos: {_err_tablas}")
+        st.stop()
+# ───────────────────────────────────────────────────────────────────────────────
 
 # 2. Inyección de CSS Corporativo
 st.markdown("""
