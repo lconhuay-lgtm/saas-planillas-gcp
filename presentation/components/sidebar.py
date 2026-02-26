@@ -1,28 +1,45 @@
 import streamlit as st
-from presentation.session_state import limpiar_empresa_activa
 
 def render_sidebar():
     with st.sidebar:
-        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135679.png", width=60)
-        st.markdown("### ERP Contable")
+        st.markdown("### 💼 ERP Contable SaaS")
         st.markdown("---")
-
-        if st.session_state.get('empresa_activa_id'):
-            st.success(f"🏢 **Empresa Activa:**\n\n{st.session_state['empresa_activa_nombre']}")
-            
-            st.markdown("### Módulos")
+        
+        empresa_id = st.session_state.get('empresa_activa_id')
+        empresa_nombre = st.session_state.get('empresa_activa_nombre')
+        
+        # EL CANDADO: Si no hay empresa activa, solo mostramos el Selector
+        if not empresa_id:
+            st.warning("⚠️ Seleccione una empresa para habilitar los módulos.")
             menu = st.radio(
                 "Navegación",
-                ("Dashboard", "Parámetros Legales", "Maestro de Personal","Maestro de Conceptos" , "Ingreso de Asistencias", "Cálculo de Planilla", "Emisión de Boletas"),
+                ["Selector de Empresa"],
                 label_visibility="collapsed"
             )
-
-            st.markdown("---")
-            if st.button("🚪 Cambiar de Empresa", use_container_width=True):
-                limpiar_empresa_activa()
+            return menu
+            
+        # SI YA HAY EMPRESA: Mostramos los módulos y el botón para cambiar de empresa
+        else:
+            st.success(f"🏢 Empresa Activa:\n**{empresa_nombre}**")
+            
+            if st.button("🔄 Cambiar de Empresa", use_container_width=True):
+                # Limpiar memoria y recargar
+                st.session_state['empresa_activa_id'] = None
+                st.session_state['empresa_activa_nombre'] = None
                 st.rerun()
                 
+            st.markdown("---")
+            menu = st.radio(
+                "Navegación",
+                (
+                    "Dashboard Principal", # Aquí irán los gráficos futuros
+                    "Parámetros Legales", 
+                    "Maestro de Personal", 
+                    "Maestro de Conceptos", 
+                    "Ingreso de Asistencias", 
+                    "Cálculo de Planilla", 
+                    "Emisión de Boletas"
+                ),
+                label_visibility="collapsed"
+            )
             return menu
-        else:
-            st.warning("⚠️ Seleccione una empresa para habilitar los módulos.")
-            return "Selector"

@@ -1,7 +1,9 @@
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
+from infrastructure.database.connection import get_db
+from infrastructure.database.models import ParametroLegal
 
-# Diccionario de meses para el selector
+# Diccionario de meses para el selector (Mantenemos tu estándar)
 MESES = ["01 - Enero", "02 - Febrero", "03 - Marzo", "04 - Abril", "05 - Mayo", "06 - Junio", 
          "07 - Julio", "08 - Agosto", "09 - Septiembre", "10 - Octubre", "11 - Noviembre", "12 - Diciembre"]
 
@@ -9,81 +11,63 @@ def render():
     st.title("⚙️ Parámetros Legales y Tributarios (Globales)")
     st.markdown("""
     Configure las tasas macroeconómicas y tributarias por **Periodo (Mes/Año)**. 
-    **Importante:** Al guardar un periodo, el motor de cálculo lo utilizará para procesar las planillas exactas de ese mes, garantizando la inmutabilidad histórica.
+    **Importante:** Los datos se sincronizan con la nube para garantizar la inmutabilidad histórica.
     """)
     st.markdown("---")
 
-    # 1. Inicialización de la memoria global para Parámetros (Ahora es un Diccionario Histórico)
-    if 'parametros_globales' not in st.session_state:
-        st.session_state['parametros_globales'] = {}
-        st.session_state['periodos_configurados'] = [] # Lista para saber qué meses ya están listos
-        
-    # Valores por defecto (Fallback) en caso sea el primer mes que se configura en el sistema
-    default_p = {
-        "rmv": 1025.0, "uit": 5350.0, "tope_afp": 13583.51, "tasa_onp": 13.0, "tasa_essalud": 9.0, "tasa_eps": 6.75,
-        "afp_habitat_aporte": 10.0, "afp_habitat_prima": 1.84, "afp_habitat_flujo": 1.47, "afp_habitat_mixta": 0.23,
-        "afp_integra_aporte": 10.0, "afp_integra_prima": 1.84, "afp_integra_flujo": 1.55, "afp_integra_mixta": 0.0,
-        "afp_prima_aporte": 10.0, "afp_prima_prima": 1.84, "afp_prima_flujo": 1.60, "afp_prima_mixta": 0.18,
-        "afp_profuturo_aporte": 10.0, "afp_profuturo_prima": 1.84, "afp_profuturo_flujo": 1.69, "afp_profuturo_mixta": 0.67
-    }
+    db = next(get_db())
+    empresa_id = st.session_state.get('empresa_activa_id')
 
-    # 2. SELECTOR DE PERIODO Y COPIA RÁPIDA
+    if not empresa_id:
+        st.error("⚠️ Por favor, seleccione una empresa primero.")
+        return
+
+    # 1. SELECTOR DE PERIODO
     st.subheader("Selección de Periodo a Configurar")
-    col_m, col_a, col_btn = st.columns([2, 1, 2])
+    col_m, col_a = st.columns([2, 1])
     
-    # Por defecto, seleccionamos el mes y año actual
     mes_actual_idx = date.today().month - 1
     mes_seleccionado = col_m.selectbox("Mes", MESES, index=mes_actual_idx)
-    anio_seleccionado = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=1) # Por defecto 2026
+    anio_seleccionado = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=1)
     
-    periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}" # Genera la llave: Ej. "01-2026"
+    periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
     
-    # Lógica para identificar el mes anterior matemáticamente
+    # Identificar mes anterior para la herencia automática
     idx_sel = MESES.index(mes_seleccionado)
-    if idx_sel == 0:
-        mes_ant_key = f"12-{anio_seleccionado - 1}"
+    mes_ant_key = f"12-{anio_seleccionado-1}" if idx_sel == 0 else f"{MESES[idx_sel-1][:2]}-{anio_seleccionado}"
+
+    # 2. CONSULTA A BASE DE DATOS (Sustituye al session_state antiguo)
+    p_db = db.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+    
+    p_data = None
+    if p_db:
+        p_data = p_db
+        st.success(f"📌 Parámetros para **{periodo_key}** activos en la nube.")
     else:
-        mes_ant_key = f"{MESES[idx_sel - 1][:2]}-{anio_seleccionado}"
+        # Intentar heredar del mes anterior si el actual está vacío
+        p_heredado = db.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=mes_ant_key).first()
+        if p_heredado:
+            p_data = p_heredado
+            st.info(f"💡 Valores sugeridos heredados de {mes_ant_key}. Guarde para confirmar.")
+        else:
+            st.warning(f"📝 Configurando nuevos parámetros para el periodo **{periodo_key}**.")
 
-    with col_btn:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("📋 Copiar tasas del mes anterior", use_container_width=True, help=f"Copia las tasas de {mes_ant_key}"):
-            if mes_ant_key in st.session_state['parametros_globales']:
-                # Copiamos los datos del mes anterior al mes actual
-                st.session_state['parametros_globales'][periodo_key] = st.session_state['parametros_globales'][mes_ant_key].copy()
-                st.success(f"✅ Datos de {mes_ant_key} copiados con éxito. Revise y guarde el formulario abajo.")
-            else:
-                st.warning(f"⚠️ No hay parámetros guardados previamente para el periodo {mes_ant_key}.")
-
-    # Cargamos los datos del periodo seleccionado (o los valores por defecto si no existe)
-    p = st.session_state['parametros_globales'].get(periodo_key, default_p)
-
-    # Indicador visual de estado
-    if periodo_key in st.session_state['parametros_globales']:
-        st.success(f"📌 Los parámetros para **{periodo_key}** ya están configurados y activos. Puede editarlos si hubo cambios en la ley.")
-    else:
-        st.info(f"📝 Configurando nuevos parámetros para el periodo **{periodo_key}**.")
-
-    st.markdown("---")
-
-    # 3. FORMULARIO CORPORATIVO DE TASAS
+    # 3. FORMULARIO CORPORATIVO (Tu diseño original intacto)
     with st.form("form_parametros_globales"):
         
         st.subheader("1. Indicadores Económicos y de Salud")
         col1, col2, col3, col4 = st.columns(4)
-        rmv = col1.number_input("RMV (S/)", value=float(p.get('rmv', 1025.0)), step=10.0)
-        uit = col2.number_input("UIT (S/)", value=float(p.get('uit', 5350.0)), step=50.0)
-        tasa_essalud = col3.number_input("Tasa EsSalud (%)", value=float(p.get('tasa_essalud', 9.0)), step=0.1)
-        tasa_eps = col4.number_input("Tasa EPS (%)", value=float(p.get('tasa_eps', 6.75)), step=0.1)
+        rmv = col1.number_input("RMV (S/)", value=float(p_data.rmv if p_data else 1025.0), step=10.0)
+        uit = col2.number_input("UIT (S/)", value=float(p_data.uit if p_data else 5350.0), step=50.0)
+        t_essalud = col3.number_input("Tasa EsSalud (%)", value=float(p_data.tasa_essalud if p_data else 9.0), step=0.1)
+        t_eps = col4.number_input("Tasa EPS (%)", value=float(p_data.tasa_eps if p_data else 6.75), step=0.1)
 
-        col5, col6, col7, col8 = st.columns(4)
-        tasa_onp = col5.number_input("Tasa ONP (%)", value=float(p.get('tasa_onp', 13.0)), step=0.1)
-        tope_afp = col6.number_input("Rem. Máx. Asegurable AFP (S/)", value=float(p.get('tope_afp', 13583.51)), step=100.0)
-        
+        col5, col6 = st.columns(2)
+        t_onp = col5.number_input("Tasa ONP (%)", value=float(p_data.tasa_onp if p_data else 13.0), step=0.1)
+        t_afp_tope = col6.number_input("Rem. Máx. Asegurable AFP (S/)", value=float(p_data.tope_afp if p_data else 13583.51), step=100.0)
+
         st.markdown("<br>---", unsafe_allow_html=True)
-
         st.subheader("2. Tasas del Sistema Privado de Pensiones (AFP)")
-        # Enlace corporativo a SBS
         st.markdown(
             "<div style='margin-top: -10px; margin-bottom: 20px;'>"
             "<a href='https://www.sbs.gob.pe/app/spp/empleadores/comisiones_spp/paginas/comision_prima.aspx' "
@@ -92,7 +76,7 @@ def render():
             unsafe_allow_html=True
         )
         
-        # Cuadrícula compacta
+        # Encabezados de tabla (Tu diseño original)
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
         c_nom.markdown("<span style='font-size: 13px; color: #666; font-weight: bold;'>Entidad</span>", unsafe_allow_html=True)
         c_ap.markdown("<span style='font-size: 13px; color: #666; font-weight: bold;'>Aporte (%)</span>", unsafe_allow_html=True)
@@ -100,54 +84,62 @@ def render():
         c_fl.markdown("<span style='font-size: 13px; color: #666; font-weight: bold;'>Comis. Flujo (%)</span>", unsafe_allow_html=True)
         c_mx.markdown("<span style='font-size: 13px; color: #666; font-weight: bold;'>Comis. Mixta (%)</span>", unsafe_allow_html=True)
 
-        # HABITAT
+        # --- HABITAT ---
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
         c_nom.markdown("<br><span style='font-size: 14px; font-weight: 500;'>HABITAT</span>", unsafe_allow_html=True)
-        hab_ap = c_ap.number_input("A", value=float(p.get('afp_habitat_aporte', 10.0)), key="h1", label_visibility="collapsed")
-        hab_pr = c_pr.number_input("P", value=float(p.get('afp_habitat_prima', 1.84)), key="h2", label_visibility="collapsed")
-        hab_fl = c_fl.number_input("F", value=float(p.get('afp_habitat_flujo', 1.47)), key="h3", label_visibility="collapsed")
-        hab_mx = c_mx.number_input("M", value=float(p.get('afp_habitat_mixta', 0.23)), key="h4", label_visibility="collapsed")
+        h_ap = c_ap.number_input("A", value=float(p_data.h_ap if p_data else 10.0), key="h1", label_visibility="collapsed")
+        h_pr = c_pr.number_input("P", value=float(p_data.h_pr if p_data else 1.84), key="h2", label_visibility="collapsed")
+        h_fl = c_fl.number_input("F", value=float(p_data.h_fl if p_data else 1.47), key="h3", label_visibility="collapsed")
+        h_mx = c_mx.number_input("M", value=float(p_data.h_mx if p_data else 0.23), key="h4", label_visibility="collapsed")
 
-        # INTEGRA
+        # --- INTEGRA ---
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
         c_nom.markdown("<br><span style='font-size: 14px; font-weight: 500;'>INTEGRA</span>", unsafe_allow_html=True)
-        int_ap = c_ap.number_input("A", value=float(p.get('afp_integra_aporte', 10.0)), key="i1", label_visibility="collapsed")
-        int_pr = c_pr.number_input("P", value=float(p.get('afp_integra_prima', 1.84)), key="i2", label_visibility="collapsed")
-        int_fl = c_fl.number_input("F", value=float(p.get('afp_integra_flujo', 1.55)), key="i3", label_visibility="collapsed")
-        int_mx = c_mx.number_input("M", value=float(p.get('afp_integra_mixta', 0.0)), key="i4", label_visibility="collapsed")
+        i_ap = c_ap.number_input("A", value=float(p_data.i_ap if p_data else 10.0), key="i1", label_visibility="collapsed")
+        i_pr = c_pr.number_input("P", value=float(p_data.i_pr if p_data else 1.84), key="i2", label_visibility="collapsed")
+        i_fl = c_fl.number_input("F", value=float(p_data.i_fl if p_data else 1.55), key="i3", label_visibility="collapsed")
+        i_mx = c_mx.number_input("M", value=float(p_data.i_mx if p_data else 0.0), key="i4", label_visibility="collapsed")
 
-        # PRIMA
+        # --- PRIMA ---
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
         c_nom.markdown("<br><span style='font-size: 14px; font-weight: 500;'>PRIMA</span>", unsafe_allow_html=True)
-        pri_ap = c_ap.number_input("A", value=float(p.get('afp_prima_aporte', 10.0)), key="p1", label_visibility="collapsed")
-        pri_pr = c_pr.number_input("P", value=float(p.get('afp_prima_prima', 1.84)), key="p2", label_visibility="collapsed")
-        pri_fl = c_fl.number_input("F", value=float(p.get('afp_prima_flujo', 1.60)), key="p3", label_visibility="collapsed")
-        pri_mx = c_mx.number_input("M", value=float(p.get('afp_prima_mixta', 0.18)), key="p4", label_visibility="collapsed")
+        p_ap = c_ap.number_input("A", value=float(p_data.p_ap if p_data else 10.0), key="p1", label_visibility="collapsed")
+        p_pr = c_pr.number_input("P", value=float(p_data.p_pr if p_data else 1.84), key="p2", label_visibility="collapsed")
+        p_fl = c_fl.number_input("F", value=float(p_data.p_fl if p_data else 1.60), key="p3", label_visibility="collapsed")
+        p_mx = c_mx.number_input("M", value=float(p_data.p_mx if p_data else 0.18), key="p4", label_visibility="collapsed")
 
-        # PROFUTURO
+        # --- PROFUTURO ---
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
         c_nom.markdown("<br><span style='font-size: 14px; font-weight: 500;'>PROFUTURO</span>", unsafe_allow_html=True)
-        pro_ap = c_ap.number_input("A", value=float(p.get('afp_profuturo_aporte', 10.0)), key="pr1", label_visibility="collapsed")
-        pro_pr = c_pr.number_input("P", value=float(p.get('afp_profuturo_prima', 1.84)), key="pr2", label_visibility="collapsed")
-        pro_fl = c_fl.number_input("F", value=float(p.get('afp_profuturo_flujo', 1.69)), key="pr3", label_visibility="collapsed")
-        pro_mx = c_mx.number_input("M", value=float(p.get('afp_profuturo_mixta', 0.67)), key="pr4", label_visibility="collapsed")
+        pr_ap = c_ap.number_input("A", value=float(p_data.pr_ap if p_data else 10.0), key="pr1", label_visibility="collapsed")
+        pr_pr = c_pr.number_input("P", value=float(p_data.pr_pr if p_data else 1.84), key="pr2", label_visibility="collapsed")
+        pr_fl = c_fl.number_input("F", value=float(p_data.pr_fl if p_data else 1.69), key="pr3", label_visibility="collapsed")
+        pr_mx = c_mx.number_input("M", value=float(p_data.pr_mx if p_data else 0.67), key="pr4", label_visibility="collapsed")
 
         st.markdown("---")
         submit_btn = st.form_submit_button(f"💾 Guardar Parámetros para {periodo_key}", type="primary", use_container_width=True)
         
         if submit_btn:
-            # Guardamos la data ESPECÍFICAMENTE bajo la llave del periodo seleccionado
-            st.session_state['parametros_globales'][periodo_key] = {
-                "rmv": rmv, "uit": uit, "tope_afp": tope_afp, "tasa_onp": tasa_onp,
-                "tasa_essalud": tasa_essalud, "tasa_eps": tasa_eps,
-                "afp_habitat_aporte": hab_ap, "afp_habitat_prima": hab_pr, "afp_habitat_flujo": hab_fl, "afp_habitat_mixta": hab_mx,
-                "afp_integra_aporte": int_ap, "afp_integra_prima": int_pr, "afp_integra_flujo": int_fl, "afp_integra_mixta": int_mx,
-                "afp_prima_aporte": pri_ap, "afp_prima_prima": pri_pr, "afp_prima_flujo": pri_fl, "afp_prima_mixta": pri_mx,
-                "afp_profuturo_aporte": pro_ap, "afp_profuturo_prima": pro_pr, "afp_profuturo_flujo": pro_fl, "afp_profuturo_mixta": pro_mx
-            }
+            # Lógica de Guardado en Neon
+            if p_db: # ACTUALIZAR
+                p_db.rmv = rmv; p_db.uit = uit; p_db.tasa_essalud = t_essalud; p_db.tasa_eps = t_eps
+                p_db.tasa_onp = t_onp; p_db.tope_afp = t_afp_tope
+                p_db.h_ap = h_ap; p_db.h_pr = h_pr; p_db.h_fl = h_fl; p_db.h_mx = h_mx
+                p_db.i_ap = i_ap; p_db.i_pr = i_pr; p_db.i_fl = i_fl; p_db.i_mx = i_mx
+                p_db.p_ap = p_ap; p_db.p_pr = p_pr; p_db.p_fl = p_fl; p_db.p_mx = p_mx
+                p_db.pr_ap = pr_ap; p_db.pr_pr = pr_pr; p_db.pr_fl = pr_fl; p_db.pr_mx = pr_mx
+            else: # CREAR NUEVO
+                nuevo = ParametroLegal(
+                    empresa_id=empresa_id, periodo_key=periodo_key,
+                    rmv=rmv, uit=uit, tasa_essalud=t_essalud, tasa_eps=t_eps,
+                    tasa_onp=t_onp, tope_afp=t_afp_tope,
+                    h_ap=h_ap, h_pr=h_pr, h_fl=h_fl, h_mx=h_mx,
+                    i_ap=i_ap, i_pr=i_pr, i_fl=i_fl, i_mx=i_mx,
+                    p_ap=p_ap, p_pr=p_pr, p_fl=p_fl, p_mx=p_mx,
+                    pr_ap=pr_ap, pr_pr=pr_pr, pr_fl=pr_fl, pr_mx=pr_mx
+                )
+                db.add(nuevo)
             
-            # Registramos este periodo como configurado y recargamos para mostrar el mensaje de éxito
-            if periodo_key not in st.session_state['periodos_configurados']:
-                st.session_state['periodos_configurados'].append(periodo_key)
-            
+            db.commit()
+            st.success(f"✅ Sincronizado con éxito para el periodo {periodo_key}.")
             st.rerun()

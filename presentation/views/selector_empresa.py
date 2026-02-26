@@ -1,48 +1,92 @@
 import streamlit as st
-from presentation.session_state import set_empresa_activa
-# from infrastructure.database.db_manager import get_db_session
-# from infrastructure.repositories.repo_empresa import EmpresaRepository
+from infrastructure.database.connection import get_db
+from infrastructure.database.models import Empresa
+import datetime
 
 def render():
     st.title("🗄️ Panel de Control Multi-Empresa")
     st.markdown("Seleccione el cliente (empresa) con el que desea trabajar en esta sesión.")
     st.markdown("---")
 
-    # MOCK DE DATOS (Hasta que conectemos SQLAlchemy en vivo)
-    # En producción, esto se reemplaza por: repo.get_all()
-    empresas_mock = [
-        {"id": 1, "ruc": "20392988565", "razon_social": "CONVERSIONES SAN JOSE SAC", "regimen": "GENERAL"},
-        {"id": 2, "ruc": "20555555555", "razon_social": "TEXTILES LIMA EIRL", "regimen": "MYPE - PEQUEÑA"},
-    ]
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
+    # Conectar a la Nube (Neon)
+    db = next(get_db())
+    
+    col_lista, col_form = st.columns([2, 1])
+    
+    with col_lista:
         st.subheader("Empresas Registradas")
-        # Mostrar las empresas en formato de tarjetas corporativas
-        for emp in empresas_mock:
-            with st.container():
-                # Diseño de tarjeta usando markdown y CSS inline
-                st.markdown(f"""
-                <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 10px; background-color: #f9f9f9;">
-                    <h4 style="margin: 0; color: #1f77b4;">{emp['razon_social']}</h4>
-                    <p style="margin: 5px 0 0 0; color: #555;"><strong>RUC:</strong> {emp['ruc']} | <strong>Régimen:</strong> {emp['regimen']}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button(f"Seleccionar", key=f"btn_emp_{emp['id']}"):
-                    set_empresa_activa(emp['id'], emp['razon_social'])
-                    st.toast(f"Sesión iniciada en {emp['razon_social']}", icon="✅")
-                    st.rerun() # Recarga la app para habilitar el menú lateral
-
-    with col2:
+        
+        empresas_db = db.query(Empresa).all()
+        
+        if not empresas_db:
+            st.info("No hay empresas registradas. Utilice el panel derecho para crear la primera.")
+        else:
+            for emp in empresas_db:
+                with st.container(border=True):
+                    st.markdown(f"#### {emp.razon_social}")
+                    st.markdown(f"**RUC:** {emp.ruc} | **Régimen:** {emp.regimen_laboral}")
+                    
+                    if st.button("Seleccionar Empresa", key=f"sel_{emp.id}"):
+                        st.session_state['empresa_activa_id'] = emp.id
+                        st.session_state['empresa_activa_nombre'] = emp.razon_social
+                        st.session_state['empresa_activa_ruc'] = emp.ruc
+                        st.session_state['empresa_activa_regimen'] = emp.regimen_laboral
+                        st.session_state['empresa_acogimiento'] = emp.fecha_acogimiento
+                        st.rerun() 
+                        
+    with col_form:
         st.subheader("Nueva Empresa")
-        with st.form("form_nueva_empresa"):
-            ruc = st.text_input("RUC (11 dígitos)")
-            razon = st.text_input("Razón Social")
-            regimen = st.selectbox("Régimen Laboral", ["GENERAL", "PEQUEÑA EMPRESA", "MICROEMPRESA"])
-            submit = st.form_submit_button("➕ Registrar Empresa", use_container_width=True)
-            
-            if submit:
-                # Aquí iría la lógica de BD: repo.create(ruc, razon, regimen)
-                st.success("Empresa registrada con éxito (Simulado).")
+        
+        # Al no usar st.form, la interfaz reacciona en tiempo real a las selecciones
+        ruc = st.text_input("RUC (11 dígitos)*", max_chars=11)
+        razon_social = st.text_input("Razón Social*")
+        
+        # --- NUEVO: SELECTOR DE RÉGIMEN LABORAL ---
+        regimenes = ["Régimen General", "Régimen Especial - Micro Empresa", "Régimen Especial - Pequeña Empresa"]
+        regimen_sel = st.selectbox("Régimen Laboral*", regimenes)
+        
+        # Link sutil y profesional
+        st.markdown(
+            "<a href='https://apps.trabajo.gob.pe/consultas-remype/app/index.html' target='_blank' style='font-size: 0.85em; color: #7F8C8D; text-decoration: none;'>🔍 <i>Verificar acreditación REMYPE (MTPE)</i></a>", 
+            unsafe_allow_html=True
+        )
+        st.markdown("<br/>", unsafe_allow_html=True)
+        
+        # Lógica Condicional: Mostrar fecha solo si es MYPE
+        fecha_acogimiento_sel = None
+        if regimen_sel != "Régimen General":
+            fecha_acogimiento_sel = st.date_input("Fecha de Acogimiento al Régimen MYPE*")
+            st.caption("⚠️ Los trabajadores que ingresaron ANTES de esta fecha conservarán los beneficios del Régimen General de forma irrenunciable.")
+            st.markdown("<br/>", unsafe_allow_html=True)
+
+        representante = st.text_input("Representante Legal")
+        correo = st.text_input("Correo Electrónico")
+        domicilio = st.text_area("Domicilio Fiscal")
+        
+        st.markdown("*Campos obligatorios*")
+        
+        if st.button("➕ Registrar Empresa", type="primary", use_container_width=True):
+            if len(ruc) != 11 or not ruc.isdigit():
+                st.error("El RUC debe tener 11 números.")
+            elif not razon_social:
+                st.error("La Razón Social es obligatoria.")
+            elif regimen_sel != "Régimen General" and not fecha_acogimiento_sel:
+                st.error("Debe indicar la Fecha de Acogimiento al REMYPE.")
+            else:
+                existe = db.query(Empresa).filter(Empresa.ruc == ruc).first()
+                if existe:
+                    st.error("Ya existe una empresa con este RUC.")
+                else:
+                    nueva_emp = Empresa(
+                        ruc=ruc, 
+                        razon_social=razon_social, 
+                        representante_legal=representante, 
+                        correo_electronico=correo, 
+                        domicilio=domicilio,
+                        regimen_laboral=regimen_sel,
+                        fecha_acogimiento=fecha_acogimiento_sel
+                    )
+                    db.add(nueva_emp)
+                    db.commit()
+                    st.success("¡Empresa registrada exitosamente!")
+                    st.rerun()
