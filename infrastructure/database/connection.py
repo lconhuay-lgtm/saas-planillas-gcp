@@ -15,6 +15,9 @@ if not DATABASE_URL:
         "  - Cloud Run: usa --set-secrets=DATABASE_URL=DATABASE_URL:latest al desplegar."
     )
 
+# Limpiar espacios y saltos de línea (Secret Manager a veces los añade)
+DATABASE_URL = DATABASE_URL.strip()
+
 # Neon y otros PaaS entregan 'postgres://' pero SQLAlchemy 2.x requiere 'postgresql://'
 DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
