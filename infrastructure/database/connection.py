@@ -9,15 +9,24 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise ValueError("⚠️ ERROR: No se encontró DATABASE_URL en el archivo .env. Asegúrate de haberlo creado.")
+    raise ValueError(
+        "⚠️ ERROR CRÍTICO: DATABASE_URL no está configurado.\n"
+        "  - Local: crea un archivo .env con DATABASE_URL=postgresql://...\n"
+        "  - Cloud Run: usa --set-secrets=DATABASE_URL=DATABASE_URL:latest al desplegar."
+    )
+
+# Neon y otros PaaS entregan 'postgres://' pero SQLAlchemy 2.x requiere 'postgresql://'
+DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # 2. Crear el Motor (Engine) de SQLAlchemy
-# pool_pre_ping=True es vital para Neon: verifica que la conexión siga viva antes de enviar datos
+# pool_size reducido para Cloud Run: cada instancia crea su propio pool.
+# Con pool_size=2 y max_overflow=3 → máx 5 conexiones por instancia.
+# Usa la URL del Pooler de Neon para evitar agotar el límite de conexiones.
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=5,          # Conexiones simultáneas permitidas en este clon de la app
-    max_overflow=10       # Conexiones extra de emergencia
+    pool_size=2,
+    max_overflow=3
 )
 
 # 3. Crear la Fábrica de Sesiones
