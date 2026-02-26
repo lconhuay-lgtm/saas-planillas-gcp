@@ -8,8 +8,17 @@ psycopg2-binary>=2.9.9
 # Variables de entorno y utilidades
 python-dotenv>=1.0.1
 
-# Generación de PDFs (Lo usaremos en la Fase 4)
+# Manipulación de datos
+pandas>=2.0.0
+
+# Generación de Excel
+openpyxl>=3.1.0
+
+# Generación de PDFs
 reportlab>=4.1.0
+
+# HTTP para integración con APIs externas (SUNAT/RENIEC)
+requests>=2.31.0
 
 # Pruebas automatizadas
 pytest>=8.1.1
