@@ -1,23 +1,48 @@
 from infrastructure.database.connection import engine, Base
-from infrastructure.database.models import Empresa, Trabajador, Concepto
 
-def inicializar_base_de_datos():
+# Importar TODOS los modelos para que SQLAlchemy los registre en Base.metadata
+from infrastructure.database.models import (
+    Empresa, Trabajador, Concepto, ParametroLegal,
+    VariablesMes, PlanillaMensual
+)
+
+def inicializar_base_de_datos(forzar_recrear=False):
+    """
+    Crea las tablas en Neon si no existen.
+
+    Args:
+        forzar_recrear (bool): Si es True, BORRA y recrea todas las tablas.
+                               ⚠️ SOLO usar en entornos de desarrollo, NUNCA en producción.
+    """
     print("⏳ Conectando al servidor de Neon (PostgreSQL)...")
-    
+
     try:
-        # 1. ESTO BORRA LAS TABLAS VIEJAS (¡Cuidado en producción!)
-        print("🗑️ Borrando estructura antigua...")
-        Base.metadata.drop_all(bind=engine)
-        
-        # 2. ESTO CREA LAS TABLAS NUEVAS CON LAS NUEVAS COLUMNAS
-        print("🏗️ Construyendo nueva estructura con Régimen MYPE...")
+        if forzar_recrear:
+            print("⚠️  MODO DESTRUCTIVO: Borrando estructura antigua...")
+            print("    (Solo usar en desarrollo. En producción usa migraciones Alembic)")
+            Base.metadata.drop_all(bind=engine)
+            print("🏗️  Reconstruyendo todas las tablas...")
+        else:
+            print("🏗️  Creando tablas nuevas (las existentes no se modifican)...")
+
         Base.metadata.create_all(bind=engine)
-        
-        print("✅ ¡ÉXITO TOTAL! Las tablas han sido recreadas correctamente.")
-        print("Ahora sí verás 'regimen_laboral' y 'fecha_acogimiento' en tu BD.")
+
+        tablas = list(Base.metadata.tables.keys())
+        print(f"✅ ¡ÉXITO! Tablas verificadas/creadas: {tablas}")
+
     except Exception as e:
-        print(f"❌ Ocurrió un error al conectar o recrear las tablas:")
+        print(f"❌ Error al conectar o crear las tablas:")
         print(e)
 
+
 if __name__ == "__main__":
-    inicializar_base_de_datos()
+    import sys
+    # Pasar --reset como argumento para forzar recreación (solo desarrollo)
+    forzar = "--reset" in sys.argv
+    if forzar:
+        print("⚠️  ATENCIÓN: Se ejecutará con --reset. Esto BORRARÁ todos los datos.")
+        confirmacion = input("Escriba 'CONFIRMAR' para continuar: ")
+        if confirmacion != "CONFIRMAR":
+            print("Operación cancelada.")
+            exit()
+    inicializar_base_de_datos(forzar_recrear=forzar)

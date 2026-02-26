@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import io
@@ -12,6 +13,136 @@ from reportlab.lib.pagesizes import landscape, portrait, letter, legal
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+
+# Base de Datos Neon
+from infrastructure.database.connection import SessionLocal
+from infrastructure.database.models import Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual
+
+
+# ─── HELPERS DE BASE DE DATOS ───────────────────────────────────────────────
+
+def _cargar_parametros(db, empresa_id, periodo_key) -> dict | None:
+    """Lee los ParametroLegal de Neon y los devuelve como dict con claves compatibles."""
+    p_db = db.query(ParametroLegal).filter_by(
+        empresa_id=empresa_id, periodo_key=periodo_key
+    ).first()
+    if not p_db:
+        return None
+    return {
+        'rmv': p_db.rmv, 'uit': p_db.uit,
+        'tasa_onp': p_db.tasa_onp, 'tasa_essalud': p_db.tasa_essalud,
+        'tasa_eps': p_db.tasa_eps, 'tope_afp': p_db.tope_afp,
+        'afp_habitat_aporte': p_db.h_ap, 'afp_habitat_prima': p_db.h_pr,
+        'afp_habitat_flujo': p_db.h_fl, 'afp_habitat_mixta': p_db.h_mx,
+        'afp_integra_aporte': p_db.i_ap, 'afp_integra_prima': p_db.i_pr,
+        'afp_integra_flujo': p_db.i_fl, 'afp_integra_mixta': p_db.i_mx,
+        'afp_prima_aporte': p_db.p_ap, 'afp_prima_prima': p_db.p_pr,
+        'afp_prima_flujo': p_db.p_fl, 'afp_prima_mixta': p_db.p_mx,
+        'afp_profuturo_aporte': p_db.pr_ap, 'afp_profuturo_prima': p_db.pr_pr,
+        'afp_profuturo_flujo': p_db.pr_fl, 'afp_profuturo_mixta': p_db.pr_mx,
+    }
+
+
+def _cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
+    """Lee trabajadores activos de Neon y los devuelve como DataFrame compatible."""
+    trabajadores = (
+        db.query(Trabajador)
+        .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
+        .all()
+    )
+    rows = []
+    for t in trabajadores:
+        rows.append({
+            "Num. Doc.": t.num_doc,
+            "Nombres y Apellidos": t.nombres,
+            "Fecha Ingreso": t.fecha_ingreso,
+            "Sueldo Base": t.sueldo_base,
+            "Sistema Pensión": t.sistema_pension or "NO AFECTO",
+            "Comisión AFP": t.comision_afp or "FLUJO",
+            "Asig. Fam.": "Sí" if t.asig_fam else "No",
+            "EPS": "Sí" if t.eps else "No",
+            "CUSPP": t.cuspp or "",
+            "Cargo": t.cargo or "",
+        })
+    return pd.DataFrame(rows)
+
+
+def _cargar_variables_df(db, empresa_id, periodo_key, conceptos) -> pd.DataFrame:
+    """Lee VariablesMes de Neon y los devuelve como DataFrame compatible."""
+    variables = (
+        db.query(VariablesMes)
+        .filter_by(empresa_id=empresa_id, periodo_key=periodo_key)
+        .all()
+    )
+    concepto_nombres = [c.nombre for c in conceptos]
+    rows = []
+    for v in variables:
+        row = {
+            "Num. Doc.": v.trabajador.num_doc,
+            "Nombres y Apellidos": v.trabajador.nombres,
+            "Días Faltados": v.dias_faltados or 0,
+            "Min. Tardanza": v.min_tardanza or 0,
+            "Hrs Extras 25%": v.hrs_extras_25 or 0.0,
+            "Hrs Extras 35%": v.hrs_extras_35 or 0.0,
+        }
+        conceptos_data = json.loads(v.conceptos_json or '{}')
+        for nombre in concepto_nombres:
+            row[nombre] = conceptos_data.get(nombre, 0.0)
+        rows.append(row)
+    return pd.DataFrame(rows).fillna(0.0)
+
+
+def _cargar_conceptos_df(db, empresa_id) -> pd.DataFrame:
+    """Lee conceptos de la empresa de Neon como DataFrame compatible con el motor."""
+    conceptos = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
+    rows = []
+    for c in conceptos:
+        rows.append({
+            "Empresa_ID": empresa_id,
+            "Nombre del Concepto": c.nombre,
+            "Tipo": c.tipo,
+            "Afecto AFP/ONP": c.afecto_afp,
+            "Afecto 5ta Cat.": c.afecto_5ta,
+            "Afecto EsSalud": c.afecto_essalud,
+            "Computable CTS": c.computable_cts,
+            "Computable Grati": c.computable_grati,
+        })
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
+def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data):
+    """Guarda (upsert) el resultado de planilla en la tabla PlanillaMensual de Neon."""
+    resultado_json = df_resultados.to_json(orient='records', date_format='iso')
+    auditoria_json = json.dumps(auditoria_data, default=str)
+
+    existente = db.query(PlanillaMensual).filter_by(
+        empresa_id=empresa_id, periodo_key=periodo_key
+    ).first()
+    if existente:
+        existente.resultado_json = resultado_json
+        existente.auditoria_json = auditoria_json
+        existente.fecha_calculo = datetime.now()
+    else:
+        nueva = PlanillaMensual(
+            empresa_id=empresa_id,
+            periodo_key=periodo_key,
+            resultado_json=resultado_json,
+            auditoria_json=auditoria_json,
+        )
+        db.add(nueva)
+    db.commit()
+
+
+def _cargar_planilla_guardada(db, empresa_id, periodo_key):
+    """Recupera una planilla previamente guardada de Neon. Retorna (df, auditoria) o (None, None)."""
+    p = db.query(PlanillaMensual).filter_by(
+        empresa_id=empresa_id, periodo_key=periodo_key
+    ).first()
+    if not p:
+        return None, None
+    df = pd.read_json(io.StringIO(p.resultado_json), orient='records')
+    auditoria = json.loads(p.auditoria_json)
+    return df, auditoria
 
 MESES = ["01 - Enero", "02 - Febrero", "03 - Marzo", "04 - Abril", "05 - Mayo", "06 - Junio", 
          "07 - Julio", "08 - Agosto", "09 - Septiembre", "10 - Octubre", "11 - Noviembre", "12 - Diciembre"]
@@ -271,27 +402,46 @@ def render():
     mes_seleccionado = col_m.selectbox("Mes de Cálculo", MESES, key="calc_mes")
     anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=1, key="calc_anio")
     periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
-    mes_idx = MESES.index(mes_seleccionado) + 1 
+    mes_idx = MESES.index(mes_seleccionado) + 1
 
-    if 'parametros_globales' not in st.session_state or periodo_key not in st.session_state['parametros_globales']:
-        st.error(f"🛑 ALTO: No se han configurado los Parámetros Legales para el periodo **{periodo_key}**.")
-        return
-        
-    p = st.session_state['parametros_globales'][periodo_key]
+    # ─── LEER DATOS DESDE NEON ────────────────────────────────────────────────
+    db = SessionLocal()
+    try:
+        # 1. Parámetros Legales
+        p = _cargar_parametros(db, empresa_id, periodo_key)
+        if not p:
+            st.error(f"🛑 ALTO: No se han configurado los Parámetros Legales para el periodo **{periodo_key}**.")
+            st.info("Vaya al módulo 'Parámetros Legales' y configure las tasas para este periodo.")
+            return
 
-    if 'trabajadores_mock' not in st.session_state or st.session_state['trabajadores_mock'].empty:
-        st.warning("⚠️ Faltan datos: No hay trabajadores en el Maestro.") 
-        return
-    if 'variables_por_periodo' not in st.session_state or periodo_key not in st.session_state['variables_por_periodo']:
-        st.warning(f"⚠️ Faltan datos: No se han ingresado Asistencias para **{periodo_key}**.") 
-        return
+        # 2. Trabajadores activos
+        df_trab = _cargar_trabajadores_df(db, empresa_id)
+        if df_trab.empty:
+            st.warning("⚠️ No hay trabajadores activos registrados en el Maestro de Personal.")
+            return
 
-    df_conceptos = st.session_state.get('conceptos_mock', pd.DataFrame())
-    conceptos_empresa = df_conceptos[df_conceptos['Empresa_ID'] == empresa_id] if not df_conceptos.empty else pd.DataFrame()
+        # 3. Conceptos de la empresa
+        conceptos_list = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
+        conceptos_empresa = _cargar_conceptos_df(db, empresa_id)
 
-    df_trab = st.session_state['trabajadores_mock']
-    df_var = st.session_state['variables_por_periodo'][periodo_key]
-    df_planilla = pd.merge(df_trab, df_var, on="Num. Doc.", how="inner")
+        # 4. Variables del periodo
+        df_var = _cargar_variables_df(db, empresa_id, periodo_key, conceptos_list)
+        if df_var.empty:
+            st.warning(f"⚠️ No se han ingresado Asistencias para **{periodo_key}**.")
+            st.info("Vaya al módulo 'Ingreso de Asistencias' y guarde las variables del mes.")
+            return
+
+        # Merge principal (igual que antes)
+        df_planilla = pd.merge(df_trab, df_var, on="Num. Doc.", how="inner")
+
+        # Compatibilidad con emision_boletas.py (lee de session_state)
+        st.session_state['trabajadores_mock'] = df_trab
+        if 'variables_por_periodo' not in st.session_state:
+            st.session_state['variables_por_periodo'] = {}
+        st.session_state['variables_por_periodo'][periodo_key] = df_var
+
+    finally:
+        db.close()
 
     if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
         st.session_state['ultima_planilla_calculada'] = True 
@@ -494,6 +644,28 @@ def render():
         df_resultados = pd.concat([df_resultados, pd.DataFrame([totales])], ignore_index=True)
         st.session_state['res_planilla'] = df_resultados
         st.session_state['auditoria_data'] = auditoria_data
+
+        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
+        try:
+            db2 = SessionLocal()
+            _guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data)
+            db2.close()
+        except Exception as e:
+            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
+
+    # --- INTENTAR RECUPERAR PLANILLA GUARDADA EN NEON SI NO HAY EN SESSION ---
+    if not st.session_state.get('ultima_planilla_calculada', False):
+        try:
+            db3 = SessionLocal()
+            df_rec, aud_rec = _cargar_planilla_guardada(db3, empresa_id, periodo_key)
+            db3.close()
+            if df_rec is not None and not df_rec.empty:
+                st.session_state['res_planilla'] = df_rec
+                st.session_state['auditoria_data'] = aud_rec
+                st.session_state['ultima_planilla_calculada'] = True
+                st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
+        except Exception:
+            pass
 
     # --- RENDERIZADO VISUAL ---
     if st.session_state.get('ultima_planilla_calculada', False):

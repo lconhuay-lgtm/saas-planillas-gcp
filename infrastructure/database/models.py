@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Date, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, Boolean, Date, ForeignKey, DateTime, UniqueConstraint, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from infrastructure.database.connection import Base
@@ -105,5 +105,63 @@ class ParametroLegal(Base):
     p_ap = Column(Float); p_pr = Column(Float); p_fl = Column(Float); p_mx = Column(Float)
     # AFP PROFUTURO
     pr_ap = Column(Float); pr_pr = Column(Float); pr_fl = Column(Float); pr_mx = Column(Float)
-    
+
     fecha_registro = Column(DateTime, default=datetime.now)
+
+
+# 5. TABLA DE VARIABLES MENSUALES (Asistencias, HE, Conceptos Variables)
+class VariablesMes(Base):
+    """
+    Almacena las variables de nómina de cada trabajador por periodo.
+    Reemplaza el session_state['variables_por_periodo'] para persistencia real.
+    Los conceptos dinámicos (bonos, descuentos manuales) se almacenan como JSON.
+    """
+    __tablename__ = "variables_mes"
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'trabajador_id', 'periodo_key', name='uq_variable_mes'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    periodo_key = Column(String(10), nullable=False)  # Formato "MM-YYYY", ej: "02-2026"
+
+    # Campos fijos de tiempo
+    dias_faltados = Column(Integer, default=0)
+    min_tardanza = Column(Integer, default=0)
+    hrs_extras_25 = Column(Float, default=0.0)
+    hrs_extras_35 = Column(Float, default=0.0)
+
+    # Montos de conceptos dinámicos: {"BONO DE RIESGO": 500.0, "GRATIFICACION (JUL/DIC)": 3000.0}
+    conceptos_json = Column(Text, default='{}')
+
+    fecha_registro = Column(DateTime, default=datetime.now)
+
+    # Relaciones
+    trabajador = relationship("Trabajador", backref="variables_mes")
+    empresa = relationship("Empresa", backref="variables_mes")
+
+
+# 6. TABLA DE PLANILLAS CALCULADAS (Resultado Mensual Cerrado)
+class PlanillaMensual(Base):
+    """
+    Guarda el resultado completo del cálculo de planilla de un periodo.
+    Reemplaza el session_state['res_planilla'] para persistencia real.
+    El resultado se almacena como JSON para recuperación exacta entre sesiones.
+    """
+    __tablename__ = "planillas_mensuales"
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'periodo_key', name='uq_planilla_mes'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    periodo_key = Column(String(10), nullable=False)  # Formato "MM-YYYY"
+    fecha_calculo = Column(DateTime, default=datetime.now)
+
+    # DataFrame completo de resultados serializado como JSON
+    resultado_json = Column(Text, nullable=False)
+    # Datos de auditoría por trabajador (desglose detallado)
+    auditoria_json = Column(Text, nullable=False)
+
+    empresa = relationship("Empresa", backref="planillas")

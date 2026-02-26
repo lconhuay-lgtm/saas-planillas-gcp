@@ -1,0 +1,14 @@
+[server]
+# Cloud Run inyecta la variable PORT; Streamlit la toma del entorno
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1A365D"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+textColor = "#2C3E50"
