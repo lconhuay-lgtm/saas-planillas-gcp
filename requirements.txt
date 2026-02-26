@@ -1,0 +1,15 @@
+# Interfaz Gráfica y Web
+streamlit>=1.32.0
+
+# Base de Datos y ORM
+SQLAlchemy>=2.0.28
+psycopg2-binary>=2.9.9
+
+# Variables de entorno y utilidades
+python-dotenv>=1.0.1
+
+# Generación de PDFs (Lo usaremos en la Fase 4)
+reportlab>=4.1.0
+
+# Pruebas automatizadas
+pytest>=8.1.1
