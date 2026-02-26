@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Entornos virtuales Python (NUNCA incluir en la imagen)
+venv/
+env/
+.env
+.venv/
+anaconda3/
+
+# Archivos de caché Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Tests (no necesarios en producción)
+tests/
+
+# Archivos del IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos temporales
+*.tmp
+*.log
+
+# Streamlit cache local
+.streamlit/secrets.toml
+
+# Documentación local
+*.md

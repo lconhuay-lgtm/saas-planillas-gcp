@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import io
@@ -7,6 +8,72 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+
+from infrastructure.database.connection import SessionLocal
+from infrastructure.database.models import Trabajador, Concepto, VariablesMes, PlanillaMensual
+
+
+def _recuperar_datos_desde_neon(db, empresa_id):
+    """
+    Intenta recuperar la planilla, trabajadores y variables de Neon.
+    Retorna (df_resultados, auditoria_data, df_trab, df_var, periodo_key) o None si no hay nada.
+    """
+    # 1. Planillas disponibles para esta empresa (más reciente primero)
+    planillas = (
+        db.query(PlanillaMensual)
+        .filter_by(empresa_id=empresa_id)
+        .order_by(PlanillaMensual.fecha_calculo.desc())
+        .all()
+    )
+    if not planillas:
+        return None
+
+    return planillas  # retornamos la lista para que el usuario elija el periodo
+
+
+def _cargar_planilla_periodo(db, empresa_id, periodo_key):
+    """Carga una planilla específica de Neon y los datos de soporte."""
+    planilla = db.query(PlanillaMensual).filter_by(
+        empresa_id=empresa_id, periodo_key=periodo_key
+    ).first()
+    if not planilla:
+        return None, None, None, None
+
+    df_res = pd.read_json(io.StringIO(planilla.resultado_json), orient='records')
+    aud = json.loads(planilla.auditoria_json)
+
+    # Trabajadores con los campos que necesita generar_pdf_boletas_masivas
+    trabajadores = db.query(Trabajador).filter_by(empresa_id=empresa_id).all()
+    df_trab = pd.DataFrame([{
+        'Num. Doc.': t.num_doc,
+        'Nombres y Apellidos': t.nombres,
+        'Cargo': t.cargo or 'No especificado',
+        'Fecha Ingreso': t.fecha_ingreso,
+        'Sistema Pensión': t.sistema_pension or 'NO AFECTO',
+        'CUSPP': t.cuspp or '',
+    } for t in trabajadores])
+
+    # Variables del periodo (solo necesitamos horas extras para las boletas)
+    conceptos = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
+    variables = db.query(VariablesMes).filter_by(
+        empresa_id=empresa_id, periodo_key=periodo_key
+    ).all()
+    rows_var = []
+    for v in variables:
+        conceptos_data = json.loads(v.conceptos_json or '{}')
+        row = {
+            'Num. Doc.': v.trabajador.num_doc,
+            'Nombres y Apellidos': v.trabajador.nombres,
+            'Días Faltados': v.dias_faltados or 0,
+            'Min. Tardanza': v.min_tardanza or 0,
+            'Hrs Extras 25%': v.hrs_extras_25 or 0.0,
+            'Hrs Extras 35%': v.hrs_extras_35 or 0.0,
+        }
+        row.update(conceptos_data)
+        rows_var.append(row)
+    df_var = pd.DataFrame(rows_var).fillna(0.0) if rows_var else pd.DataFrame()
+
+    return df_res, aud, df_trab, df_var
 
 def generar_pdf_boletas_masivas(empresa_nombre, periodo, df_resultados, df_trabajadores, df_variables, auditoria_data):
     """Genera un PDF con boletas a página completa (Puede recibir 1 o N trabajadores)"""
@@ -217,20 +284,64 @@ def render():
         st.error("⚠️ Acceso denegado. Seleccione una empresa en el Dashboard.")
         return
 
-    if 'res_planilla' not in st.session_state or st.session_state['res_planilla'].empty:
-        st.warning("⚠️ No se ha detectado ninguna planilla calculada en la memoria actual.")
-        st.info("Vaya al módulo 'Cálculo de Planilla', seleccione un periodo y presione 'Ejecutar Motor de Planilla' primero.")
+    db = SessionLocal()
+    try:
+        # ── RECUPERAR PLANILLA: session_state tiene prioridad, Neon es el respaldo ──
+        hay_planilla_en_sesion = (
+            'res_planilla' in st.session_state
+            and not st.session_state.get('res_planilla', pd.DataFrame()).empty
+        )
+
+        if hay_planilla_en_sesion:
+            # Datos ya en memoria (misma sesión de navegador)
+            df_resultados = st.session_state['res_planilla']
+            auditoria_data = st.session_state.get('auditoria_data', {})
+            periodo_key = list(auditoria_data.values())[0]['periodo'] if auditoria_data else "Desconocido"
+            df_trab = st.session_state.get('trabajadores_mock', pd.DataFrame())
+            df_var = st.session_state.get('variables_por_periodo', {}).get(periodo_key, pd.DataFrame())
+
+            # Si df_trab o df_var están vacíos, cargarlos de Neon como respaldo
+            if df_trab.empty or df_var.empty:
+                df_res_db, aud_db, df_trab, df_var = _cargar_planilla_periodo(db, empresa_id, periodo_key)
+        else:
+            # Sin sesión activa: recuperar de Neon y mostrar selector de periodo
+            planillas = _recuperar_datos_desde_neon(db, empresa_id)
+            if not planillas:
+                st.warning("⚠️ No hay planillas calculadas para esta empresa.")
+                st.info("Vaya al módulo 'Cálculo de Planilla', seleccione un periodo y ejecute el motor primero.")
+                return
+
+            periodos_disponibles = [p.periodo_key for p in planillas]
+            st.info("📂 Sesión reiniciada. Seleccione el periodo a emitir:")
+            periodo_key = st.selectbox(
+                "Periodos con planilla calculada:", periodos_disponibles,
+                key="emision_periodo_sel"
+            )
+
+            df_resultados, auditoria_data, df_trab, df_var = _cargar_planilla_periodo(
+                db, empresa_id, periodo_key
+            )
+            if df_resultados is None:
+                st.error(f"No se pudo cargar la planilla del periodo {periodo_key}.")
+                return
+
+            # Restaurar session_state para consistencia
+            st.session_state['res_planilla'] = df_resultados
+            st.session_state['auditoria_data'] = auditoria_data
+            st.session_state['trabajadores_mock'] = df_trab
+            if 'variables_por_periodo' not in st.session_state:
+                st.session_state['variables_por_periodo'] = {}
+            st.session_state['variables_por_periodo'][periodo_key] = df_var
+
+    except Exception as e:
+        st.error(f"Error al conectar con la base de datos: {e}")
+        db.close()
         return
 
-    df_resultados = st.session_state['res_planilla']
-    auditoria_data = st.session_state.get('auditoria_data', {})
-    
-    periodo_key = list(auditoria_data.values())[0]['periodo'] if auditoria_data else "Desconocido"
+    db.close()
 
-    st.success(f"✅ Planilla procesada detectada: **Periodo {periodo_key}** lista para emisión.")
-    
-    df_trab = st.session_state.get('trabajadores_mock', pd.DataFrame())
-    df_var = st.session_state.get('variables_por_periodo', {}).get(periodo_key, pd.DataFrame())
+    st.success(f"✅ Planilla del periodo **{periodo_key}** lista para emisión.")
+    st.markdown(f"**Empresa:** {empresa_nombre}")
 
     # --- PANEL DE DISTRIBUCIÓN MULTICANAL ---
     st.markdown("### 📄 Centro de Distribución de Documentos")
