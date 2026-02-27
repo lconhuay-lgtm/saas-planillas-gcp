@@ -546,10 +546,52 @@ def render():
     finally:
         db.close()
 
-    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
-        st.session_state['ultima_planilla_calculada'] = True 
+    # ── VERIFICAR ESTADO DE CIERRE ─────────────────────────────────────────
+    es_cerrada = False
+    try:
+        db_ck = SessionLocal()
+        plan_ck = db_ck.query(PlanillaMensual).filter_by(
+            empresa_id=empresa_id, periodo_key=periodo_key
+        ).first()
+        db_ck.close()
+        if plan_ck and getattr(plan_ck, 'estado', 'ABIERTA') == 'CERRADA':
+            es_cerrada = True
+    except Exception:
+        pass
+
+    if es_cerrada:
+        st.error(f"🔒 La planilla del periodo **{periodo_key}** ya fue CERRADA y contabilizada. Vaya al final de la página para reabrirla si tiene permisos de Supervisor.")
+    elif st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
+        st.session_state['ultima_planilla_calculada'] = True
         resultados = []
-        auditoria_data = {} 
+        auditoria_data = {}
+
+        # Cargar historial de quinta categoría de periodos anteriores del mismo año
+        historico_quinta: dict = {}
+        try:
+            db_hq = SessionLocal()
+            for mes_ant in range(1, mes_idx):
+                periodo_ant = f"{mes_ant:02d}-{anio_seleccionado}"
+                plan_ant = db_hq.query(PlanillaMensual).filter_by(
+                    empresa_id=empresa_id, periodo_key=periodo_ant
+                ).first()
+                if plan_ant:
+                    try:
+                        aud_ant = json.loads(plan_ant.auditoria_json or '{}')
+                        for dni_ant, data_ant in aud_ant.items():
+                            q_ant = data_ant.get('quinta', {})
+                            b = float(q_ant.get('base_mes', 0.0))
+                            r = float(q_ant.get('retencion', 0.0))
+                            if b > 0 or r > 0:
+                                if dni_ant not in historico_quinta:
+                                    historico_quinta[dni_ant] = {'rem_previa': 0.0, 'ret_previa': 0.0}
+                                historico_quinta[dni_ant]['rem_previa'] += b
+                                historico_quinta[dni_ant]['ret_previa'] += r
+                    except Exception:
+                        pass
+            db_hq.close()
+        except Exception:
+            pass
 
         for index, row in df_planilla.iterrows():
             dni_trabajador = row['Num. Doc.']
@@ -595,11 +637,13 @@ def render():
 
             dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
 
-            # Asig. familiar: se paga si hubo al menos 1 día remunerado.
+            # Asig. familiar: se paga solo si hay sueldo computable > 0 y al menos 1 día remunerado.
             # Códigos remunerados (no descuentan asig.fam): 20=Desc.Médico, 23=Vacaciones, 25=Lic.c/Goce
             _COD_REM = {"20", "23", "25"}
             dias_remunerados = dias_laborados + sum(int(susp_dict.get(c, 0)) for c in _COD_REM)
-            tiene_asig_fam = row.get('Asig. Fam.', "No") == "Sí" and dias_remunerados > 0
+            tiene_asig_fam = (row.get('Asig. Fam.', "No") == "Sí"
+                              and sueldo_computable > 0
+                              and dias_remunerados > 0)
             monto_asig_fam = (p['rmv'] * 0.10) if tiene_asig_fam else 0.0
 
             pago_he_25 = float(row.get('Hrs Extras 25%', 0.0)) * (valor_hora * 1.25)
@@ -687,8 +731,9 @@ def render():
             # --- RENTA 5TA CATEGORÍA (Redondeo Entero PLAME) ---
             uit = p['uit']
             meses_restantes = 12 - mes_idx
-            rem_previa_historica = 0.0
-            retencion_previa_historica = 0.0
+            hist_q = historico_quinta.get(str(dni_trabajador), {})
+            rem_previa_historica = hist_q.get('rem_previa', 0.0)
+            retencion_previa_historica = hist_q.get('ret_previa', 0.0)
             proyeccion_gratis = 0.0
             if mes_idx <= 6: proyeccion_gratis = base_quinta_mes * 2 * 1.09 
             elif mes_idx <= 11: proyeccion_gratis = base_quinta_mes * 1 * 1.09 
