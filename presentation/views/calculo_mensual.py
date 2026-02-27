@@ -1,4 +1,5 @@
 import json
+import calendar
 import streamlit as st
 import pandas as pd
 import io
@@ -282,13 +283,21 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
     # Cabeceras más cortas para encabezado (wrapeadas con Paragraph)
     hdr_style = ParagraphStyle('HDR', fontName="Helvetica-Bold", fontSize=6.5,
                                textColor=colors.white, alignment=1, leading=8)
+    p_nom_style = ParagraphStyle('NOM', fontName="Helvetica", fontSize=6.5,
+                                 textColor=colors.black, alignment=0, leading=8, wordWrap='LTR')
+    # Índice de la columna "Apellidos y Nombres" para aplicar word-wrap
+    nom_idx = cols_mostrar.index("Apellidos y Nombres") if "Apellidos y Nombres" in cols_mostrar else -1
     data_rows = [[Paragraph(c, hdr_style) for c in cols_mostrar]]
 
     for _, row in df.iterrows():
         fila = []
-        for val in row:
-            if isinstance(val, float): fila.append(f"{val:,.2f}")
-            else:                       fila.append(str(val) if str(val) != "nan" else "")
+        for i, val in enumerate(row):
+            if i == nom_idx:
+                fila.append(Paragraph(str(val) if str(val) != "nan" else "", p_nom_style))
+            elif isinstance(val, float):
+                fila.append(f"{val:,.2f}")
+            else:
+                fila.append(str(val) if str(val) != "nan" else "")
         data_rows.append(fila)
 
     t = Table(data_rows, colWidths=col_w, repeatRows=1)
@@ -553,13 +562,19 @@ def render():
                 mes_calc  = int(mes_seleccionado[:2])
                 anio_calc = int(anio_seleccionado)
 
-                dias_computables = 30
+                dias_del_mes = calendar.monthrange(anio_calc, mes_calc)[1]
+                dias_computables = dias_del_mes
                 if fecha_ingreso.year == anio_calc and fecha_ingreso.month == mes_calc:
-                    dias_computables = max(0, min(30, 30 - fecha_ingreso.day + 1))
+                    dias_computables = max(0, dias_del_mes - fecha_ingreso.day + 1)
                 elif fecha_ingreso.year > anio_calc or (fecha_ingreso.year == anio_calc and fecha_ingreso.month > mes_calc):
                     dias_computables = 0
             except Exception:
+                dias_del_mes = 30
                 dias_computables = 30
+
+            # Trabajador aún no ingresa en este periodo — omitir completamente
+            if dias_computables == 0:
+                continue
 
             # Suspensiones desde suspensiones_json; fallback a Días Faltados
             susp_raw = str(row.get('suspensiones_json', '{}') or '{}')
@@ -571,33 +586,40 @@ def render():
             dias_laborados    = max(0, int(dias_computables) - int(total_ausencias))
             horas_ordinarias  = int(dias_laborados * horas_jornada)
 
-            sueldo_base_nominal      = float(row['Sueldo Base'])
-            valor_dia                = sueldo_base_nominal / 30
-            valor_hora               = valor_dia / horas_jornada
-            sueldo_base_proporcional = valor_dia * dias_computables
+            sueldo_base_nominal = float(row['Sueldo Base'])
+            valor_dia           = sueldo_base_nominal / dias_del_mes
+            valor_hora          = valor_dia / horas_jornada
 
-            dscto_faltas    = float(total_ausencias) * valor_dia
+            # Sueldo proporcional a días efectivamente laborados (ausencias ya descuentan días)
+            sueldo_computable = max(0.0, valor_dia * dias_laborados)
+
             dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
-            sueldo_computable = max(0.0, sueldo_base_proporcional - dscto_faltas - dscto_tardanzas)
 
-            monto_asig_fam = (p['rmv'] * 0.10) if row.get('Asig. Fam.', "No") == "Sí" else 0.0
+            # Asig. familiar: se paga si hubo al menos 1 día remunerado.
+            # Códigos remunerados (no descuentan asig.fam): 20=Desc.Médico, 23=Vacaciones, 25=Lic.c/Goce
+            _COD_REM = {"20", "23", "25"}
+            dias_remunerados = dias_laborados + sum(int(susp_dict.get(c, 0)) for c in _COD_REM)
+            tiene_asig_fam = row.get('Asig. Fam.', "No") == "Sí" and dias_remunerados > 0
+            monto_asig_fam = (p['rmv'] * 0.10) if tiene_asig_fam else 0.0
+
             pago_he_25 = float(row.get('Hrs Extras 25%', 0.0)) * (valor_hora * 1.25)
             pago_he_35 = float(row.get('Hrs Extras 35%', 0.0)) * (valor_hora * 1.35)
 
-            ingresos_totales = sueldo_computable + monto_asig_fam + pago_he_25 + pago_he_35
-            descuentos_manuales = dscto_faltas + dscto_tardanzas 
-            base_afp_onp = ingresos_totales
-            base_essalud = ingresos_totales
-            base_quinta_mes = ingresos_totales
-            
+            ingresos_totales    = sueldo_computable + monto_asig_fam + pago_he_25 + pago_he_35
+            # Solo tardanzas como descuento manual; las faltas ya reducen sueldo_computable
+            descuentos_manuales = dscto_tardanzas
+            base_afp_onp        = ingresos_totales
+            base_essalud        = ingresos_totales
+            base_quinta_mes     = ingresos_totales
+
             desglose_ingresos = {
-                f"Sueldo Base ({int(dias_computables)} días)": round(sueldo_computable, 2),
+                f"Sueldo Base ({int(dias_laborados)} días)": round(sueldo_computable, 2),
                 "Asignación Familiar": round(monto_asig_fam, 2),
                 "Horas Extras": round(pago_he_25 + pago_he_35, 2)
             }
-            desglose_descuentos = {
-                "Inasistencias/Tardanzas": round(descuentos_manuales, 2)
-            }
+            desglose_descuentos = {}
+            if dscto_tardanzas > 0:
+                desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
             # --- CONCEPTOS DINÁMICOS Y GRATIFICACIONES ---
             monto_grati = float(row.get('GRATIFICACION (JUL/DIC)', 0.0))

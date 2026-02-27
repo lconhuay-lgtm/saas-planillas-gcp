@@ -124,7 +124,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
     styles = getSampleStyleSheet()
 
     # Estilos tipográficos
-    st_emp  = ParagraphStyle('Emp',  fontName="Helvetica-Bold",   fontSize=15, textColor=C_NAVY,  spaceAfter=1, leading=18)
+    st_emp  = ParagraphStyle('Emp',  fontName="Helvetica-Bold",   fontSize=15, textColor=C_WHITE, spaceAfter=1, leading=18)
     st_sub  = ParagraphStyle('Sub',  fontName="Helvetica",        fontSize=8,  textColor=C_GRAY,  spaceAfter=0, leading=11)
     st_tit  = ParagraphStyle('Tit',  fontName="Helvetica-Bold",   fontSize=12, textColor=C_NAVY,  alignment=TA_CENTER, spaceAfter=2)
     st_per  = ParagraphStyle('Per',  fontName="Helvetica",        fontSize=10, textColor=C_STEEL, alignment=TA_CENTER, spaceAfter=0)
@@ -198,8 +198,10 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
         elements.append(Spacer(1, 8))
 
         # ── C. DATOS DEL TRABAJADOR ─────────────────────────────────────────
+        st_val_wrap = ParagraphStyle('ValW', fontName="Helvetica", fontSize=8,
+                                     textColor=colors.black, leading=10, wordWrap='LTR')
         info_data = [
-            ["TRABAJADOR",     nombre,           "DOC. IDENTIDAD", dni],
+            ["TRABAJADOR",     Paragraph(nombre, st_val_wrap), "DOC. IDENTIDAD", dni],
             ["CARGO",          cargo,            "FECHA INGRESO",  fecha_ingreso],
             ["SIST. PENSIÓN",  sistema_pension,  "CUSPP",          cuspp],
             ["SEGURO SOCIAL",  seg_label,        "APORTE EMP.",    f"S/ {aporte_seg:,.2f}"],
@@ -342,7 +344,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             ('BOX',           (0,0), (-1,-1), 1, C_STEEL),
         ]))
         elements.append(t_neto)
-        elements.append(Spacer(1, 50))
+        elements.append(Spacer(1, 80))
 
         # ── G. FIRMAS ────────────────────────────────────────────────────────
         sig_data = [
