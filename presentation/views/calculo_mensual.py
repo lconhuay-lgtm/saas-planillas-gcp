@@ -245,9 +245,9 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
     C_LIGHT = colors.HexColor("#F0F4F9")
     C_GRAY  = colors.HexColor("#64748B")
 
-    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY, spaceAfter=1)
+    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY, spaceAfter=6)
     st_sub   = ParagraphStyle('S', fontName="Helvetica",      fontSize=9,  textColor=C_GRAY, spaceAfter=1)
-    st_head  = ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=10, textColor=C_STEEL, spaceAfter=8)
+    st_head  = ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=10, textColor=C_STEEL, spaceAfter=8, spaceBefore=4)
 
     fecha_calc = datetime.now().strftime("%d/%m/%Y %H:%M")
     ruc_line = f"  |  RUC: {empresa_ruc}" if empresa_ruc else ""
@@ -850,3 +850,82 @@ def render():
                         mime="application/pdf",
                         type="primary"
                     )
+
+        # ── CIERRE DE PLANILLA ────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### 🔒 Cierre de Planilla")
+
+        estado_actual = "ABIERTA"
+        planilla_db_cierre = None
+        try:
+            db_c = SessionLocal()
+            planilla_db_cierre = db_c.query(PlanillaMensual).filter_by(
+                empresa_id=empresa_id, periodo_key=periodo_key
+            ).first()
+            db_c.close()
+            if planilla_db_cierre:
+                estado_actual = getattr(planilla_db_cierre, 'estado', 'ABIERTA') or 'ABIERTA'
+        except Exception:
+            pass
+
+        _PIN_SUPERVISOR = "SUPERVISOR"  # PIN por defecto (configurable en producción)
+
+        if estado_actual == "CERRADA":
+            cerrada_por  = getattr(planilla_db_cierre, 'cerrada_por', '') or ''
+            fecha_cierre = getattr(planilla_db_cierre, 'fecha_cierre', None)
+            fecha_str    = fecha_cierre.strftime("%d/%m/%Y %H:%M") if fecha_cierre else ''
+            st.error(f"**PLANILLA CERRADA** — Responsable: {cerrada_por}  |  Fecha: {fecha_str}")
+            st.info("Esta planilla no puede modificarse. Para reabrirla ingrese la clave de supervisor.")
+            col_re1, col_re2 = st.columns([2, 1])
+            with col_re1:
+                pin_re = st.text_input("Clave Supervisor:", type="password", key="pin_reabrir")
+            with col_re2:
+                st.write("")
+                st.write("")
+                if st.button("🔓 Reabrir Planilla", use_container_width=True):
+                    if pin_re == _PIN_SUPERVISOR:
+                        try:
+                            db_up = SessionLocal()
+                            p = db_up.query(PlanillaMensual).filter_by(
+                                empresa_id=empresa_id, periodo_key=periodo_key
+                            ).first()
+                            p.estado = "ABIERTA"
+                            p.cerrada_por = None
+                            p.fecha_cierre = None
+                            db_up.commit()
+                            db_up.close()
+                            st.success("Planilla reabierta correctamente.")
+                            st.rerun()
+                        except Exception as e_re:
+                            st.error(f"Error al reabrir: {e_re}")
+                    else:
+                        st.error("Clave incorrecta.")
+        else:
+            st.info("La planilla está **ABIERTA**. Puede recalcularse hasta que sea cerrada.")
+            with st.expander("Cerrar Planilla (requiere autorización de supervisor)"):
+                st.warning("Al cerrar la planilla quedará bloqueada. Solo un supervisor podrá reabrirla.")
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    responsable = st.text_input("Nombre del responsable que cierra:", key="resp_cierre")
+                with col_c2:
+                    pin_cierre = st.text_input("Clave Supervisor:", type="password", key="pin_cierre")
+                if st.button("Confirmar Cierre de Planilla", type="primary"):
+                    if not responsable:
+                        st.error("Ingrese el nombre del responsable.")
+                    elif pin_cierre != _PIN_SUPERVISOR:
+                        st.error("Clave de supervisor incorrecta.")
+                    else:
+                        try:
+                            db_up = SessionLocal()
+                            p = db_up.query(PlanillaMensual).filter_by(
+                                empresa_id=empresa_id, periodo_key=periodo_key
+                            ).first()
+                            p.estado = "CERRADA"
+                            p.cerrada_por = responsable
+                            p.fecha_cierre = datetime.now()
+                            db_up.commit()
+                            db_up.close()
+                            st.success(f"Planilla {periodo_key} cerrada por {responsable}.")
+                            st.rerun()
+                        except Exception as e_cl:
+                            st.error(f"Error al cerrar: {e_cl}")

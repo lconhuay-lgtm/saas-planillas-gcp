@@ -27,6 +27,7 @@ from presentation.views import calculo_mensual
 from presentation.views import parametros_legales
 from presentation.views import maestro_conceptos
 from presentation.views import emision_boletas
+from presentation.views import reporteria
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 # Se ejecuta una sola vez por sesión de navegador para no penalizar cada clic.
@@ -39,6 +40,9 @@ if not st.session_state.get('_tablas_verificadas'):
         # Migraciones incrementales: añaden columnas nuevas sin borrar datos
         _migraciones = [
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
+            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS estado VARCHAR(10) DEFAULT 'ABIERTA'",
+            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS cerrada_por VARCHAR(100)",
+            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS fecha_cierre TIMESTAMP",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -100,3 +104,6 @@ elif vista_actual == "Maestro de Conceptos":
     
 elif vista_actual == "Emisión de Boletas":
     emision_boletas.render()
+
+elif vista_actual == "Reportería":
+    reporteria.render()

@@ -166,4 +166,9 @@ class PlanillaMensual(Base):
     # Datos de auditoría por trabajador (desglose detallado)
     auditoria_json = Column(Text, nullable=False)
 
+    # Cierre de planilla
+    estado      = Column(String(10), default="ABIERTA")   # ABIERTA | CERRADA
+    cerrada_por = Column(String(100), nullable=True)
+    fecha_cierre = Column(DateTime, nullable=True)
+
     empresa = relationship("Empresa", backref="planillas")
