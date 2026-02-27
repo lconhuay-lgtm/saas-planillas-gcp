@@ -1,6 +1,7 @@
 import json
 import streamlit as st
 import pandas as pd
+from sqlalchemy import or_
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Concepto, VariablesMes, PlanillaMensual
 from core.domain.catalogos_sunat import CATALOGO_T21_SUSPENSIONES
@@ -53,26 +54,31 @@ def render():
 
     db = SessionLocal()
     try:
-        trabajadores = db.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO").all()
-        if not trabajadores:
-            st.warning("No hay trabajadores activos. Vaya al Maestro de Personal.")
-            return
+        # ── Separar empleados de planilla y locadores ─────────────────────────
+        planilleros = (
+            db.query(Trabajador)
+            .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
+            .filter(or_(Trabajador.tipo_contrato == 'PLANILLA', Trabajador.tipo_contrato == None))
+            .all()
+        )
+        locadores = (
+            db.query(Trabajador)
+            .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato='LOCADOR')
+            .all()
+        )
 
-        conceptos       = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
-        conceptos_ing   = [c for c in conceptos if c.tipo == "INGRESO"   and c.nombre not in CONCEPTOS_FIJOS]
-        conceptos_desc  = [c for c in conceptos if c.tipo == "DESCUENTO"]
+        # Conceptos dinámicos de la empresa (para planilla)
+        conceptos      = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
+        conceptos_ing  = [c for c in conceptos if c.tipo == "INGRESO"  and c.nombre not in CONCEPTOS_FIJOS]
+        conceptos_desc = [c for c in conceptos if c.tipo == "DESCUENTO"]
 
+        # Variables del periodo (cubre planilleros y locadores)
         variables_exist = {
             v.trabajador_id: v
             for v in db.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).all()
         }
 
-        conceptos_vals = {}
-        for t in trabajadores:
-            v = variables_exist.get(t.id)
-            conceptos_vals[t.id] = json.loads(v.conceptos_json) if v else {}
-
-        # Verificar si el periodo está cerrado
+        # Estado de cierre del periodo
         planilla_estado = db.query(PlanillaMensual).filter_by(
             empresa_id=empresa_id, periodo_key=periodo_key
         ).first()
@@ -85,168 +91,274 @@ def render():
         else:
             st.success(f"Nueva hoja de variables para **{periodo_key}**.")
 
-        ids    = [t.id    for t in trabajadores]
-        docs   = [t.num_doc for t in trabajadores]
-        nombres = [t.nombres for t in trabajadores]
+        # ── Dos pestañas principales ──────────────────────────────────────────
+        tab_plan, tab_loc = st.tabs([
+            "📋 1. Planilla de Empleados (5ta Categoría)",
+            "🧾 2. Valorización de Locadores (4ta Categoría)",
+        ])
 
-        def get_v(t_id, field, default):
-            v = variables_exist.get(t_id)
-            return getattr(v, field, default) if v else default
-
-        def get_susp(t_id, cod):
-            v = variables_exist.get(t_id)
-            if v:
-                susp = json.loads(getattr(v, 'suspensiones_json', '{}') or '{}')
-                # Fallback a dias_faltados en código 07 si suspensiones vacío
-                if not susp and cod == "07":
-                    return getattr(v, 'dias_faltados', 0) or 0
-                return susp.get(cod, 0)
-            return 0
-
-        # ── SECCIÓN A: TIEMPOS ────────────────────────────────────────────────
-        df_t_data: dict = {
-            "Trabajador_ID":       ids,
-            "Num. Doc.":           docs,
-            "Nombres y Apellidos": nombres,
-        }
-        for cod, etq in SUSPENSIONES_GRILLA:
-            df_t_data[etq] = [get_susp(t.id, cod) for t in trabajadores]
-        df_t_data["Min. Tardanza"]  = [get_v(t.id, 'min_tardanza', 0)    for t in trabajadores]
-        df_t_data["Hrs Extras 25%"] = [get_v(t.id, 'hrs_extras_25', 0.0) for t in trabajadores]
-        df_t_data["Hrs Extras 35%"] = [get_v(t.id, 'hrs_extras_35', 0.0) for t in trabajadores]
-        df_tiempos = pd.DataFrame(df_t_data)
-
-        # ── SECCIÓN B: INGRESOS VARIABLES ─────────────────────────────────────
-        dict_i = {"Num. Doc.": docs, "Nombres y Apellidos": nombres,
-                  "Sueldo Base": [t.sueldo_base for t in trabajadores],
-                  "Asig. Fam.": ["Sí" if t.asig_fam else "No" for t in trabajadores]}
-        for c in conceptos_ing:
-            dict_i[c.nombre] = [conceptos_vals[t.id].get(c.nombre, 0.0) for t in trabajadores]
-        df_ingresos = pd.DataFrame(dict_i)
-
-        # ── SECCIÓN C: DESCUENTOS ─────────────────────────────────────────────
-        dict_d = {"Num. Doc.": docs, "Nombres y Apellidos": nombres}
-        for c in conceptos_desc:
-            dict_d[c.nombre] = [conceptos_vals[t.id].get(c.nombre, 0.0) for t in trabajadores]
-        df_descuentos = pd.DataFrame(dict_d)
-
-        doc_to_id = {t.num_doc: t.id for t in trabajadores}
-
-        col_cfg_t = {"Trabajador_ID": None,
-                     "Min. Tardanza":  st.column_config.NumberColumn(min_value=0, step=1),
-                     "Hrs Extras 25%": st.column_config.NumberColumn(min_value=0.0, step=0.5, format="%.1f"),
-                     "Hrs Extras 35%": st.column_config.NumberColumn(min_value=0.0, step=0.5, format="%.1f")}
-        for _, etq in SUSPENSIONES_GRILLA:
-            col_cfg_t[etq] = st.column_config.NumberColumn(min_value=0, max_value=31, step=1,
-                                                            help=f"Código SUNAT: {_COL_A_COD[etq]}")
-
-        col_cfg_ing  = {c.nombre: st.column_config.NumberColumn(
-                            label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
-                        for c in conceptos_ing}
-        col_cfg_desc = {c.nombre: st.column_config.NumberColumn(
-                            label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
-                        for c in conceptos_desc}
-
-        tab_t, tab_i, tab_d = st.tabs(["Tiempos y Asistencias", "Ingresos Variables", "Descuentos Directos"])
-
-        with tab_t:
-            st.caption(
-                "**Tipos de suspensión SUNAT** — Faltas Injust.(07) · Desc.Médico(20) · "
-                "Vacaciones(23) · Lic.s/Haber(16). Para otros tipos use el campo libre abajo."
-            )
-            df_t_edit = st.data_editor(
-                df_tiempos,
-                disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos"],
-                num_rows="fixed", use_container_width=True, hide_index=True,
-                column_config=col_cfg_t, key="ed_tiempos",
-            )
-            if not es_cerrada:
-                st.markdown("**Suspensiones adicionales** (código libre Tabla 21 SUNAT):")
-                col_aux1, col_aux2 = st.columns([1, 3])
-                with col_aux1:
-                    opciones_susp = [f"{k} — {v}" for k, v in sorted(CATALOGO_T21_SUSPENSIONES.items())]
-                    cod_extra = st.selectbox("Tipo adicional:", opciones_susp, key="susp_extra_cod")
-                with col_aux2:
-                    st.caption("Días para este tipo se ingresarán en la grilla como columna extra en el próximo guardado.")
-
-        with tab_i:
-            df_i_edit = st.data_editor(
-                df_ingresos,
-                disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos", "Sueldo Base", "Asig. Fam."],
-                num_rows="fixed", use_container_width=True, hide_index=True,
-                column_config=col_cfg_ing, key="ed_ingresos",
-            )
-
-        with tab_d:
-            if not conceptos_desc:
-                st.info("No hay conceptos de descuento. Agrégelos en el Maestro de Conceptos.")
-                df_d_edit = df_descuentos
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 1 — PLANILLA DE EMPLEADOS
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_plan:
+            if not planilleros:
+                st.info("No hay empleados de planilla activos. Registre trabajadores con tipo 'Planilla (5ta Categoría)' en el Maestro de Personal.")
             else:
-                df_d_edit = st.data_editor(
-                    df_descuentos,
-                    disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos"],
+                conceptos_vals = {}
+                for t in planilleros:
+                    v = variables_exist.get(t.id)
+                    conceptos_vals[t.id] = json.loads(v.conceptos_json) if v else {}
+
+                def get_v(t_id, field, default):
+                    v = variables_exist.get(t_id)
+                    return getattr(v, field, default) if v else default
+
+                def get_susp(t_id, cod):
+                    v = variables_exist.get(t_id)
+                    if v:
+                        susp = json.loads(getattr(v, 'suspensiones_json', '{}') or '{}')
+                        if not susp and cod == "07":
+                            return getattr(v, 'dias_faltados', 0) or 0
+                        return susp.get(cod, 0)
+                    return 0
+
+                ids     = [t.id      for t in planilleros]
+                docs    = [t.num_doc for t in planilleros]
+                nombres = [t.nombres for t in planilleros]
+
+                # ── Sección A: TIEMPOS ────────────────────────────────────────
+                df_t_data: dict = {
+                    "Trabajador_ID":       ids,
+                    "Num. Doc.":           docs,
+                    "Nombres y Apellidos": nombres,
+                }
+                for cod, etq in SUSPENSIONES_GRILLA:
+                    df_t_data[etq] = [get_susp(t.id, cod) for t in planilleros]
+                df_t_data["Min. Tardanza"]  = [get_v(t.id, 'min_tardanza', 0)    for t in planilleros]
+                df_t_data["Hrs Extras 25%"] = [get_v(t.id, 'hrs_extras_25', 0.0) for t in planilleros]
+                df_t_data["Hrs Extras 35%"] = [get_v(t.id, 'hrs_extras_35', 0.0) for t in planilleros]
+                df_tiempos = pd.DataFrame(df_t_data)
+
+                # ── Sección B: INGRESOS VARIABLES ─────────────────────────────
+                dict_i = {"Num. Doc.": docs, "Nombres y Apellidos": nombres,
+                          "Sueldo Base": [t.sueldo_base for t in planilleros],
+                          "Asig. Fam.": ["Sí" if t.asig_fam else "No" for t in planilleros]}
+                for c in conceptos_ing:
+                    dict_i[c.nombre] = [conceptos_vals[t.id].get(c.nombre, 0.0) for t in planilleros]
+                df_ingresos = pd.DataFrame(dict_i)
+
+                # ── Sección C: DESCUENTOS ─────────────────────────────────────
+                dict_d = {"Num. Doc.": docs, "Nombres y Apellidos": nombres}
+                for c in conceptos_desc:
+                    dict_d[c.nombre] = [conceptos_vals[t.id].get(c.nombre, 0.0) for t in planilleros]
+                df_descuentos = pd.DataFrame(dict_d)
+
+                doc_to_id = {t.num_doc: t.id for t in planilleros}
+
+                col_cfg_t = {"Trabajador_ID": None,
+                             "Min. Tardanza":  st.column_config.NumberColumn(min_value=0, step=1),
+                             "Hrs Extras 25%": st.column_config.NumberColumn(min_value=0.0, step=0.5, format="%.1f"),
+                             "Hrs Extras 35%": st.column_config.NumberColumn(min_value=0.0, step=0.5, format="%.1f")}
+                for _, etq in SUSPENSIONES_GRILLA:
+                    col_cfg_t[etq] = st.column_config.NumberColumn(min_value=0, max_value=31, step=1,
+                                                                    help=f"Código SUNAT: {_COL_A_COD[etq]}")
+
+                col_cfg_ing  = {c.nombre: st.column_config.NumberColumn(
+                                    label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
+                                for c in conceptos_ing}
+                col_cfg_desc = {c.nombre: st.column_config.NumberColumn(
+                                    label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
+                                for c in conceptos_desc}
+
+                tab_t, tab_i, tab_d = st.tabs(["Tiempos y Asistencias", "Ingresos Variables", "Descuentos Directos"])
+
+                with tab_t:
+                    st.caption(
+                        "**Tipos de suspensión SUNAT** — Faltas Injust.(07) · Desc.Médico(20) · "
+                        "Vacaciones(23) · Lic.s/Haber(16). Para otros tipos use el campo libre abajo."
+                    )
+                    df_t_edit = st.data_editor(
+                        df_tiempos,
+                        disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos"],
+                        num_rows="fixed", use_container_width=True, hide_index=True,
+                        column_config=col_cfg_t, key="ed_tiempos",
+                    )
+                    if not es_cerrada:
+                        st.markdown("**Suspensiones adicionales** (código libre Tabla 21 SUNAT):")
+                        col_aux1, col_aux2 = st.columns([1, 3])
+                        with col_aux1:
+                            opciones_susp = [f"{k} — {v}" for k, v in sorted(CATALOGO_T21_SUSPENSIONES.items())]
+                            cod_extra = st.selectbox("Tipo adicional:", opciones_susp, key="susp_extra_cod")
+                        with col_aux2:
+                            st.caption("Días para este tipo se ingresarán en la grilla como columna extra en el próximo guardado.")
+
+                with tab_i:
+                    df_i_edit = st.data_editor(
+                        df_ingresos,
+                        disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos", "Sueldo Base", "Asig. Fam."],
+                        num_rows="fixed", use_container_width=True, hide_index=True,
+                        column_config=col_cfg_ing, key="ed_ingresos",
+                    )
+
+                with tab_d:
+                    if not conceptos_desc:
+                        st.info("No hay conceptos de descuento. Agrégelos en el Maestro de Conceptos.")
+                        df_d_edit = df_descuentos
+                    else:
+                        df_d_edit = st.data_editor(
+                            df_descuentos,
+                            disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos"],
+                            num_rows="fixed", use_container_width=True, hide_index=True,
+                            column_config=col_cfg_desc, key="ed_descuentos",
+                        )
+
+                st.markdown("---")
+
+                if not es_cerrada and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
+                    try:
+                        for _, fila_t in df_t_edit.iterrows():
+                            doc     = fila_t["Num. Doc."]
+                            trab_id = doc_to_id.get(doc)
+                            if not trab_id:
+                                continue
+
+                            susp_dict  = _suspensiones_from_row(fila_t)
+                            total_falt = susp_dict.get("07", 0)
+
+                            conceptos_data: dict = {}
+                            filas_i = df_i_edit[df_i_edit["Num. Doc."] == doc]
+                            if not filas_i.empty:
+                                fila_i = filas_i.iloc[0]
+                                for c in conceptos_ing:
+                                    val = float(fila_i.get(c.nombre, 0.0) or 0.0)
+                                    if val > 0:
+                                        conceptos_data[c.nombre] = val
+
+                            if not df_d_edit.empty and "Num. Doc." in df_d_edit.columns:
+                                filas_d = df_d_edit[df_d_edit["Num. Doc."] == doc]
+                                if not filas_d.empty:
+                                    fila_d = filas_d.iloc[0]
+                                    for c in conceptos_desc:
+                                        val = float(fila_d.get(c.nombre, 0.0) or 0.0)
+                                        if val > 0:
+                                            conceptos_data[c.nombre] = val
+
+                            v_exist = variables_exist.get(trab_id)
+                            if v_exist:
+                                v_exist.dias_faltados    = total_falt
+                                v_exist.min_tardanza     = int(fila_t["Min. Tardanza"] or 0)
+                                v_exist.hrs_extras_25    = float(fila_t["Hrs Extras 25%"] or 0.0)
+                                v_exist.hrs_extras_35    = float(fila_t["Hrs Extras 35%"] or 0.0)
+                                v_exist.suspensiones_json = json.dumps(susp_dict)
+                                v_exist.conceptos_json   = json.dumps(conceptos_data)
+                            else:
+                                db.add(VariablesMes(
+                                    empresa_id=empresa_id, trabajador_id=trab_id, periodo_key=periodo_key,
+                                    dias_faltados=total_falt,
+                                    min_tardanza=int(fila_t["Min. Tardanza"] or 0),
+                                    hrs_extras_25=float(fila_t["Hrs Extras 25%"] or 0.0),
+                                    hrs_extras_35=float(fila_t["Hrs Extras 35%"] or 0.0),
+                                    suspensiones_json=json.dumps(susp_dict),
+                                    conceptos_json=json.dumps(conceptos_data),
+                                ))
+
+                        db.commit()
+                        st.success(f"Variables de **{periodo_key}** guardadas correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Error al guardar: {e}")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 2 — VALORIZACIÓN DE LOCADORES
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_loc:
+            if not locadores:
+                st.info("No hay locadores de servicio activos. Registre trabajadores con tipo 'Locador de Servicio (4ta Categoría)' en el Maestro de Personal.")
+            else:
+                loc_ids      = [l.id        for l in locadores]
+                loc_docs     = [l.num_doc   for l in locadores]
+                loc_nombres  = [l.nombres   for l in locadores]
+                loc_hon      = [l.sueldo_base for l in locadores]
+                doc_to_loc_id = {l.num_doc: l.id for l in locadores}
+
+                def get_loc_v(t_id, field, default):
+                    v = variables_exist.get(t_id)
+                    return getattr(v, field, default) if v else default
+
+                def get_loc_concepto(t_id, key):
+                    v = variables_exist.get(t_id)
+                    if v:
+                        c = json.loads(v.conceptos_json or '{}')
+                        return float(c.get(key, 0.0))
+                    return 0.0
+
+                df_loc = pd.DataFrame({
+                    "Trabajador_ID":                  loc_ids,
+                    "Num. Doc.":                      loc_docs,
+                    "Nombres y Apellidos":             loc_nombres,
+                    "Honorario Base (S/)":             loc_hon,
+                    "Días no prestados":               [get_loc_v(lid, 'dias_descuento_locador', 0) for lid in loc_ids],
+                    "Otros Pagos / Bonos":             [get_loc_concepto(lid, '_otros_pagos_loc') for lid in loc_ids],
+                    "Otros Descuentos / Penalidades":  [get_loc_concepto(lid, '_otros_descuentos_loc') for lid in loc_ids],
+                })
+
+                col_cfg_loc = {
+                    "Trabajador_ID": None,
+                    "Días no prestados": st.column_config.NumberColumn(min_value=0, max_value=31, step=1),
+                    "Otros Pagos / Bonos": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="S/ %.2f"),
+                    "Otros Descuentos / Penalidades": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="S/ %.2f"),
+                }
+
+                st.caption("Ingrese los días no prestados y los pagos/descuentos adicionales. El cálculo de retención (8%) se ejecuta en el módulo **Cálculo de Planilla**.")
+                df_loc_edit = st.data_editor(
+                    df_loc,
+                    disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos", "Honorario Base (S/)"],
+                    column_config=col_cfg_loc,
                     num_rows="fixed", use_container_width=True, hide_index=True,
-                    column_config=col_cfg_desc, key="ed_descuentos",
+                    key="ed_locadores",
                 )
 
-        st.markdown("---")
+                st.markdown("---")
 
-        if not es_cerrada and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
-            try:
-                for _, fila_t in df_t_edit.iterrows():
-                    doc    = fila_t["Num. Doc."]
-                    trab_id = doc_to_id.get(doc)
-                    if not trab_id:
-                        continue
+                if not es_cerrada and st.button(
+                    f"Guardar Valorizaciones de Locadores — {periodo_key}",
+                    type="primary", use_container_width=True,
+                ):
+                    try:
+                        for _, fila in df_loc_edit.iterrows():
+                            doc     = fila["Num. Doc."]
+                            trab_id = doc_to_loc_id.get(doc)
+                            if not trab_id:
+                                continue
 
-                    # Construir suspensiones_json desde columnas de grilla
-                    susp_dict = _suspensiones_from_row(fila_t)
-                    total_falt = susp_dict.get("07", 0)   # para campo legado dias_faltados
+                            dias         = int(fila.get("Días no prestados", 0) or 0)
+                            otros_pagos  = float(fila.get("Otros Pagos / Bonos", 0.0) or 0.0)
+                            otros_dsctos = float(fila.get("Otros Descuentos / Penalidades", 0.0) or 0.0)
 
-                    # Conceptos dinámicos
-                    conceptos_data: dict = {}
-                    filas_i = df_i_edit[df_i_edit["Num. Doc."] == doc]
-                    if not filas_i.empty:
-                        fila_i = filas_i.iloc[0]
-                        for c in conceptos_ing:
-                            val = float(fila_i.get(c.nombre, 0.0) or 0.0)
-                            if val > 0:
-                                conceptos_data[c.nombre] = val
+                            conceptos_data: dict = {}
+                            if otros_pagos  > 0: conceptos_data['_otros_pagos_loc']      = otros_pagos
+                            if otros_dsctos > 0: conceptos_data['_otros_descuentos_loc'] = otros_dsctos
 
-                    if not df_d_edit.empty and "Num. Doc." in df_d_edit.columns:
-                        filas_d = df_d_edit[df_d_edit["Num. Doc."] == doc]
-                        if not filas_d.empty:
-                            fila_d = filas_d.iloc[0]
-                            for c in conceptos_desc:
-                                val = float(fila_d.get(c.nombre, 0.0) or 0.0)
-                                if val > 0:
-                                    conceptos_data[c.nombre] = val
+                            v_exist = variables_exist.get(trab_id)
+                            if v_exist:
+                                v_exist.dias_descuento_locador = dias
+                                v_exist.conceptos_json = json.dumps(conceptos_data)
+                            else:
+                                db.add(VariablesMes(
+                                    empresa_id=empresa_id,
+                                    trabajador_id=trab_id,
+                                    periodo_key=periodo_key,
+                                    dias_descuento_locador=dias,
+                                    conceptos_json=json.dumps(conceptos_data),
+                                ))
 
-                    v_exist = variables_exist.get(trab_id)
-                    if v_exist:
-                        v_exist.dias_faltados   = total_falt
-                        v_exist.min_tardanza    = int(fila_t["Min. Tardanza"] or 0)
-                        v_exist.hrs_extras_25   = float(fila_t["Hrs Extras 25%"] or 0.0)
-                        v_exist.hrs_extras_35   = float(fila_t["Hrs Extras 35%"] or 0.0)
-                        v_exist.suspensiones_json = json.dumps(susp_dict)
-                        v_exist.conceptos_json  = json.dumps(conceptos_data)
-                    else:
-                        db.add(VariablesMes(
-                            empresa_id=empresa_id, trabajador_id=trab_id, periodo_key=periodo_key,
-                            dias_faltados=total_falt,
-                            min_tardanza=int(fila_t["Min. Tardanza"] or 0),
-                            hrs_extras_25=float(fila_t["Hrs Extras 25%"] or 0.0),
-                            hrs_extras_35=float(fila_t["Hrs Extras 35%"] or 0.0),
-                            suspensiones_json=json.dumps(susp_dict),
-                            conceptos_json=json.dumps(conceptos_data),
-                        ))
-
-                db.commit()
-                st.success(f"Variables de **{periodo_key}** guardadas correctamente.")
-                st.rerun()
-            except Exception as e:
-                db.rollback()
-                st.error(f"Error al guardar: {e}")
+                        db.commit()
+                        st.success(f"Valorizaciones de locadores para **{periodo_key}** guardadas correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Error al guardar: {e}")
 
     finally:
         db.close()

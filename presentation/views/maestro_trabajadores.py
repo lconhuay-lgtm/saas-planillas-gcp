@@ -44,6 +44,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         banco_val, n_cuenta_val, cci_val = "BCP", "", ""
         a_fam_val, eps_val = False, False
         seguro_social_val = "ESSALUD"
+        tipo_contrato_val = "PLANILLA"
     else:
         opciones_doc = ["DNI", "CE", "PTP"]
         t_doc_val = t.tipo_doc if t.tipo_doc in opciones_doc else "DNI"
@@ -65,6 +66,23 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         a_fam_val = bool(t.asig_fam)
         eps_val = bool(t.eps)
         seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
+        tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
+
+    # ── Tipo de Contratación ───────────────────────────────────────────────────
+    opciones_contrato = ["Planilla (5ta Categoría)", "Locador de Servicio (4ta Categoría)"]
+    idx_contrato = 1 if tipo_contrato_val == "LOCADOR" else 0
+    tipo_contrato_sel = st.radio(
+        "Tipo de Contratación",
+        opciones_contrato,
+        index=idx_contrato,
+        horizontal=True,
+        key=f"{key_prefix}_tipo_contrato",
+        help="Planilla: empleado con vínculo laboral (5ta Cat.). Locador: contrato de servicios (4ta Cat.).",
+    )
+    es_locador = tipo_contrato_sel == "Locador de Servicio (4ta Categoría)"
+    if es_locador:
+        st.info("ℹ️ Modo **Locador de Servicio**: los campos de Pensión, Seguro, Asignación Familiar y EPS no aplican y quedan deshabilitados.")
+    st.markdown("---")
 
     # ── Sección 1: Identidad ───────────────────────────────────────────────────
     st.markdown("##### 1. Identidad y Datos Básicos")
@@ -111,8 +129,10 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
                                min_value=datetime.date(1960, 1, 1),
                                max_value=datetime.date.today(),
                                key=f"{key_prefix}_fingreso")
-    s_base = cl3.number_input("Sueldo Mensual (S/)*", min_value=1025.0, step=50.0,
-                              value=s_base_val, key=f"{key_prefix}_sbase")
+    label_sueldo = "Honorario Base Mensual (S/)*" if es_locador else "Sueldo Mensual (S/)*"
+    min_sueldo = 0.01 if es_locador else 1025.0
+    s_base = cl3.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
+                              value=max(min_sueldo, s_base_val), key=f"{key_prefix}_sbase")
     opciones_sit = ["ACTIVO", "CESADO", "SUSPENDIDO"]
     situacion = cl4.selectbox("Situación", opciones_sit,
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
@@ -120,29 +140,38 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     # ── Sección 3: Régimen Pensionario ─────────────────────────────────────────
     st.markdown("##### 3. Régimen Pensionario")
-    p1, p2, p3 = st.columns(3)
-    opciones_pension = ["ONP", "AFP INTEGRA", "AFP PRIMA", "AFP PROFUTURO", "AFP HABITAT", "NO AFECTO"]
-    s_pension = p1.selectbox("Sistema de Pensión", opciones_pension,
-                             index=opciones_pension.index(s_pension_val) if s_pension_val in opciones_pension else 0,
-                             key=f"{key_prefix}_pension")
-    es_afp = s_pension.startswith("AFP")
-    opciones_com = ["FLUJO", "MIXTA"]
-    t_comision = p2.selectbox("Tipo de Comisión", opciones_com,
-                              index=opciones_com.index(t_comision_val) if t_comision_val in opciones_com else 0,
-                              disabled=not es_afp, key=f"{key_prefix}_comision")
-    cuspp = p3.text_input("CUSPP", value=cuspp_val if es_afp else "",
-                          disabled=not es_afp, key=f"{key_prefix}_cuspp")
-    if es_afp:
-        st.markdown(
-            "<a href='https://servicios.sbs.gob.pe/ReporteSituacionPrevisional/Afil_Consulta.aspx' "
-            "target='_blank' style='font-size:0.8em;color:#7F8C8D;text-decoration:none;'>"
-            "🔍 <i>Verificar CUSPP en SBS — Superintendencia de Banca y Seguros</i></a>",
-            unsafe_allow_html=True
-        )
+    if es_locador:
+        st.caption("⚠️ Los locadores **no tienen vínculo pensionario** con la empresa. AFP/ONP no aplica.")
+        s_pension = "NO APLICA"
+        t_comision = "NO APLICA"
+        cuspp = ""
+    else:
+        p1, p2, p3 = st.columns(3)
+        opciones_pension = ["ONP", "AFP INTEGRA", "AFP PRIMA", "AFP PROFUTURO", "AFP HABITAT", "NO AFECTO"]
+        s_pension = p1.selectbox("Sistema de Pensión", opciones_pension,
+                                 index=opciones_pension.index(s_pension_val) if s_pension_val in opciones_pension else 0,
+                                 key=f"{key_prefix}_pension")
+        es_afp = s_pension.startswith("AFP")
+        opciones_com = ["FLUJO", "MIXTA"]
+        t_comision = p2.selectbox("Tipo de Comisión", opciones_com,
+                                  index=opciones_com.index(t_comision_val) if t_comision_val in opciones_com else 0,
+                                  disabled=not es_afp, key=f"{key_prefix}_comision")
+        cuspp = p3.text_input("CUSPP", value=cuspp_val if es_afp else "",
+                              disabled=not es_afp, key=f"{key_prefix}_cuspp")
+        if es_afp:
+            st.markdown(
+                "<a href='https://servicios.sbs.gob.pe/ReporteSituacionPrevisional/Afil_Consulta.aspx' "
+                "target='_blank' style='font-size:0.8em;color:#7F8C8D;text-decoration:none;'>"
+                "🔍 <i>Verificar CUSPP en SBS — Superintendencia de Banca y Seguros</i></a>",
+                unsafe_allow_html=True
+            )
 
     # ── Sección 3b: Seguro de Salud ────────────────────────────────────────────
     st.markdown("##### 3b. Seguro de Salud del Empleador")
-    if es_micro_empresa:
+    if es_locador:
+        st.caption("⚠️ Los locadores **no tienen seguro de salud** a cargo de la empresa. EsSalud/SIS no aplica.")
+        seguro_social = "NO APLICA"
+    elif es_micro_empresa:
         opciones_seguro = ["ESSALUD", "SIS"]
         seg_idx = opciones_seguro.index(seguro_social_val) if seguro_social_val in opciones_seguro else 0
         seguro_social = st.radio(
@@ -174,29 +203,39 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     # ── Sección 5: Opciones ────────────────────────────────────────────────────
     st.markdown("---")
-    col_opt1, col_opt2 = st.columns(2)
-    a_fam = col_opt1.checkbox("Asignación Familiar", value=a_fam_val, key=f"{key_prefix}_afam")
-    eps_afecto = col_opt2.checkbox("Afecto a EPS", value=eps_val, key=f"{key_prefix}_eps")
+    if es_locador:
+        st.caption("⚠️ **Asignación Familiar** y **EPS** no aplican a locadores de servicio (no hay beneficios sociales).")
+        a_fam = False
+        eps_afecto = False
+    else:
+        col_opt1, col_opt2 = st.columns(2)
+        a_fam = col_opt1.checkbox("Asignación Familiar", value=a_fam_val, key=f"{key_prefix}_afam")
+        eps_afecto = col_opt2.checkbox("Afecto a EPS", value=eps_val, key=f"{key_prefix}_eps")
 
     label_btn = "💾 Guardar Cambios" if es_edicion else "💾 Registrar e Inscribir en la Nube"
     if st.button(label_btn, type="primary", use_container_width=True, key=f"{key_prefix}_btn"):
-        if not n_doc or not nombres or s_base < 1025:
-            st.error("❌ Complete los campos obligatorios: Documento, Nombres y Sueldo ≥ S/ 1,025.")
+        if not n_doc or not nombres:
+            st.error("❌ Complete los campos obligatorios: Documento y Nombres.")
             return None
+        if not es_locador and s_base < 1025:
+            st.error("❌ El Sueldo Mensual de un empleado de planilla debe ser ≥ S/ 1,025 (RMV).")
+            return None
+        es_afp_final = not es_locador and s_pension.startswith("AFP")
         return {
             "tipo_doc": t_doc,
             "num_doc": n_doc,
             "apellido_paterno": ap_pat.upper(),
             "apellido_materno": ap_mat.upper(),
-            "nombres": nombre_completo.upper(),   # campo legado (nombre completo)
+            "nombres": nombre_completo.upper(),
             "fecha_nac": f_nac,
             "cargo": cargo,
             "fecha_ingreso": f_ingreso,
             "sueldo_base": s_base,
             "situacion": situacion,
+            "tipo_contrato": "LOCADOR" if es_locador else "PLANILLA",
             "sistema_pension": s_pension,
-            "comision_afp": t_comision if es_afp else "NO APLICA",
-            "cuspp": cuspp if es_afp else "",
+            "comision_afp": t_comision if es_afp_final else "NO APLICA",
+            "cuspp": cuspp if es_afp_final else "",
             "banco": banco,
             "cuenta_bancaria": n_cuenta if es_banco else "",
             "cci": cci if es_banco else "",
@@ -272,7 +311,8 @@ def render():
                 reg = determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
                 with st.container(border=True):
                     c1, c2, c3, c4, c5 = st.columns([2.5, 1.5, 1.5, 1.5, 0.8])
-                    c1.markdown(f"**{t.nombres}**")
+                    tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
+                    c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
                     c2.markdown(f"Doc: `{t.num_doc}`")
                     c3.markdown(f"{t.cargo or '—'}")
                     c4.markdown(f"S/ {t.sueldo_base:,.2f}")

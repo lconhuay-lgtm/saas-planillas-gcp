@@ -66,6 +66,8 @@ class Trabajador(Base):
     fecha_ingreso = Column(Date)
     situacion = Column(String(50), default="ACTIVO")
     sueldo_base = Column(Float, nullable=False)
+    # Tipo de contratación: 'PLANILLA' (5ta Cat.) o 'LOCADOR' (4ta Cat.)
+    tipo_contrato = Column(String(20), default='PLANILLA', nullable=False, server_default='PLANILLA')
     
     # Datos Bancarios
     banco = Column(String(100))
@@ -130,6 +132,10 @@ class ParametroLegal(Base):
     # AFP PROFUTURO
     pr_ap = Column(Float); pr_pr = Column(Float); pr_fl = Column(Float); pr_mx = Column(Float)
 
+    # Retención 4ta Categoría (Locadores de Servicio)
+    tasa_4ta  = Column(Float, default=8.0)     # Porcentaje de retención (8 % por ley)
+    tope_4ta  = Column(Float, default=1500.0)  # Monto mínimo para aplicar retención
+
     fecha_registro = Column(DateTime, default=datetime.now)
 
 
@@ -161,6 +167,9 @@ class VariablesMes(Base):
 
     # Montos de conceptos dinámicos: {"BONO DE RIESGO": 500.0, "GRATIFICACION (JUL/DIC)": 3000.0}
     conceptos_json = Column(Text, default='{}')
+
+    # Días sin prestar servicios para locadores (4ta categoría)
+    dias_descuento_locador = Column(Integer, default=0)
 
     fecha_registro = Column(DateTime, default=datetime.now)
 

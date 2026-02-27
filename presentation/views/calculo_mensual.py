@@ -16,6 +16,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Base de Datos Neon
+from sqlalchemy import or_
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual
 
@@ -41,6 +42,8 @@ def _cargar_parametros(db, empresa_id, periodo_key) -> dict | None:
         'afp_prima_flujo': p_db.p_fl, 'afp_prima_mixta': p_db.p_mx,
         'afp_profuturo_aporte': p_db.pr_ap, 'afp_profuturo_prima': p_db.pr_pr,
         'afp_profuturo_flujo': p_db.pr_fl, 'afp_profuturo_mixta': p_db.pr_mx,
+        'tasa_4ta': getattr(p_db, 'tasa_4ta', 8.0) or 8.0,
+        'tope_4ta': getattr(p_db, 'tope_4ta', 1500.0) or 1500.0,
     }
 
 
@@ -49,6 +52,7 @@ def _cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
     trabajadores = (
         db.query(Trabajador)
         .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
+        .filter(or_(Trabajador.tipo_contrato == 'PLANILLA', Trabajador.tipo_contrato == None))
         .all()
     )
     rows = []
@@ -489,19 +493,7 @@ def generar_pdf_quinta(data_q, empresa_nombre, periodo, nombre_trabajador):
     return buffer
 # --- 2. MOTOR DE RENDERIZADO Y CÁLCULO ---
 
-def render():
-    st.title("⚙️ Ejecución de Planilla Mensual")
-    st.markdown("---")
-
-    empresa_id = st.session_state.get('empresa_activa_id')
-    empresa_nombre = st.session_state.get('empresa_activa_nombre')
-
-    col_m, col_a = st.columns([2, 1])
-    mes_seleccionado = col_m.selectbox("Mes de Cálculo", MESES, key="calc_mes")
-    anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=1, key="calc_anio")
-    periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
-    mes_idx = MESES.index(mes_seleccionado) + 1
-
+def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_seleccionado, periodo_key, mes_idx):
     # ─── LEER DATOS DESDE NEON ────────────────────────────────────────────────
     db = SessionLocal()
     try:
@@ -659,8 +651,11 @@ def render():
             desglose_ingresos = {
                 f"Sueldo Base ({int(dias_laborados)} días)": round(sueldo_computable, 2),
                 "Asignación Familiar": round(monto_asig_fam, 2),
-                "Horas Extras": round(pago_he_25 + pago_he_35, 2)
             }
+            if pago_he_25 > 0:
+                desglose_ingresos["Horas Extras 25%"] = round(pago_he_25, 2)
+            if pago_he_35 > 0:
+                desglose_ingresos["Horas Extras 35%"] = round(pago_he_35, 2)
             desglose_descuentos = {}
             if dscto_tardanzas > 0:
                 desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
@@ -1008,3 +1003,146 @@ def render():
                             st.error(f"Error al cerrar: {e_cl}")
             else:
                 st.info("Solo un **Supervisor** puede cerrar la planilla.")
+
+
+# ─── MOTOR DE HONORARIOS (4ta Categoría) ─────────────────────────────────────
+
+def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
+    """Motor de cálculo para Locadores de Servicio (4ta Categoría)."""
+    from core.use_cases.calculo_honorarios import calcular_recibo_honorarios
+
+    db = SessionLocal()
+    try:
+        # 1. Parámetros legales del periodo
+        p = _cargar_parametros(db, empresa_id, periodo_key)
+        if not p:
+            st.error(f"🛑 No se han configurado los Parámetros Legales para **{periodo_key}**.")
+            st.info("Vaya al módulo 'Parámetros Legales' y configure las tasas para este periodo.")
+            return
+
+        tasa_4ta = p.get('tasa_4ta', 8.0)
+        tope_4ta = p.get('tope_4ta', 1500.0)
+
+        # 2. Locadores activos
+        locadores = (
+            db.query(Trabajador)
+            .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
+            .all()
+        )
+        if not locadores:
+            st.info("ℹ️ No hay Locadores de Servicio activos registrados en el Maestro de Personal.")
+            return
+
+        # 3. Variables del periodo para locadores
+        variables_mes = (
+            db.query(VariablesMes)
+            .filter_by(empresa_id=empresa_id, periodo_key=periodo_key)
+            .all()
+        )
+        vars_por_doc: dict = {}
+        for v in variables_mes:
+            dni = v.trabajador.num_doc
+            conceptos_data = json.loads(v.conceptos_json or '{}')
+            vars_por_doc[dni] = {
+                'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
+                'otros_pagos':       float(conceptos_data.get('_otros_pagos_loc', 0.0) or 0.0),
+                'otros_descuentos':  float(conceptos_data.get('_otros_descuentos_loc', 0.0) or 0.0),
+            }
+
+        # 4. Días del mes
+        mes_int  = int(periodo_key[:2])
+        anio_int = int(periodo_key[3:])
+        dias_del_mes = calendar.monthrange(anio_int, mes_int)[1]
+
+    finally:
+        db.close()
+
+    # Verificar estado de cierre
+    es_cerrada = False
+    try:
+        db_ck = SessionLocal()
+        plan_ck = db_ck.query(PlanillaMensual).filter_by(
+            empresa_id=empresa_id, periodo_key=periodo_key
+        ).first()
+        db_ck.close()
+        if plan_ck and getattr(plan_ck, 'estado', 'ABIERTA') == 'CERRADA':
+            es_cerrada = True
+    except Exception:
+        pass
+
+    st.caption(f"Tasa retención 4ta Cat.: **{tasa_4ta}%** | Tope mínimo para retener: **S/ {tope_4ta:,.2f}**")
+
+    if es_cerrada:
+        st.error(f"🔒 Los honorarios del periodo **{periodo_key}** ya fueron CERRADOS.")
+    elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True):
+        resultados_loc = []
+        for loc in locadores:
+            dni = loc.num_doc
+            vars_loc = vars_por_doc.get(dni, {})
+            resultado = calcular_recibo_honorarios(
+                loc, vars_loc, dias_del_mes,
+                tasa_4ta=tasa_4ta, tope_4ta=tope_4ta
+            )
+            resultados_loc.append({
+                "DNI":                 dni,
+                "Locador":             loc.nombres,
+                "Honorario Base":      resultado['honorario_base'],
+                "Días no Prestados":   resultado['dias_no_prestados'],
+                "Descuento Días":      resultado['monto_descuento'],
+                "Otros Pagos":         resultado['otros_pagos'],
+                "Pago Bruto":          resultado['pago_bruto'],
+                "Retención 4ta (8%)":  resultado['retencion_4ta'],
+                "Otros Descuentos":    resultado['otros_descuentos'],
+                "NETO A PAGAR":        resultado['neto_a_pagar'],
+            })
+        st.session_state[f'res_honorarios_{periodo_key}'] = pd.DataFrame(resultados_loc)
+
+    key_res = f'res_honorarios_{periodo_key}'
+    if st.session_state.get(key_res) is not None and not st.session_state[key_res].empty:
+        df_loc = st.session_state[key_res]
+        st.success("✅ Valorización de Honorarios generada.")
+        st.dataframe(df_loc, use_container_width=True, hide_index=True)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Pago Bruto",      f"S/ {df_loc['Pago Bruto'].sum():,.2f}")
+        c2.metric("Total Retención 4ta",   f"S/ {df_loc['Retención 4ta (8%)'].sum():,.2f}")
+        c3.metric("Total Neto a Pagar",    f"S/ {df_loc['NETO A PAGAR'].sum():,.2f}")
+
+        buf_xls = io.BytesIO()
+        with pd.ExcelWriter(buf_xls, engine='openpyxl') as writer:
+            df_loc.to_excel(writer, index=False, sheet_name=f'Honorarios_{periodo_key[:2]}')
+        buf_xls.seek(0)
+        st.download_button(
+            "📊 Descargar Valorización (.xlsx)",
+            data=buf_xls,
+            file_name=f"HONORARIOS_{periodo_key}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    else:
+        if not es_cerrada:
+            st.info("Presione el botón para calcular los honorarios del periodo.")
+
+
+# ─── RENDER PRINCIPAL ─────────────────────────────────────────────────────────
+
+def render():
+    st.title("⚙️ Ejecución de Planilla Mensual")
+    st.markdown("---")
+
+    empresa_id     = st.session_state.get('empresa_activa_id')
+    empresa_nombre = st.session_state.get('empresa_activa_nombre')
+
+    col_m, col_a = st.columns([2, 1])
+    mes_seleccionado  = col_m.selectbox("Mes de Cálculo", MESES, key="calc_mes")
+    anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=1, key="calc_anio")
+    periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
+    mes_idx = MESES.index(mes_seleccionado) + 1
+
+    tab_plan, tab_hon = st.tabs(["📋 1. Planilla (5ta Categoría)", "🧾 2. Honorarios (4ta Categoría)"])
+
+    with tab_plan:
+        _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_seleccionado, periodo_key, mes_idx)
+
+    with tab_hon:
+        _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key)

@@ -7,8 +7,8 @@ from core.domain.catalogos_sunat import CATALOGO_T22_INGRESOS
 # Codigos SUNAT de conceptos obligatorios por Ley
 _CODIGO_SUELDO   = "0121"
 _CODIGO_ASIG_FAM = "0201"
-_CODIGO_GRATI    = "0401"
-_CODIGO_BONO_9   = "0305"
+_CODIGO_GRATI    = "0406"
+_CODIGO_BONO_9   = "0312"
 
 CONCEPTOS_OBLIGATORIOS = [
     {"nombre": "SUELDO BASICO",                         "codigo": _CODIGO_SUELDO,   "tipo": "INGRESO",   "afp": True,  "5ta": True,  "ess": True,  "cts": True,  "gra": True},
