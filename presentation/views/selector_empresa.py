@@ -115,6 +115,9 @@ def render():
                         st.session_state['empresa_activa_ruc'] = emp.ruc
                         st.session_state['empresa_activa_regimen'] = emp.regimen_laboral
                         st.session_state['empresa_acogimiento'] = emp.fecha_acogimiento
+                        st.session_state['empresa_activa_domicilio'] = emp.domicilio or ''
+                        st.session_state['empresa_activa_representante'] = emp.representante_legal or ''
+                        st.session_state['empresa_activa_correo'] = emp.correo_electronico or ''
                         st.rerun()
 
     with col_form:

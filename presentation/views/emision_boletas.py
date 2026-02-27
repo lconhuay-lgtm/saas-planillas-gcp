@@ -76,188 +76,309 @@ def _cargar_planilla_periodo(db, empresa_id, periodo_key):
 
     return df_res, aud, df_trab, df_var
 
-def generar_pdf_boletas_masivas(empresa_nombre, periodo, df_resultados, df_trabajadores, df_variables, auditoria_data):
-    """Genera un PDF con boletas a página completa (Puede recibir 1 o N trabajadores)"""
+
+# ── Mapeo de meses al español ────────────────────────────────────────────────
+_MESES_ES = {
+    "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+    "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+    "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+}
+
+def _periodo_legible(periodo_key: str) -> str:
+    """'02-2026' → 'Febrero - 2026'"""
+    partes = periodo_key.split("-")
+    if len(partes) == 2:
+        return f"{_MESES_ES.get(partes[0], partes[0])} - {partes[1]}"
+    return periodo_key
+
+
+def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabajadores, df_variables, auditoria_data):
+    """
+    Genera un PDF con boletas a página completa — Diseño corporativo elegante.
+    empresa_info: dict con claves: nombre, ruc, domicilio, representante
+    """
+    # ── Paleta corporativa ────────────────────────────────────────────────────
+    C_NAVY   = colors.HexColor("#0F2744")   # azul marino oscuro — cabeceras
+    C_STEEL  = colors.HexColor("#1E4D8C")   # azul medio — sub-cabeceras
+    C_GOLD   = colors.HexColor("#C9A84C")   # dorado — línea decorativa
+    C_LIGHT  = colors.HexColor("#F0F4F9")   # celeste muy suave — filas alternas
+    C_WHITE  = colors.white
+    C_BORDER = colors.HexColor("#CBD5E1")
+    C_TOTAL  = colors.HexColor("#1E4D8C")   # fondo fila totales
+    C_NETO   = colors.HexColor("#0A3D2B")   # verde oscuro — neto a pagar
+    C_GRAY   = colors.HexColor("#64748B")
+
+    empresa_nombre   = empresa_info.get('nombre', '')
+    empresa_ruc      = empresa_info.get('ruc', '')
+    empresa_domicilio = empresa_info.get('domicilio', '')
+    empresa_rep      = empresa_info.get('representante', '')
+
+    periodo_texto = _periodo_legible(periodo)
+
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        rightMargin=36, leftMargin=36, topMargin=30, bottomMargin=30
+    )
     elements = []
-    
     styles = getSampleStyleSheet()
-    style_company = ParagraphStyle('Company', parent=styles['Title'], fontSize=16, textColor=colors.HexColor("#1A365D"), alignment=TA_LEFT, fontName="Helvetica-Bold", spaceAfter=2)
-    style_ruc = ParagraphStyle('RUC', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#7F8C8D"), alignment=TA_LEFT, spaceAfter=20)
-    style_title = ParagraphStyle('DocTitle', parent=styles['Title'], fontSize=14, textColor=colors.black, alignment=TA_CENTER, fontName="Helvetica-Bold", spaceAfter=5)
-    style_sub = ParagraphStyle('DocSub', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#34495E"), alignment=TA_CENTER, spaceAfter=25)
+
+    # Estilos tipográficos
+    st_emp  = ParagraphStyle('Emp',  fontName="Helvetica-Bold",   fontSize=15, textColor=C_NAVY,  spaceAfter=1, leading=18)
+    st_sub  = ParagraphStyle('Sub',  fontName="Helvetica",        fontSize=8,  textColor=C_GRAY,  spaceAfter=0, leading=11)
+    st_tit  = ParagraphStyle('Tit',  fontName="Helvetica-Bold",   fontSize=12, textColor=C_NAVY,  alignment=TA_CENTER, spaceAfter=2)
+    st_per  = ParagraphStyle('Per',  fontName="Helvetica",        fontSize=10, textColor=C_STEEL, alignment=TA_CENTER, spaceAfter=0)
+
+    # Ancho útil de la página
+    W = 595 - 72  # A4 ancho - márgenes izq+der = 523 pt
 
     df_data = df_resultados[df_resultados['Apellidos y Nombres'] != 'TOTALES']
-    
-    for index, row in df_data.iterrows():
+
+    for _, row in df_data.iterrows():
         dni = str(row['DNI'])
-        
-        # Extracción de datos
         trabajador = df_trabajadores[df_trabajadores['Num. Doc.'] == dni].iloc[0]
-        variables = df_variables[df_variables['Num. Doc.'] == dni].iloc[0]
-        data_aud = auditoria_data.get(dni, {})
-        
-        nombre = row['Apellidos y Nombres']
-        cargo = trabajador.get('Cargo', 'No especificado')
-        fecha_ing_raw = trabajador.get('Fecha Ingreso', '')
-        fecha_ingreso = fecha_ing_raw.strftime('%d/%m/%Y') if hasattr(fecha_ing_raw, 'strftime') else str(fecha_ing_raw)
+        variables  = df_variables[df_variables['Num. Doc.'] == dni].iloc[0]
+        data_aud   = auditoria_data.get(dni, {})
+
+        nombre        = row['Apellidos y Nombres']
+        cargo         = trabajador.get('Cargo', '—')
+        fi_raw        = trabajador.get('Fecha Ingreso', '')
+        fecha_ingreso = fi_raw.strftime('%d/%m/%Y') if hasattr(fi_raw, 'strftime') else str(fi_raw)
         sistema_pension = trabajador.get('Sistema Pensión', 'NO AFECTO')
-        cuspp = trabajador.get('CUSPP', '')
-        if pd.isna(cuspp) or cuspp == "N/A" or cuspp == "": cuspp = "---"
+        cuspp = trabajador.get('CUSPP', '') or '—'
+        if pd.isna(cuspp) or cuspp in ("N/A", "", "nan"): cuspp = "—"
 
-        # Seguro social: leer de auditoría (más confiable) o de la sábana
-        seguro_social_label = data_aud.get('seguro_social', row.get('Seg. Social', 'ESSALUD'))
-        aporte_seg_social = data_aud.get('aporte_seg_social', row.get('Aporte Seg. Social', row.get('EsSalud Patronal', 0.0)))
-        if seguro_social_label == "SIS":
-            etiqueta_aporte = "SIS (S/15 fijo)"
-        elif seguro_social_label == "ESSALUD-EPS":
-            etiqueta_aporte = "ESSALUD-EPS"
-        else:
-            etiqueta_aporte = "ESSALUD (9%)"
+        seg_label  = data_aud.get('seguro_social', row.get('Seg. Social', 'ESSALUD'))
+        aporte_seg = data_aud.get('aporte_seg_social', row.get('Aporte Seg. Social', row.get('EsSalud Patronal', 0.0)))
+        if seg_label == "SIS":        et_seg = "SIS  (S/ 15.00 fijo)"
+        elif seg_label == "ESSALUD-EPS": et_seg = "ESSALUD-EPS"
+        else:                            et_seg = "ESSALUD  (9%)"
 
-        dias_laborados = data_aud.get('dias', 30)
-        hrs_ext = float(variables.get('Hrs Extras 25%', 0)) + float(variables.get('Hrs Extras 35%', 0))
+        dias_lab = data_aud.get('dias', 30)
+        hrs_ext  = float(variables.get('Hrs Extras 25%', 0)) + float(variables.get('Hrs Extras 35%', 0))
 
-        ingresos_dict = data_aud.get('ingresos', {})
+        ingresos_dict  = data_aud.get('ingresos', {})
         descuentos_dict = data_aud.get('descuentos', {})
-        aportes_dict = {etiqueta_aporte: aporte_seg_social}
-        
-        ing_list = [(k, f"{v:,.2f}") for k, v in ingresos_dict.items() if v > 0]
-        desc_list = [(k, f"{v:,.2f}") for k, v in descuentos_dict.items() if v > 0]
-        apo_list = [(k, f"{v:,.2f}") for k, v in aportes_dict.items() if v > 0]
-        
-        tot_ing = row.get('TOTAL BRUTO', 0.0)
-        tot_apo = aporte_seg_social
-        tot_desc = row.get('T. DESCUENTOS', 0.0)
-        if tot_desc == 0.0:
-            tot_desc = tot_ing - row.get('NETO A PAGAR', 0.0)
-            
-        neto = row.get('NETO A PAGAR', 0.0)
+        ing_list  = [(k, v) for k, v in ingresos_dict.items()  if v > 0]
+        desc_list = [(k, v) for k, v in descuentos_dict.items() if v > 0]
 
-        # A. Cabecera Corporativa
-        elements.append(Paragraph(empresa_nombre.upper(), style_company))
-        elements.append(Paragraph("RUC: 20000000000", style_ruc)) 
-        
-        # B. Título de Documento Oficial
-        elements.append(Paragraph("BOLETA DE PAGO DE REMUNERACIONES", style_title))
-        elements.append(Paragraph(f"(D.S. N° 001-98-TR) <br/> <b>Periodo de Pago: {periodo}</b>", style_sub))
+        tot_ing  = float(row.get('TOTAL BRUTO', 0.0))
+        tot_desc = tot_ing - float(row.get('NETO A PAGAR', 0.0))
+        neto     = float(row.get('NETO A PAGAR', 0.0))
 
-        # C. Datos del Trabajador
+        # ── A. CABECERA DE EMPRESA ──────────────────────────────────────────
+        # Línea dorada superior
+        line_data = [["" ]]
+        t_line = Table(line_data, colWidths=[W])
+        t_line.setStyle(TableStyle([
+            ('BACKGROUND',  (0,0), (-1,-1), C_GOLD),
+            ('TOPPADDING',  (0,0), (-1,-1), 2),
+            ('BOTTOMPADDING',(0,0),(-1,-1), 2),
+        ]))
+        elements.append(t_line)
+        elements.append(Spacer(1, 4))
+
+        # Cuerpo cabecera empresa
+        ruc_line  = f"RUC: {empresa_ruc}" if empresa_ruc else ""
+        dom_line  = empresa_domicilio[:80] if empresa_domicilio else ""
+        rep_line  = f"Rep. Legal: {empresa_rep}" if empresa_rep else ""
+        sub_parts = [p for p in [ruc_line, dom_line, rep_line] if p]
+        sub_text  = "  |  ".join(sub_parts) if sub_parts else ""
+
+        hdr_data = [[Paragraph(empresa_nombre, st_emp)],
+                    [Paragraph(sub_text, st_sub)]]
+        t_hdr = Table(hdr_data, colWidths=[W])
+        t_hdr.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), C_NAVY),
+            ('LEFTPADDING',   (0,0), (-1,-1), 10),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 10),
+            ('TOPPADDING',    (0,0), (0, 0),  8),
+            ('BOTTOMPADDING', (0,1), (-1,-1), 8),
+            ('TOPPADDING',    (0,1), (-1,-1), 2),
+        ]))
+        elements.append(t_hdr)
+
+        # ── B. TÍTULO DEL DOCUMENTO ─────────────────────────────────────────
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph("BOLETA DE PAGO DE REMUNERACIONES", st_tit))
+        elements.append(Paragraph(f"(D.S. N° 001-98-TR)  ·  Periodo: {periodo_texto}", st_per))
+        elements.append(Spacer(1, 8))
+
+        # ── C. DATOS DEL TRABAJADOR ─────────────────────────────────────────
         info_data = [
-            ["TRABAJADOR:", nombre, "DOC. IDENTIDAD:", dni],
-            ["CARGO:", cargo, "FECHA INGRESO:", fecha_ingreso],
-            ["SIST. PENSIÓN:", sistema_pension, "CUSPP:", cuspp],
-            ["SEGURO SOCIAL:", seguro_social_label, "APORTE EMPLEADOR:", f"S/ {aporte_seg_social:,.2f}"],
-            ["DÍAS LABORADOS:", str(int(dias_laborados)), "HORAS EXTRAS:", str(hrs_ext)]
+            ["TRABAJADOR",     nombre,           "DOC. IDENTIDAD", dni],
+            ["CARGO",          cargo,            "FECHA INGRESO",  fecha_ingreso],
+            ["SIST. PENSIÓN",  sistema_pension,  "CUSPP",          cuspp],
+            ["SEGURO SOCIAL",  seg_label,        "APORTE EMP.",    f"S/ {aporte_seg:,.2f}"],
+            ["DÍAS LABORADOS", str(int(dias_lab)),"HORAS EXTRAS",  f"{hrs_ext:.1f} h"],
         ]
-        t_info = Table(info_data, colWidths=[110, 200, 105, 100])
+        WL, WV, WL2, WV2 = 82, 170, 82, 189
+        t_info = Table(info_data, colWidths=[WL, WV, WL2, WV2])
         t_info.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")), 
-            ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#2C3E50")),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), 
-            ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), 
-            ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
-            ('FONTNAME', (3,0), (3,-1), 'Helvetica'),
-            ('FONTSIZE', (0,0), (-1,-1), 9),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#CBD5E1")),
-            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0"))
+            ('BACKGROUND',    (0,0), (-1,-1), C_LIGHT),
+            ('BACKGROUND',    (0,0), (0,-1), C_NAVY),
+            ('BACKGROUND',    (2,0), (2,-1), C_NAVY),
+            ('TEXTCOLOR',     (0,0), (0,-1), C_WHITE),
+            ('TEXTCOLOR',     (2,0), (2,-1), C_WHITE),
+            ('FONTNAME',      (0,0), (0,-1), 'Helvetica-Bold'),
+            ('FONTNAME',      (2,0), (2,-1), 'Helvetica-Bold'),
+            ('FONTNAME',      (1,0), (1,-1), 'Helvetica'),
+            ('FONTNAME',      (3,0), (3,-1), 'Helvetica'),
+            ('FONTSIZE',      (0,0), (-1,-1), 8),
+            ('ALIGN',         (0,0), (-1,-1), 'LEFT'),
+            ('LEFTPADDING',   (0,0), (-1,-1), 6),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 6),
+            ('TOPPADDING',    (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('BOX',           (0,0), (-1,-1), 0.8, C_STEEL),
+            ('INNERGRID',     (0,0), (-1,-1), 0.3, C_BORDER),
         ]))
         elements.append(t_info)
-        elements.append(Spacer(1, 25))
+        elements.append(Spacer(1, 10))
 
-        # D. Matriz Financiera Principal
-        max_rows = max(len(ing_list), len(desc_list), len(apo_list))
-        if max_rows == 0: max_rows = 1
-        ing_pad = ing_list + [("", "")] * (max_rows - len(ing_list))
-        desc_pad = desc_list + [("", "")] * (max_rows - len(desc_list))
-        apo_pad = apo_list + [("", "")] * (max_rows - len(apo_list))
+        # ── D. MATRIZ FINANCIERA: INGRESOS | DESCUENTOS (2 columnas) ───────
+        # Equalizamos el número de filas para alinear ambas columnas
+        max_rows = max(len(ing_list), len(desc_list), 1)
+        ing_pad  = ing_list  + [("", None)] * (max_rows - len(ing_list))
+        desc_pad = desc_list + [("", None)] * (max_rows - len(desc_list))
 
-        fin_data = [["INGRESOS", "S/", "DESCUENTOS / RETENCIONES", "S/", "APORTES EMPLEADOR", "S/"]]
+        # Anchos: cada columna = (W - 2px separación) / 2
+        W_COL = (W - 2) / 2          # ~260 pt
+        W_LBL = W_COL * 0.73         # ~190 pt — concepto
+        W_MNT = W_COL * 0.27         # ~70 pt  — monto
+
+        # Cabeceras
+        fin_data = [[
+            Paragraph("<b>INGRESOS</b>", ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE, alignment=TA_LEFT)),
+            Paragraph("<b>S/</b>", ParagraphStyle('H2', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE, alignment=TA_RIGHT)),
+            Paragraph("<b>DESCUENTOS Y RETENCIONES</b>", ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE, alignment=TA_LEFT)),
+            Paragraph("<b>S/</b>", ParagraphStyle('H2', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE, alignment=TA_RIGHT)),
+        ]]
+
         for i in range(max_rows):
+            ik, iv = ing_pad[i]
+            dk, dv = desc_pad[i]
             fin_data.append([
-                ing_pad[i][0], ing_pad[i][1],
-                desc_pad[i][0], desc_pad[i][1],
-                apo_pad[i][0], apo_pad[i][1]
+                ik,
+                f"{iv:,.2f}" if iv is not None and iv > 0 else "",
+                dk,
+                f"{dv:,.2f}" if dv is not None and dv > 0 else "",
             ])
-            
+
+        # Fila de totales
         fin_data.append([
-            "TOTAL INGRESOS", f"{tot_ing:,.2f}",
-            "TOTAL DESCUENTOS", f"{tot_desc:,.2f}",
-            "TOTAL APORTES", f"{tot_apo:,.2f}"
+            Paragraph("<b>TOTAL INGRESOS</b>", ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE)),
+            Paragraph(f"<b>{tot_ing:,.2f}</b>", ParagraphStyle('T2', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE, alignment=TA_RIGHT)),
+            Paragraph("<b>TOTAL DESCUENTOS</b>", ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE)),
+            Paragraph(f"<b>{tot_desc:,.2f}</b>", ParagraphStyle('T2', fontName="Helvetica-Bold", fontSize=8.5, textColor=C_WHITE, alignment=TA_RIGHT)),
         ])
 
-        t_fin = Table(fin_data, colWidths=[125, 45, 140, 45, 115, 45])
-        t_fin.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1A365D")),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('ALIGN', (0,0), (-1,0), 'CENTER'),
-            ('FONTSIZE', (0,0), (-1,0), 8),
-            ('BOTTOMPADDING', (0,0), (-1,0), 8),
-            ('TOPPADDING', (0,0), (-1,0), 8),
-            ('FONTNAME', (0,1), (-1,-2), 'Helvetica'),
-            ('FONTSIZE', (0,1), (-1,-2), 9),
-            ('ALIGN', (1,1), (1,-1), 'RIGHT'),
-            ('ALIGN', (3,1), (3,-1), 'RIGHT'),
-            ('ALIGN', (5,1), (5,-1), 'RIGHT'),
-            ('BOTTOMPADDING', (0,1), (-1,-2), 4),
-            ('TOPPADDING', (0,1), (-1,-2), 4),
-            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#F1F5F9")),
-            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,-1), (-1,-1), 9),
-            ('TOPPADDING', (0,-1), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,-1), (-1,-1), 8),
-            ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#1A365D")),
-            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
-            ('LINEABOVE', (0,-1), (-1,-1), 1, colors.HexColor("#1A365D")) 
-        ]))
+        t_fin = Table(fin_data, colWidths=[W_LBL, W_MNT, W_LBL, W_MNT])
+        fin_style = [
+            # Cabecera
+            ('BACKGROUND',    (0,0), (-1,0),  C_STEEL),
+            # Columna separadora visual (borde derecho de col 1)
+            ('LINEAFTER',     (1,0), (1,-1),  1.2, C_GOLD),
+            # Filas alternadas ingresos (col 0-1)
+            ('ROWBACKGROUNDS',(0,1), (1,-2),  [C_WHITE, C_LIGHT]),
+            # Filas alternadas descuentos (col 2-3)
+            ('ROWBACKGROUNDS',(2,1), (3,-2),  [C_WHITE, C_LIGHT]),
+            # Total
+            ('BACKGROUND',    (0,-1), (-1,-1), C_TOTAL),
+            # Alineación montos a la derecha
+            ('ALIGN',         (1,0), (1,-1),  'RIGHT'),
+            ('ALIGN',         (3,0), (3,-1),  'RIGHT'),
+            ('ALIGN',         (0,0), (0,-1),  'LEFT'),
+            ('ALIGN',         (2,0), (2,-1),  'LEFT'),
+            ('FONTNAME',      (0,1), (-1,-2), 'Helvetica'),
+            ('FONTSIZE',      (0,1), (-1,-2), 8),
+            ('LEFTPADDING',   (0,0), (-1,-1), 5),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 5),
+            ('TOPPADDING',    (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('BOX',           (0,0), (-1,-1), 0.8, C_STEEL),
+            ('INNERGRID',     (0,0), (-1,-1), 0.25, C_BORDER),
+        ]
+        t_fin.setStyle(TableStyle(fin_style))
         elements.append(t_fin)
-        elements.append(Spacer(1, 15))
+        elements.append(Spacer(1, 6))
 
-        # E. Neto a Pagar
-        neto_data = [["NETO A PAGAR AL TRABAJADOR:", f"S/ {neto:,.2f}"]]
-        t_neto = Table(neto_data, colWidths=[380, 135])
+        # ── E. APORTES DEL EMPLEADOR ────────────────────────────────────────
+        apo_data = [
+            [Paragraph("<b>APORTES A CARGO DEL EMPLEADOR</b>",
+                        ParagraphStyle('AH', fontName="Helvetica-Bold", fontSize=8, textColor=C_WHITE)),
+             "", ""],
+            [et_seg, f"Base: S/ {aporte_seg:,.2f}", f"S/ {aporte_seg:,.2f}"],
+        ]
+        t_apo = Table(apo_data, colWidths=[W * 0.5, W * 0.3, W * 0.2])
+        t_apo.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,0),  C_GRAY),
+            ('SPAN',          (0,0), (-1,0)),
+            ('BACKGROUND',    (0,1), (-1,1),  C_LIGHT),
+            ('FONTNAME',      (0,1), (-1,1),  'Helvetica'),
+            ('FONTNAME',      (2,1), (2,1),   'Helvetica-Bold'),
+            ('FONTSIZE',      (0,0), (-1,-1), 8),
+            ('ALIGN',         (2,0), (2,-1),  'RIGHT'),
+            ('ALIGN',         (0,0), (1,-1),  'LEFT'),
+            ('LEFTPADDING',   (0,0), (-1,-1), 6),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 6),
+            ('TOPPADDING',    (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('BOX',           (0,0), (-1,-1), 0.8, C_STEEL),
+            ('INNERGRID',     (0,0), (-1,-1), 0.25, C_BORDER),
+        ]))
+        elements.append(t_apo)
+        elements.append(Spacer(1, 8))
+
+        # ── F. NETO A PAGAR ─────────────────────────────────────────────────
+        neto_data = [[
+            Paragraph("NETO A PAGAR AL TRABAJADOR",
+                       ParagraphStyle('NL', fontName="Helvetica-Bold", fontSize=11, textColor=C_WHITE, alignment=TA_RIGHT)),
+            Paragraph(f"S/  {neto:,.2f}",
+                       ParagraphStyle('NV', fontName="Helvetica-Bold", fontSize=13, textColor=C_GOLD, alignment=TA_CENTER)),
+        ]]
+        t_neto = Table(neto_data, colWidths=[W * 0.65, W * 0.35])
         t_neto.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#2C3E50")),
-            ('TEXTCOLOR', (0,0), (-1,-1), colors.white),
-            ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 12),
-            ('ALIGN', (0,0), (0,0), 'RIGHT'),
-            ('ALIGN', (1,0), (1,0), 'CENTER'),
+            ('BACKGROUND',    (0,0), (-1,-1), C_NETO),
+            ('ALIGN',         (0,0), (0,0),   'RIGHT'),
+            ('ALIGN',         (1,0), (1,0),   'CENTER'),
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING',    (0,0), (-1,-1), 10),
             ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-            ('TOPPADDING', (0,0), (-1,-1), 10),
-            ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#1A365D"))
+            ('LEFTPADDING',   (0,0), (-1,-1), 10),
+            ('BOX',           (0,0), (-1,-1), 1, C_GOLD),
         ]))
         elements.append(t_neto)
-        
-        # F. Espacio para Firmas
-        elements.append(Spacer(1, 80)) 
-        
+        elements.append(Spacer(1, 50))
+
+        # ── G. FIRMAS ────────────────────────────────────────────────────────
         sig_data = [
-            ["_____________________________________", "", "_____________________________________"],
+            ["_" * 35, "", "_" * 35],
             [f"Empleador: {empresa_nombre}", "", f"Trabajador: {nombre}"],
-            ["Sello y Firma", "", f"DNI: {dni}"]
+            ["Sello y Firma", "", f"DNI: {dni}"],
         ]
-        t_sig = Table(sig_data, colWidths=[200, 115, 200])
+        t_sig = Table(sig_data, colWidths=[W * 0.42, W * 0.16, W * 0.42])
         t_sig.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('FONTNAME', (0,1), (-1,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 9),
-            ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#34495E")),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 2)
+            ('ALIGN',      (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME',   (0,1), (-1,-1), 'Helvetica-Bold'),
+            ('FONTNAME',   (0,2), (-1,-1), 'Helvetica'),
+            ('FONTSIZE',   (0,0), (-1,-1), 8),
+            ('TEXTCOLOR',  (0,0), (-1,-1), C_GRAY),
+            ('TOPPADDING', (0,0), (-1,-1), 2),
         ]))
         elements.append(t_sig)
+
+        # Línea dorada inferior
+        elements.append(Spacer(1, 10))
+        elements.append(t_line)
         elements.append(PageBreak())
 
     doc.build(elements)
     buffer.seek(0)
     return buffer
 
-def generar_zip_boletas(empresa_nombre, periodo, df_resultados, df_trabajadores, df_variables, auditoria_data):
+
+def generar_zip_boletas(empresa_info, periodo, df_resultados, df_trabajadores, df_variables, auditoria_data):
     """Genera un archivo ZIP que contiene un PDF individual por cada trabajador"""
     zip_buffer = io.BytesIO()
     df_data = df_resultados[df_resultados['Apellidos y Nombres'] != 'TOTALES']
@@ -272,7 +393,7 @@ def generar_zip_boletas(empresa_nombre, periodo, df_resultados, df_trabajadores,
             
             # Generamos el PDF único de este trabajador
             pdf_individual_buffer = generar_pdf_boletas_masivas(
-                empresa_nombre, periodo, df_individual, df_trabajadores, df_variables, auditoria_data
+                empresa_info, periodo, df_individual, df_trabajadores, df_variables, auditoria_data
             )
             
             # Formateamos el nombre del archivo: BOLETA_12345678_JUAN_PEREZ.pdf
@@ -352,7 +473,16 @@ def render():
 
     db.close()
 
-    st.success(f"✅ Planilla del periodo **{periodo_key}** lista para emisión.")
+    # Dict con datos completos de la empresa para los PDF
+    empresa_info = {
+        'nombre':        st.session_state.get('empresa_activa_nombre', ''),
+        'ruc':           st.session_state.get('empresa_activa_ruc', ''),
+        'domicilio':     st.session_state.get('empresa_activa_domicilio', ''),
+        'representante': st.session_state.get('empresa_activa_representante', ''),
+    }
+    periodo_legible = _periodo_legible(periodo_key)
+
+    st.success(f"✅ Planilla del periodo **{periodo_legible}** lista para emisión.")
     st.markdown(f"**Empresa:** {empresa_nombre}")
 
     # --- PANEL DE DISTRIBUCIÓN MULTICANAL ---
@@ -368,20 +498,20 @@ def render():
             st.info("**Opción 1: Libro Consolidado**\n\nGenera un único archivo PDF que contiene todas las boletas una detrás de otra. Ideal para imprimir todo de una sola vez y archivar físicamente.")
             if st.button("🖨️ Generar 1 Solo PDF con Todo", use_container_width=True):
                 with st.spinner('Compilando libro maestro...'):
-                    pdf_buffer = generar_pdf_boletas_masivas(empresa_nombre, periodo_key, df_resultados, df_trab, df_var, auditoria_data)
+                    pdf_buffer = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_resultados, df_trab, df_var, auditoria_data)
                     st.download_button(
-                        label=f"📥 Descargar LIBRO_{periodo_key}.pdf",
+                        label=f"📥 Descargar LIBRO_{periodo_legible}.pdf",
                         data=pdf_buffer, file_name=f"LIBRO_BOLETAS_{periodo_key}.pdf", mime="application/pdf",
                         type="primary", use_container_width=True
                     )
-                    
+
         with col2:
             st.info("**Opción 2: Archivo ZIP (Separadas)**\n\nGenera un archivo comprimido (.zip) que contiene las boletas en formato PDF individualizadas, cada una con el DNI y Nombre del trabajador.")
             if st.button("🗂️ Generar Archivo ZIP (PDFs separados)", use_container_width=True):
                 with st.spinner('Empaquetando PDFs individuales en ZIP...'):
-                    zip_buffer = generar_zip_boletas(empresa_nombre, periodo_key, df_resultados, df_trab, df_var, auditoria_data)
+                    zip_buffer = generar_zip_boletas(empresa_info, periodo_key, df_resultados, df_trab, df_var, auditoria_data)
                     st.download_button(
-                        label=f"📥 Descargar PAQUETE_{periodo_key}.zip",
+                        label=f"📥 Descargar PAQUETE_{periodo_legible}.zip",
                         data=zip_buffer, file_name=f"BOLETAS_INDIVIDUALES_{periodo_key}.zip", mime="application/zip",
                         type="primary", use_container_width=True
                     )
@@ -404,7 +534,7 @@ def render():
                 df_individual = df_sin_totales[df_sin_totales['DNI'] == dni_sel]
                 
                 with st.spinner('Generando boleta...'):
-                    pdf_ind_buffer = generar_pdf_boletas_masivas(empresa_nombre, periodo_key, df_individual, df_trab, df_var, auditoria_data)
+                    pdf_ind_buffer = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_individual, df_trab, df_var, auditoria_data)
                     st.download_button(
                         label=f"📥 Descargar BOLETA_{dni_sel}.pdf",
                         data=pdf_ind_buffer,

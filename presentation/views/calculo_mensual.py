@@ -150,20 +150,44 @@ MESES = ["01 - Enero", "02 - Febrero", "03 - Marzo", "04 - Abril", "05 - Mayo", 
 
 # --- 1. GENERADORES DE EXPORTACIÓN ---
 
-def generar_excel_sabana(df, empresa_nombre, periodo):
+_MESES_ES_CALC = {
+    "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+    "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+    "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+}
+
+def _periodo_legible_calc(periodo_key: str) -> str:
+    """'02-2026' → 'Febrero - 2026'"""
+    partes = periodo_key.split("-")
+    if len(partes) == 2:
+        return f"{_MESES_ES_CALC.get(partes[0], partes[0])} - {partes[1]}"
+    return periodo_key
+
+# Columnas internas que NO deben aparecer en los reportes (aliases/duplicados)
+_COLS_OCULTAS_SABANA = {"EsSalud Patronal"}
+
+
+def generar_excel_sabana(df, empresa_nombre, periodo, empresa_ruc=""):
     """Genera un archivo Excel nativo (.xlsx) profesional con colores corporativos"""
+    periodo_texto = _periodo_legible_calc(periodo)
+    # Excluir columna duplicada
+    cols_mostrar = [c for c in df.columns if c not in _COLS_OCULTAS_SABANA]
+    df_export = df[cols_mostrar]
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name=f'Planilla_{periodo[:2]}', index=False, startrow=4)
+        df_export.to_excel(writer, sheet_name=f'Planilla_{periodo[:2]}', index=False, startrow=5)
         ws = writer.sheets[f'Planilla_{periodo[:2]}']
-        
+
         # 1. Títulos de Cabecera
         ws['A1'] = empresa_nombre
-        ws['A1'].font = Font(size=16, bold=True, color="1A365D")
-        ws['A2'] = f"DETALLE DE PLANILLA DE REMUNERACIONES - PERIODO {periodo}"
-        ws['A2'].font = Font(size=11, bold=True, color="34495E")
-        ws['A3'] = f"Fecha y Hora de Cálculo: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        ws['A3'].font = Font(size=10, italic=True, color="7F8C8D")
+        ws['A1'].font = Font(size=16, bold=True, color="0F2744")
+        ws['A2'] = empresa_ruc and f"RUC: {empresa_ruc}" or ""
+        ws['A2'].font = Font(size=10, color="64748B")
+        ws['A3'] = f"PLANILLA DE REMUNERACIONES — PERIODO: {periodo_texto}"
+        ws['A3'].font = Font(size=11, bold=True, color="1E4D8C")
+        ws['A4'] = f"Fecha de Cálculo: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        ws['A4'].font = Font(size=10, italic=True, color="7F8C8D")
         
         # 2. Estilos Corporativos
         fill_header = PatternFill(start_color="1A365D", end_color="1A365D", fill_type="solid")
@@ -172,15 +196,15 @@ def generar_excel_sabana(df, empresa_nombre, periodo):
         border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
         fill_total = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
         
-        # 3. Aplicar formato a las celdas de la tabla
-        for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+        # 3. Aplicar formato a las celdas de la tabla (datos desde fila 6)
+        for row in ws.iter_rows(min_row=6, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 cell.border = border_thin
-                if cell.row == 5: # Fila de nombres de columnas
+                if cell.row == 6:  # Fila de nombres de columnas
                     cell.fill = fill_header
                     cell.font = font_header
                     cell.alignment = align_center
-                elif cell.row == ws.max_row: # Última fila (Totales)
+                elif cell.row == ws.max_row:  # Última fila (Totales)
                     cell.fill = fill_total
                     cell.font = Font(bold=True)
                     
@@ -197,56 +221,91 @@ def generar_excel_sabana(df, empresa_nombre, periodo):
     buffer.seek(0)
     return buffer
 
-def generar_pdf_sabana(df, empresa_nombre, periodo):
-    """Genera la sábana principal de planilla con Cuadro Resumen de AFP"""
+def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regimen=""):
+    """Genera la sábana principal de planilla — ajustada a hoja, sin overflow."""
+    periodo_texto = _periodo_legible_calc(periodo)
+
+    # Excluir columna duplicada antes de renderizar
+    cols_mostrar = [c for c in df.columns if c not in _COLS_OCULTAS_SABANA]
+    df = df[cols_mostrar]
+
+    # ── Página landscape legal (1008 × 612 pt), márgenes 12 ──
+    W_PAGE = 1008 - 24   # 984 pt disponibles
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(legal), rightMargin=15, leftMargin=15, topMargin=20, bottomMargin=20)
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(legal),
+        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+    )
     elements = []
     styles = getSampleStyleSheet()
-    
-    title_style = ParagraphStyle('TitleCorp', parent=styles['Normal'], fontSize=16, textColor=colors.HexColor("#0F2027"), fontName="Helvetica-Bold", spaceAfter=5)
-    sub_style = ParagraphStyle('SubCorp', parent=styles['Normal'], fontSize=11, textColor=colors.HexColor("#34495E"), fontName="Helvetica")
-    
+
+    C_NAVY  = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_GOLD  = colors.HexColor("#C9A84C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+    C_GRAY  = colors.HexColor("#64748B")
+
+    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY, spaceAfter=1)
+    st_sub   = ParagraphStyle('S', fontName="Helvetica",      fontSize=9,  textColor=C_GRAY, spaceAfter=1)
+    st_head  = ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=10, textColor=C_STEEL, spaceAfter=8)
+
     fecha_calc = datetime.now().strftime("%d/%m/%Y %H:%M")
-    elements.append(Paragraph(empresa_nombre, title_style))
-    elements.append(Paragraph(f"DETALLE DE PLANILLA DE REMUNERACIONES | PERIODO: {periodo}", sub_style))
-    elements.append(Paragraph(f"FECHA DE CÁLCULO: {fecha_calc}", ParagraphStyle('Date', parent=sub_style, fontSize=9, textColor=colors.HexColor("#7F8C8D"))))
-    
-    # MÁS ESPACIO (AIRE VISUAL) SEGÚN TU SOLICITUD
-    elements.append(Spacer(1, 25)) 
+    ruc_line = f"  |  RUC: {empresa_ruc}" if empresa_ruc else ""
+    reg_line = f"  |  {empresa_regimen}" if empresa_regimen else ""
+    elements.append(Paragraph(empresa_nombre + ruc_line, st_title))
+    elements.append(Paragraph(
+        f"PLANILLA DE REMUNERACIONES  ·  PERIODO: {periodo_texto}{reg_line}", st_head
+    ))
+    elements.append(Paragraph(f"Fecha de cálculo: {fecha_calc}", st_sub))
+    elements.append(Spacer(1, 8))
 
-    # Construir Tabla Principal
-    cols_pdf = df.columns.tolist()
-    data = [cols_pdf]
+    # ── Anchos de columna proporcionales (suman W_PAGE) ──
+    # Orden de columnas esperado tras excluir EsSalud Patronal:
+    col_widths_map = {
+        "N°": 18, "DNI": 52, "Apellidos y Nombres": 108,
+        "Sist. Pensión": 58, "Seg. Social": 50,
+        "Sueldo Base": 52, "Asig. Fam.": 38, "Otros Ingresos": 52,
+        "TOTAL BRUTO": 52, "ONP (13%)": 44, "AFP Aporte": 44,
+        "AFP Seguro": 44, "AFP Comis.": 44, "Ret. 5ta Cat.": 46,
+        "Dsctos/Faltas": 46, "NETO A PAGAR": 55, "Aporte Seg. Social": 58,
+    }
+    col_w = [col_widths_map.get(c, 48) for c in cols_mostrar]
+    # Escalar para ocupar exactamente W_PAGE
+    total_w = sum(col_w)
+    col_w = [w * W_PAGE / total_w for w in col_w]
+
+    # ── Construir datos de la tabla ──
+    # Cabeceras más cortas para encabezado (wrapeadas con Paragraph)
+    hdr_style = ParagraphStyle('HDR', fontName="Helvetica-Bold", fontSize=6.5,
+                               textColor=colors.white, alignment=1, leading=8)
+    data_rows = [[Paragraph(c, hdr_style) for c in cols_mostrar]]
+
     for _, row in df.iterrows():
-        fila_str = []
+        fila = []
         for val in row:
-            if isinstance(val, float): fila_str.append(f"{val:,.2f}") 
-            else: fila_str.append(str(val))
-        data.append(fila_str)
+            if isinstance(val, float): fila.append(f"{val:,.2f}")
+            else:                       fila.append(str(val) if str(val) != "nan" else "")
+        data_rows.append(fila)
 
-    t = Table(data, repeatRows=1)
-    estilo_tabla = [
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1A365D")),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 7.5),
-        ('BOTTOMPADDING', (0,0), (-1,0), 6),
-        ('TOPPADDING', (0,0), (-1,0), 6),
-        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-        ('FONTSIZE', (0,1), (-1,-1), 7),
-        ('ALIGN', (1,1), (1,-1), 'LEFT'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
-        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor("#F8FAFC")]) 
-    ]
-    estilo_tabla.extend([
-        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#CBD5E1")),
-        ('TEXTCOLOR', (0,-1), (-1,-1), colors.HexColor("#0F2027")),
-        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-    ])
-    t.setStyle(TableStyle(estilo_tabla))
+    t = Table(data_rows, colWidths=col_w, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND',    (0,0),  (-1,0),  C_STEEL),
+        ('TEXTCOLOR',     (0,0),  (-1,0),  colors.white),
+        ('ALIGN',         (0,0),  (-1,-1), 'CENTER'),
+        ('VALIGN',        (0,0),  (-1,-1), 'MIDDLE'),
+        ('ALIGN',         (2,1),  (2,-1),  'LEFT'),    # Nombres a la izquierda
+        ('FONTNAME',      (0,1),  (-1,-2), 'Helvetica'),
+        ('FONTSIZE',      (0,1),  (-1,-2), 6.5),
+        ('TOPPADDING',    (0,0),  (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0),  (-1,-1), 4),
+        ('ROWBACKGROUNDS',(0,1),  (-1,-2), [colors.white, C_LIGHT]),
+        ('BACKGROUND',    (0,-1), (-1,-1), colors.HexColor("#CBD5E1")),
+        ('FONTNAME',      (0,-1), (-1,-1), 'Helvetica-Bold'),
+        ('FONTSIZE',      (0,-1), (-1,-1), 6.5),
+        ('GRID',          (0,0),  (-1,-1), 0.3, colors.HexColor("#CBD5E1")),
+        ('LINEABOVE',     (0,-1), (-1,-1), 0.8, C_NAVY),
+        ('LINEBELOW',     (0,0),  (-1,0),  0.8, C_GOLD),
+    ]))
     elements.append(t)
     
     # --- CUADRO RESUMEN DE PREVISIONES (AFP/ONP/SEGURIDAD SOCIAL/5TA) ---
@@ -724,13 +783,17 @@ def render():
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             try:
-                excel_file = generar_excel_sabana(df_resultados, empresa_nombre, periodo_key)
+                empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
+                empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
+                excel_file = generar_excel_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
                 st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             except Exception:
                 csv = df_resultados.to_csv(index=False).encode('utf-8')
                 st.download_button("📊 Descargar Sábana (CSV)", data=csv, file_name=f"PLANILLA_{periodo_key}.csv", mime="text/csv", use_container_width=True)
         with col_btn2:
-            pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key)
+            empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
+            empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
+            pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
             st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
 
         st.markdown("---")
