@@ -39,10 +39,18 @@ if not st.session_state.get('_tablas_verificadas'):
         Base.metadata.create_all(bind=engine)
         # Migraciones incrementales: añaden columnas nuevas sin borrar datos
         _migraciones = [
+            # Seguro social (lote anterior)
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
+            # Cierre de planilla (lote anterior)
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS estado VARCHAR(10) DEFAULT 'ABIERTA'",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS cerrada_por VARCHAR(100)",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS fecha_cierre TIMESTAMP",
+            # PLAME / AFPnet (lote actual)
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS horas_jornada_diaria FLOAT DEFAULT 8.0",
+            "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS codigo_sunat VARCHAR(4)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS apellido_paterno VARCHAR(100)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS apellido_materno VARCHAR(100)",
+            "ALTER TABLE variables_mes ADD COLUMN IF NOT EXISTS suspensiones_json TEXT DEFAULT '{}'",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

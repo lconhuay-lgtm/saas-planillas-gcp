@@ -78,10 +78,14 @@ def _cargar_variables_df(db, empresa_id, periodo_key, conceptos) -> pd.DataFrame
     concepto_nombres = [c.nombre for c in conceptos]
     rows = []
     for v in variables:
+        susp = json.loads(getattr(v, 'suspensiones_json', '{}') or '{}')
+        # Total de ausencias desde suspensiones_json; fallback a dias_faltados
+        total_ausencias = sum(susp.values()) if susp else (v.dias_faltados or 0)
         row = {
             "Num. Doc.": v.trabajador.num_doc,
             "Nombres y Apellidos": v.trabajador.nombres,
-            "Días Faltados": v.dias_faltados or 0,
+            "Días Faltados": total_ausencias,
+            "suspensiones_json": json.dumps(susp),
             "Min. Tardanza": v.min_tardanza or 0,
             "Hrs Extras 25%": v.hrs_extras_25 or 0.0,
             "Hrs Extras 35%": v.hrs_extras_35 or 0.0,
@@ -499,6 +503,11 @@ def render():
             st.info("Vaya al módulo 'Parámetros Legales' y configure las tasas para este periodo.")
             return
 
+        # 1b. Jornada diaria de la empresa (default 8 h)
+        from infrastructure.database.models import Empresa as EmpresaModel
+        empresa_obj = db.query(EmpresaModel).filter_by(id=empresa_id).first()
+        horas_jornada = float(getattr(empresa_obj, 'horas_jornada_diaria', None) or 8.0)
+
         # 2. Trabajadores activos
         df_trab = _cargar_trabajadores_df(db, empresa_id)
         if df_trab.empty:
@@ -541,23 +550,33 @@ def render():
             # --- TIEMPOS Y BASES FIJAS (Proporcionalidad Segura) ---
             try:
                 fecha_ingreso = pd.to_datetime(row['Fecha Ingreso'])
-                mes_calc = int(mes_seleccionado[:2])
+                mes_calc  = int(mes_seleccionado[:2])
                 anio_calc = int(anio_seleccionado)
-                
+
                 dias_computables = 30
                 if fecha_ingreso.year == anio_calc and fecha_ingreso.month == mes_calc:
                     dias_computables = max(0, min(30, 30 - fecha_ingreso.day + 1))
                 elif fecha_ingreso.year > anio_calc or (fecha_ingreso.year == anio_calc and fecha_ingreso.month > mes_calc):
                     dias_computables = 0
             except Exception:
-                dias_computables = 30 # Si falla la fecha, asume mes completo por seguridad
-                
-            sueldo_base_nominal = float(row['Sueldo Base'])
-            sueldo_base_proporcional = (sueldo_base_nominal / 30) * dias_computables
-            valor_dia = sueldo_base_nominal / 30
-            valor_hora = valor_dia / 8
+                dias_computables = 30
 
-            dscto_faltas = float(row['Días Faltados']) * valor_dia
+            # Suspensiones desde suspensiones_json; fallback a Días Faltados
+            susp_raw = str(row.get('suspensiones_json', '{}') or '{}')
+            try:
+                susp_dict = json.loads(susp_raw)
+            except Exception:
+                susp_dict = {}
+            total_ausencias   = sum(susp_dict.values()) if susp_dict else float(row.get('Días Faltados', 0))
+            dias_laborados    = max(0, int(dias_computables) - int(total_ausencias))
+            horas_ordinarias  = int(dias_laborados * horas_jornada)
+
+            sueldo_base_nominal      = float(row['Sueldo Base'])
+            valor_dia                = sueldo_base_nominal / 30
+            valor_hora               = valor_dia / horas_jornada
+            sueldo_base_proporcional = valor_dia * dias_computables
+
+            dscto_faltas    = float(total_ausencias) * valor_dia
             dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
             sueldo_computable = max(0.0, sueldo_base_proporcional - dscto_faltas - dscto_tardanzas)
 
@@ -717,7 +736,12 @@ def render():
             })
 
             auditoria_data[dni_trabajador] = {
-                "nombres": nombres, "periodo": periodo_key, "dias": dias_computables,
+                "nombres": nombres, "periodo": periodo_key,
+                "dias": dias_laborados,               # días efectivamente laborados
+                "dias_computables": dias_computables,  # base de proporcionalidad
+                "horas_ordinarias": horas_ordinarias,  # para .JOR de PLAME
+                "suspensiones": susp_dict,             # para .SNL de PLAME
+                "base_afp": round(base_afp_onp, 2),   # para AFPnet
                 "seguro_social": etiqueta_seguro,
                 "aporte_seg_social": round(aporte_essalud, 2),
                 "ingresos": desglose_ingresos, "descuentos": desglose_descuentos,
