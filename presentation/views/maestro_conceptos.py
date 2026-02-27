@@ -18,7 +18,7 @@ CONCEPTOS_OBLIGATORIOS = [
 ]
 NOMBRES_OBLIGATORIOS = {c["nombre"] for c in CONCEPTOS_OBLIGATORIOS}
 
-# Lista ordenada de opciones para el selectbox
+# Lista ordenada de opciones para el selectbox (catálogo T22)
 _OPCIONES_CATALOGO = [
     f"{cod} — {info['desc']} [{info['tipo']}]"
     for cod, info in sorted(CATALOGO_T22_INGRESOS.items())
@@ -27,6 +27,8 @@ _COD_POR_OPCION = {
     f"{cod} — {info['desc']} [{info['tipo']}]": cod
     for cod, info in sorted(CATALOGO_T22_INGRESOS.items())
 }
+# Mapa inverso: código → opción de catálogo (para preseleccionar)
+_OPCION_POR_COD = {v: k for k, v in _COD_POR_OPCION.items()}
 
 
 def sembrar_conceptos_por_defecto(empresa_id: int, db):
@@ -57,14 +59,14 @@ def render():
     try:
         sembrar_conceptos_por_defecto(empresa_id, db)
 
+        # Mensajes diferidos (sobreviven al st.rerun)
         if st.session_state.get('msg_exito_concepto'):
             st.success(st.session_state.pop('msg_exito_concepto'))
 
-        tab1, tab2 = st.tabs(["Conceptos de la Empresa", "Crear Nuevo Concepto"])
+        tab1, tab2 = st.tabs(["📋 Conceptos de la Empresa", "➕ Crear Nuevo Concepto"])
 
-        # ── TAB 1: LISTADO ────────────────────────────────────────────────────
+        # ── TAB 1: LISTADO + EDICIÓN INTELIGENTE ─────────────────────────────
         with tab1:
-            st.subheader("Catálogo de Conceptos Activos")
             conceptos_db = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
             if not conceptos_db:
                 st.info("Sin conceptos. Recargue la página.")
@@ -78,6 +80,10 @@ def render():
                     f"⚠️ **{len(sin_codigo)} concepto(s) sin código SUNAT oficial** — no podrán "
                     f"incluirse en la exportación PLAME hasta que se asignen: {nombres_sc}"
                 )
+
+            # ── Sección A: Tabla de afectaciones (edición rápida de booleans) ──
+            st.subheader("Catálogo de Conceptos Activos")
+            st.caption("Edite las marcas de afectación directamente en la tabla y presione Guardar.")
 
             rows = []
             for c in conceptos_db:
@@ -108,7 +114,7 @@ def render():
                 key="editor_conceptos",
             )
 
-            if st.button("Guardar Cambios", type="primary"):
+            if st.button("💾 Guardar Cambios de Afectaciones", type="primary"):
                 try:
                     cmap = {c.nombre: c for c in conceptos_db}
                     for _, row in df_edit.iterrows():
@@ -120,11 +126,113 @@ def render():
                             c.computable_cts   = bool(row["Computable CTS"])
                             c.computable_grati = bool(row["Computable Grati"])
                     db.commit()
-                    st.success("Reglas tributarias actualizadas.")
+                    st.session_state['msg_exito_concepto'] = "✅ Reglas tributarias actualizadas correctamente."
                     st.rerun()
                 except Exception as e:
                     db.rollback()
                     st.error(f"Error: {e}")
+
+            st.markdown("---")
+
+            # ── Sección B: Edición inteligente — reasignar código SUNAT ──────
+            st.subheader("✏️ Editar Concepto — Reasignar Código SUNAT")
+            st.info(
+                "Seleccione un concepto existente y asígnele (o cambie) su código del "
+                "catálogo oficial SUNAT (Tabla 22 PLAME). Las afectaciones se autocompletarán."
+            )
+
+            # Selectbox para elegir concepto existente
+            nombres_existentes = [c.nombre for c in conceptos_db]
+            concepto_a_editar = st.selectbox(
+                "Concepto a editar:",
+                nombres_existentes,
+                key="sel_concepto_editar",
+            )
+
+            obj_editar = next((c for c in conceptos_db if c.nombre == concepto_a_editar), None)
+
+            if obj_editar:
+                # Preseleccionar el código actual en el catálogo (si existe)
+                cod_actual = getattr(obj_editar, 'codigo_sunat', None) or ''
+                idx_default = 0
+                if cod_actual and cod_actual in _OPCION_POR_COD:
+                    opcion_actual = _OPCION_POR_COD[cod_actual]
+                    if opcion_actual in _OPCIONES_CATALOGO:
+                        idx_default = _OPCIONES_CATALOGO.index(opcion_actual)
+
+                col_izq, col_der = st.columns(2)
+
+                with col_izq:
+                    st.markdown("**Catálogo SUNAT (Tabla 22)**")
+                    catalogo_sel = st.selectbox(
+                        "Seleccione código SUNAT:",
+                        _OPCIONES_CATALOGO,
+                        index=idx_default,
+                        key="sel_cat_editar",
+                    )
+                    cod_nuevo  = _COD_POR_OPCION[catalogo_sel]
+                    info_nuevo = CATALOGO_T22_INGRESOS[cod_nuevo]
+
+                    # Afectaciones automáticas (solo lectura)
+                    st.markdown("**Afectaciones automáticas según SUNAT:**")
+                    st.checkbox("Afecto AFP/ONP",       value=info_nuevo["afp"],      disabled=True, key="e_cb_afp")
+                    st.checkbox("Afecto 5ta Categoría", value=info_nuevo["quinta"],   disabled=True, key="e_cb_5ta")
+                    st.checkbox("Afecto EsSalud",        value=info_nuevo["essalud"],  disabled=True, key="e_cb_ess")
+                    st.caption(f"Tipo SUNAT: **{info_nuevo['tipo']}**  |  Código: **{cod_nuevo}**")
+
+                with col_der:
+                    st.markdown("**Nombre y Beneficios Sociales**")
+                    nombre_edit = st.text_input(
+                        "Nombre del concepto:",
+                        value=obj_editar.nombre,
+                        key="edit_nombre_concepto",
+                        help="Puede personalizar el nombre para su empresa.",
+                    )
+                    es_oblig = obj_editar.nombre in NOMBRES_OBLIGATORIOS
+                    if es_oblig:
+                        st.caption("⚠️ Concepto obligatorio — nombre protegido.")
+                    comp_cts_edit   = st.checkbox(
+                        "Computable para CTS",
+                        value=bool(obj_editar.computable_cts),
+                        key="e_cb_cts",
+                    )
+                    comp_grati_edit = st.checkbox(
+                        "Computable para Gratificación",
+                        value=bool(obj_editar.computable_grati),
+                        key="e_cb_gra",
+                    )
+
+                if st.button("🔄 Actualizar Concepto", type="primary", use_container_width=True):
+                    try:
+                        nombre_final = (obj_editar.nombre if es_oblig
+                                        else (nombre_edit.strip().upper() or obj_editar.nombre))
+
+                        # Verificar duplicado de nombre (solo si cambió)
+                        if nombre_final != obj_editar.nombre:
+                            dup = db.query(Concepto).filter_by(
+                                empresa_id=empresa_id, nombre=nombre_final
+                            ).first()
+                            if dup:
+                                st.error(f"Ya existe un concepto con el nombre '{nombre_final}'.")
+                                st.stop()
+
+                        obj_editar.nombre          = nombre_final
+                        obj_editar.codigo_sunat    = cod_nuevo
+                        obj_editar.tipo            = info_nuevo["tipo"]
+                        obj_editar.afecto_afp      = info_nuevo["afp"]
+                        obj_editar.afecto_5ta      = info_nuevo["quinta"]
+                        obj_editar.afecto_essalud  = info_nuevo["essalud"]
+                        obj_editar.computable_cts  = comp_cts_edit
+                        obj_editar.computable_grati = comp_grati_edit
+                        db.commit()
+                        st.session_state['msg_exito_concepto'] = (
+                            f"✅ Concepto **{nombre_final}** actualizado — "
+                            f"Código SUNAT asignado: {cod_nuevo}."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Error al actualizar: {e}")
 
         # ── TAB 2: NUEVO CONCEPTO ─────────────────────────────────────────────
         with tab2:
@@ -163,7 +271,7 @@ def render():
                     help="Deje el nombre por defecto o personalícelo para su empresa.",
                 )
 
-            if st.button("Crear Concepto", type="primary", use_container_width=True):
+            if st.button("➕ Crear Concepto", type="primary", use_container_width=True):
                 nombre_final = nombre_custom.strip().upper() or info_sel["desc"].upper()
                 existe = db.query(Concepto).filter_by(empresa_id=empresa_id, nombre=nombre_final).first()
                 if existe:
@@ -177,7 +285,9 @@ def render():
                             computable_cts=comp_cts, computable_grati=comp_grati,
                         ))
                         db.commit()
-                        st.session_state['msg_exito_concepto'] = f"Concepto '{nombre_final}' creado (SUNAT {cod_sel})."
+                        st.session_state['msg_exito_concepto'] = (
+                            f"✅ Concepto **{nombre_final}** creado exitosamente (SUNAT {cod_sel})."
+                        )
                         st.rerun()
                     except Exception as e:
                         db.rollback()
