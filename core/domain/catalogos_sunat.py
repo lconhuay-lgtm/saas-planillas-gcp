@@ -1,12 +1,12 @@
 """
 Catálogos oficiales SUNAT para PLAME (Tabla 21 y Tabla 22).
 
-Los datos se leen desde archivos Excel en la raíz del proyecto:
-  - tabla_ingresos_Plame.xlsx  → CATALOGO_T22_INGRESOS
-  - suspensiones_plame.xlsx    → CATALOGO_T21_SUSPENSIONES
+Los datos se leen desde archivos CSV en la raíz del proyecto:
+  - tabla_ingresos_plame.csv  → CATALOGO_T22_INGRESOS
+  - suspensiones_plame.csv    → CATALOGO_T21_SUSPENSIONES
 
 Si los archivos no existen, se usan tablas de fallback con los conceptos
-más frecuentes.  Para actualizar el catálogo, edita el Excel y reinicia.
+más frecuentes.  Para actualizar el catálogo, edita el CSV y reinicia.
 """
 from pathlib import Path
 import pandas as pd
@@ -15,19 +15,25 @@ import pandas as pd
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
-def _leer_excel(filename: str) -> pd.DataFrame | None:
+def _leer_csv(filename: str) -> pd.DataFrame | None:
+    """Lee un CSV con encoding UTF-8; intenta latin-1 como fallback para
+    preservar tildes y eñes escritas con otros editores."""
     path = _BASE_DIR / filename
-    if path.exists():
+    if not path.exists():
+        return None
+    for enc in ("utf-8", "utf-8-sig", "latin-1"):
         try:
-            return pd.read_excel(path, dtype=str)
-        except Exception:
-            pass
+            df = pd.read_csv(path, dtype=str, encoding=enc, sep=",")
+            if not df.empty:
+                return df
+        except (UnicodeDecodeError, Exception):
+            continue
     return None
 
 
 def _cargar_t22() -> dict:
     """Tabla 22 PLAME — Conceptos Remunerativos."""
-    df = _leer_excel("tabla_ingresos_Plame.xlsx")
+    df = _leer_csv("tabla_ingresos_plame.csv")
     if df is not None and not df.empty:
         result: dict = {}
         for _, row in df.iterrows():
@@ -172,7 +178,7 @@ def _cargar_t22() -> dict:
 
 def _cargar_t21() -> dict:
     """Tabla 21 PLAME — Tipos de suspensión / inasistencia."""
-    df = _leer_excel("suspensiones_plame.xlsx")
+    df = _leer_csv("suspensiones_plame.csv")
     if df is not None and not df.empty:
         result: dict = {}
         for _, row in df.iterrows():

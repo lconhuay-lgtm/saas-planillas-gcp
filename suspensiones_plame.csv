@@ -1,0 +1,29 @@
+codigo,descripcion
+01,Subsidio por Incapacidad Temporal
+02,Descanso por Maternidad Pre Natal
+03,Descanso por Maternidad Post Natal
+04,Accidente de Trabajo o Enfermedad Profesional
+05,Licencia Sindical
+06,Suspension Perfecta de Labores
+07,Inasistencia Injustificada
+08,Huelga
+09,Sancion Disciplinaria
+10,Detención del Trabajador
+11,Inhabilitación del Trabajador
+12,Suspension Imperfecta de Labores
+13,Cierre Temporal por Infraccion Tributaria
+14,Caso Fortuito o Fuerza Mayor
+15,Otros Suspension de Labores con Pago de Remuneracion
+16,Licencia sin Goce de Haber
+17,Permiso o Licencia Particular
+18,Designacion en Cargo de Confianza
+19,Prestacion de Servicios en el Extranjero
+20,Descanso Medico (ESSALUD)
+21,Descanso Medico (EPS)
+22,Accidente de Trabajo / Enfermedad Profesional
+23,Vacaciones
+24,Descanso por Maternidad / Paternidad
+25,Licencia con Goce de Haber
+26,Licencia por Maternidad (pre/post natal)
+27,Licencia por Paternidad
+28,Comision Sindical
