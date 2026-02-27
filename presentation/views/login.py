@@ -29,95 +29,93 @@ def render():
     .stApp {
         background: linear-gradient(160deg, #03080F 0%, #071526 45%, #0A2040 100%) !important;
     }
-    /* Ocultar elementos de Streamlit durante el login */
-    [data-testid="stSidebar"]          { display: none !important; }
-    header[data-testid="stHeader"]     { background: transparent !important; box-shadow: none !important; }
-    [data-testid="stToolbar"]          { display: none !important; }
-    #MainMenu, footer                  { visibility: hidden !important; }
-    /* Ocultar decoración de barra superior */
-    [data-testid="stDecoration"]       { display: none !important; }
+    /* Ocultar chrome de Streamlit durante el login */
+    [data-testid="stSidebar"]        { display: none !important; }
+    header[data-testid="stHeader"]   { background: transparent !important; box-shadow: none !important; }
+    [data-testid="stToolbar"]        { display: none !important; }
+    [data-testid="stDecoration"]     { display: none !important; }
+    #MainMenu, footer                { visibility: hidden !important; }
 
-    /* ── Centrar y acotar el contenido ────────────────────────────── */
+    /* ── Columna principal muy angosta y centrada ─────────────────── */
     .main .block-container {
-        max-width: 360px !important;
-        padding-top: 7vh   !important;
-        padding-bottom: 2vh !important;
-        padding-left:  1rem !important;
-        padding-right: 1rem !important;
-        margin: 0 auto  !important;
+        max-width      : 300px  !important;
+        padding-top    : 6vh    !important;
+        padding-bottom : 2vh    !important;
+        padding-left   : 0.5rem !important;
+        padding-right  : 0.5rem !important;
+        margin         : 0 auto !important;
     }
 
     /* ── Tarjeta del formulario ───────────────────────────────────── */
     [data-testid="stForm"] {
-        background    : rgba(8, 22, 42, 0.92)       !important;
-        border        : 1px solid rgba(30,136,229,.22) !important;
-        border-radius : 10px                         !important;
-        padding       : 28px 30px 24px 30px          !important;
-        box-shadow    : 0 24px 64px rgba(0,0,0,.55)  !important;
-        backdrop-filter: blur(14px)                  !important;
+        background     : rgba(7, 18, 36, 0.96)          !important;
+        border         : 1px solid rgba(30,136,229,.28)  !important;
+        border-radius  : 10px                            !important;
+        padding        : 24px 22px 20px 22px             !important;
+        box-shadow     : 0 20px 56px rgba(0,0,0,.65)     !important;
     }
 
-    /* ── Etiquetas de campo ──────────────────────────────────────── */
+    /* ── Labels ─────────────────────────────────────────────────── */
     .stTextInput label p {
-        color          : #7EB8F7           !important;
-        font-size      : 0.70rem           !important;
-        font-weight    : 600               !important;
-        letter-spacing : 0.10em           !important;
-        text-transform : uppercase         !important;
-        margin-bottom  : 4px              !important;
+        color          : #7EB8F7  !important;
+        font-size      : 0.68rem  !important;
+        font-weight    : 700      !important;
+        letter-spacing : 0.10em   !important;
+        text-transform : uppercase !important;
+        margin-bottom  : 2px      !important;
     }
 
-    /* ── Inputs ──────────────────────────────────────────────────── */
-    .stTextInput > div > div > input {
-        background-color : rgba(255,255,255,0.04) !important;
-        border           : 1px solid rgba(30,136,229,.30) !important;
-        border-radius    : 5px     !important;
-        color            : #E3F2FD !important;
-        font-size        : 0.85rem !important;
-        padding          : 7px 11px !important;
-        height           : 36px    !important;
-        transition       : border-color .18s, box-shadow .18s !important;
+    /* ── Inputs — fondo claro + texto oscuro para legibilidad ─────── */
+    .stTextInput > div > div > input,
+    .stTextInput > div > div > input[type="password"] {
+        background-color      : #E8F0FE                     !important;
+        border                : 1.5px solid #1565C0          !important;
+        border-radius         : 5px                          !important;
+        color                 : #0D1B3E                      !important;
+        -webkit-text-fill-color: #0D1B3E                     !important;
+        caret-color           : #0D1B3E                      !important;
+        font-size             : 0.84rem                      !important;
+        padding               : 6px 10px                     !important;
+        height                : 34px                         !important;
+        transition            : border-color .15s, box-shadow .15s !important;
     }
     .stTextInput > div > div > input:focus {
-        border-color     : #1E88E5 !important;
-        box-shadow       : 0 0 0 3px rgba(30,136,229,.18) !important;
-        background-color : rgba(255,255,255,.07) !important;
-        outline          : none !important;
+        border-color          : #1E88E5                      !important;
+        box-shadow            : 0 0 0 3px rgba(30,136,229,.22) !important;
+        background-color      : #FFFFFF                      !important;
+        -webkit-text-fill-color: #0D1B3E                     !important;
+        outline               : none                         !important;
     }
     .stTextInput > div > div > input::placeholder {
-        color: rgba(144,202,249,.40) !important;
-        font-size: 0.82rem !important;
+        color        : rgba(13,27,62,.40) !important;
+        font-size    : 0.80rem            !important;
     }
 
-    /* ── Botón de envío ──────────────────────────────────────────── */
+    /* ── Botón enviar ─────────────────────────────────────────────── */
     [data-testid="stFormSubmitButton"] button {
-        background    : linear-gradient(90deg, #1249A0 0%, #1976D2 100%) !important;
-        border        : none                             !important;
-        border-radius : 5px                              !important;
-        color         : #FFFFFF                          !important;
-        font-size     : 0.75rem                          !important;
-        font-weight   : 700                              !important;
-        letter-spacing: 0.14em                           !important;
-        text-transform: uppercase                        !important;
-        height        : 38px                             !important;
-        box-shadow    : 0 4px 16px rgba(25,118,210,.35)  !important;
-        transition    : all .18s                         !important;
-        margin-top    : 6px                              !important;
+        background    : linear-gradient(90deg,#1249A0,#1976D2) !important;
+        border        : none                              !important;
+        border-radius : 5px                               !important;
+        color         : #FFFFFF                           !important;
+        font-size     : 0.72rem                           !important;
+        font-weight   : 700                               !important;
+        letter-spacing: 0.12em                            !important;
+        text-transform: uppercase                         !important;
+        height        : 36px                              !important;
+        box-shadow    : 0 4px 14px rgba(25,118,210,.40)   !important;
+        transition    : all .15s                          !important;
+        margin-top    : 4px                               !important;
     }
     [data-testid="stFormSubmitButton"] button:hover {
-        background    : linear-gradient(90deg, #1565C0 0%, #1E88E5 100%) !important;
-        box-shadow    : 0 6px 22px rgba(30,136,229,.50)  !important;
-        transform     : translateY(-1px)                 !important;
-    }
-    [data-testid="stFormSubmitButton"] button:active {
-        transform: translateY(0) !important;
-        box-shadow: 0 2px 8px rgba(30,136,229,.30) !important;
+        background    : linear-gradient(90deg,#1565C0,#1E88E5) !important;
+        box-shadow    : 0 6px 20px rgba(30,136,229,.55)   !important;
+        transform     : translateY(-1px)                  !important;
     }
 
-    /* ── Mensajes de alerta (error/success) ──────────────────────── */
+    /* ── Alertas ─────────────────────────────────────────────────── */
     [data-testid="stAlert"] {
-        border-radius : 6px      !important;
-        font-size     : 0.80rem  !important;
+        border-radius : 6px     !important;
+        font-size     : 0.78rem !important;
     }
     </style>
     """, unsafe_allow_html=True)
