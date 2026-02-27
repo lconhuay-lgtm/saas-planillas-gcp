@@ -412,48 +412,51 @@ def render():
 
     db = SessionLocal()
     try:
-        # ── RECUPERAR PLANILLA: session_state tiene prioridad, Neon es el respaldo ──
-        hay_planilla_en_sesion = (
-            'res_planilla' in st.session_state
+        # ── SIEMPRE cargar planillas disponibles de Neon y mostrar selector ──────
+        planillas = _recuperar_datos_desde_neon(db, empresa_id)
+        if not planillas:
+            st.warning("⚠️ No hay planillas calculadas para esta empresa.")
+            st.info("Vaya al módulo 'Cálculo de Planilla', seleccione un periodo y ejecute el motor primero.")
+            return
+
+        periodos_disponibles = [p.periodo_key for p in planillas]
+        labels_disponibles   = [_periodo_legible(k) for k in periodos_disponibles]
+
+        # Detectar periodo activo en sesión para poner como default
+        session_periodo = ""
+        if st.session_state.get('auditoria_data'):
+            vals = list(st.session_state['auditoria_data'].values())
+            if vals:
+                session_periodo = vals[0].get('periodo', '')
+
+        default_idx = periodos_disponibles.index(session_periodo) if session_periodo in periodos_disponibles else 0
+        sel_label   = st.selectbox(
+            "Seleccione el periodo a emitir:", labels_disponibles,
+            index=default_idx, key="emision_periodo_sel"
+        )
+        periodo_key = periodos_disponibles[labels_disponibles.index(sel_label)]
+
+        # Cargar datos: desde sesión si coincide el periodo, sino desde Neon
+        session_matches = (
+            periodo_key == session_periodo
             and not st.session_state.get('res_planilla', pd.DataFrame()).empty
         )
-
-        if hay_planilla_en_sesion:
-            # Datos ya en memoria (misma sesión de navegador)
-            df_resultados = st.session_state['res_planilla']
+        if session_matches:
+            df_resultados  = st.session_state['res_planilla']
             auditoria_data = st.session_state.get('auditoria_data', {})
-            periodo_key = list(auditoria_data.values())[0]['periodo'] if auditoria_data else "Desconocido"
             df_trab = st.session_state.get('trabajadores_mock', pd.DataFrame())
-            df_var = st.session_state.get('variables_por_periodo', {}).get(periodo_key, pd.DataFrame())
-
-            # Si df_trab o df_var están vacíos, cargarlos de Neon como respaldo
+            df_var  = st.session_state.get('variables_por_periodo', {}).get(periodo_key, pd.DataFrame())
             if df_trab.empty or df_var.empty:
-                df_res_db, aud_db, df_trab, df_var = _cargar_planilla_periodo(db, empresa_id, periodo_key)
+                _, _, df_trab, df_var = _cargar_planilla_periodo(db, empresa_id, periodo_key)
         else:
-            # Sin sesión activa: recuperar de Neon y mostrar selector de periodo
-            planillas = _recuperar_datos_desde_neon(db, empresa_id)
-            if not planillas:
-                st.warning("⚠️ No hay planillas calculadas para esta empresa.")
-                st.info("Vaya al módulo 'Cálculo de Planilla', seleccione un periodo y ejecute el motor primero.")
-                return
-
-            periodos_disponibles = [p.periodo_key for p in planillas]
-            st.info("📂 Sesión reiniciada. Seleccione el periodo a emitir:")
-            periodo_key = st.selectbox(
-                "Periodos con planilla calculada:", periodos_disponibles,
-                key="emision_periodo_sel"
-            )
-
             df_resultados, auditoria_data, df_trab, df_var = _cargar_planilla_periodo(
                 db, empresa_id, periodo_key
             )
             if df_resultados is None:
                 st.error(f"No se pudo cargar la planilla del periodo {periodo_key}.")
                 return
-
-            # Restaurar session_state para consistencia
-            st.session_state['res_planilla'] = df_resultados
-            st.session_state['auditoria_data'] = auditoria_data
+            st.session_state['res_planilla']     = df_resultados
+            st.session_state['auditoria_data']   = auditoria_data
             st.session_state['trabajadores_mock'] = df_trab
             if 'variables_por_periodo' not in st.session_state:
                 st.session_state['variables_por_periodo'] = {}
