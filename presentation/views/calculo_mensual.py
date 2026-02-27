@@ -237,8 +237,24 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
     """Genera la sábana principal de planilla — ajustada a hoja, sin overflow."""
     periodo_texto = _periodo_legible_calc(periodo)
 
-    # Excluir columna duplicada antes de renderizar
-    cols_mostrar = [c for c in df.columns if c not in _COLS_OCULTAS_SABANA]
+    # 1. Excluir columnas internas/duplicadas y datos bancarios (exclusivos del Reporte Tesorería)
+    _OCULTAR_PDF = _COLS_OCULTAS_SABANA | {"Banco", "N° Cuenta", "CCI"}
+    cols_work = [c for c in df.columns if c not in _OCULTAR_PDF]
+    df = df[cols_work].copy()
+
+    # 2. Excluir columnas numéricas donde TODOS los trabajadores tienen 0
+    #    (ej. "Otros Ingresos" si nadie tiene bonos extra). Se compara solo sobre filas de datos, no la fila TOTALES.
+    _COLS_IDENTIDAD = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social"}
+    if 'Apellidos y Nombres' in df.columns:
+        df_datos = df[df['Apellidos y Nombres'] != 'TOTALES']
+    else:
+        df_datos = df.iloc[:-1]
+    cols_mostrar = [
+        c for c in df.columns
+        if c in _COLS_IDENTIDAD
+        or (c not in df_datos.columns)
+        or pd.to_numeric(df_datos[c], errors='coerce').fillna(0).sum() != 0
+    ]
     df = df[cols_mostrar]
 
     # ── Página landscape legal (1008 × 612 pt), márgenes 12 ──
@@ -960,8 +976,8 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             tot_p["NETO A PAGAR"] = tot_p.get("NETO A PAGAR", 0.0) + neto
             rows_p.append(fila)
 
-        # Fila de totales
-        tot_fila = [Paragraph("TOTALES", tot_s), "", ""]
+        # Fila de totales: N° y DNI vacíos, "TOTALES" en columna de nombres (índice 2)
+        tot_fila = ["", "", Paragraph("TOTALES", tot_s)]
         for _, dsp in dynamic_income:
             tot_fila.append(f"{tot_p.get(dsp, 0.0):,.2f}")
         tot_fila += [f"{tot_p.get('TOTAL BRUTO', 0.0):,.2f}", f"{tot_p.get('Ret. Pensiones', 0.0):,.2f}"]
@@ -1040,7 +1056,8 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             rows_l.append(fila)
             tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
 
-        tot_l_fila = [Paragraph("TOTALES", tot_s), "", ""]
+        # Fila de totales locadores: "TOTALES" en columna de nombres (índice 2)
+        tot_l_fila = ["", "", Paragraph("TOTALES", tot_s)]
         if has_dnp:
             tot_l_fila += ["", ""]
         tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", "", "", ""]
@@ -1068,6 +1085,147 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         elements.append(t2)
     else:
         elements.append(Paragraph("(Sin locadores de servicio para este periodo)", st_sub))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
+def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_ruc=""):
+    """
+    Genera un PDF corporativo para el Reporte Personalizado con cualquier combinación
+    de columnas seleccionadas por el usuario.
+    Paleta corporativa C_NAVY / C_STEEL / C_GOLD. Landscape Legal.
+    """
+    periodo_texto = _periodo_legible_calc(periodo_key)
+    W_PAGE = 1008 - 24  # 984 pt disponibles en landscape legal con márgenes 12
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(legal),
+        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+    )
+    elements = []
+
+    C_NAVY  = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_GOLD  = colors.HexColor("#C9A84C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+
+    st_title = ParagraphStyle('RPT',  fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY,  spaceAfter=4)
+    st_sub   = ParagraphStyle('RPS',  fontName="Helvetica",      fontSize=9,  textColor=colors.HexColor("#64748B"), spaceAfter=2)
+    st_sec   = ParagraphStyle('RPSC', fontName="Helvetica-Bold", fontSize=9,  textColor=C_STEEL, spaceBefore=4, spaceAfter=4)
+    hdr_s    = ParagraphStyle('RPH',  fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,
+                               alignment=TA_CENTER, wordWrap='CJK', leading=8)
+    nom_s    = ParagraphStyle('RPN',  fontName="Helvetica",      fontSize=6.5, textColor=colors.black,
+                               wordWrap='CJK', leading=8)
+    tot_s    = ParagraphStyle('RPTOT',fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,
+                               alignment=TA_CENTER)
+
+    # Encabezado corporativo
+    elements.append(Paragraph(empresa_nombre.upper(), st_title))
+    if empresa_ruc:
+        elements.append(Paragraph(f"RUC: {empresa_ruc}", st_sub))
+    elements.append(Paragraph(f"{titulo}  |  Periodo: {periodo_texto}", st_sec))
+    elements.append(Paragraph(f"Emitido el {datetime.now().strftime('%d/%m/%Y %H:%M')}", st_sub))
+    elements.append(Spacer(1, 6))
+
+    if df is None or df.empty:
+        elements.append(Paragraph("(Sin datos disponibles para el reporte)", st_sub))
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+
+    cols = list(df.columns)
+
+    # Anchos base por columna (se escalan proporcionalmente a W_PAGE)
+    _DEFAULT_W = {
+        "N°": 20, "DNI": 48,
+        "Apellidos y Nombres": 120, "Locador": 120, "Nombres y Apellidos": 120,
+        "Cargo": 75, "Cargo / Actividad": 80,
+        "Sist. Pensión": 55, "Seg. Social": 50,
+        "Sueldo Base": 52, "Asig. Fam.": 40, "Otros Ingresos": 52,
+        "TOTAL BRUTO": 56, "ONP (13%)": 46, "AFP Aporte": 46,
+        "AFP Seguro": 46, "AFP Comis.": 46, "Ret. 5ta Cat.": 48,
+        "Dsctos/Faltas": 46, "NETO A PAGAR": 58, "Aporte Seg. Social": 58,
+        "Honorario Base": 58, "Días no Prestados": 52, "Descuento Días": 52,
+        "Otros Pagos": 52, "Pago Bruto": 56, "Retención 4ta (8%)": 56,
+        "Otros Descuentos": 56,
+        "Banco": 55, "N° Cuenta": 72, "CCI": 82,
+    }
+    col_w = [_DEFAULT_W.get(c, 58) for c in cols]
+    total_w = sum(col_w)
+    col_w = [w * W_PAGE / total_w for w in col_w]
+
+    # Columnas de texto (no se suman en la fila de totales)
+    _TEXTO = {
+        "N°", "DNI", "Apellidos y Nombres", "Locador", "Nombres y Apellidos",
+        "Cargo", "Cargo / Actividad", "Sist. Pensión", "Seg. Social",
+        "Banco", "N° Cuenta", "CCI",
+    }
+    # Índice de la columna principal de nombres (para word-wrap y alineación izquierda)
+    nom_idx = next(
+        (i for i, c in enumerate(cols) if c in {"Apellidos y Nombres", "Locador", "Nombres y Apellidos"}),
+        -1
+    )
+
+    # ── Construir filas de la tabla ──────────────────────────────────────────────
+    rows_pdf = [[Paragraph(c, hdr_s) for c in cols]]
+
+    for _, row in df.iterrows():
+        fila = []
+        for j, c in enumerate(cols):
+            val = row.get(c, "")
+            val_str = str(val) if str(val) not in ("nan", "None", "NaN") else ""
+            if j == nom_idx:
+                fila.append(Paragraph(val_str, nom_s))
+            elif isinstance(val, float) and str(val) not in ("nan", "NaN"):
+                fila.append(f"{val:,.2f}")
+            else:
+                fila.append(val_str)
+        rows_pdf.append(fila)
+
+    # ── Fila de totales ──────────────────────────────────────────────────────────
+    tot_row = []
+    for j, c in enumerate(cols):
+        if c in _TEXTO:
+            # "TOTALES" va en la columna de nombres; las demás texto quedan vacías
+            tot_row.append(Paragraph("TOTALES", tot_s) if j == nom_idx else "")
+        else:
+            try:
+                total = pd.to_numeric(df[c], errors='coerce').fillna(0).sum()
+                tot_row.append(f"{total:,.2f}")
+            except Exception:
+                tot_row.append("")
+    # Si no hay columna de nombres, poner TOTALES en índice 2 (o 0 si hay menos columnas)
+    if nom_idx < 0 and len(cols) > 0:
+        tot_row[min(2, len(cols) - 1)] = Paragraph("TOTALES", tot_s)
+    rows_pdf.append(tot_row)
+
+    # ── Estilos de la tabla ──────────────────────────────────────────────────────
+    style_cmds = [
+        ('BACKGROUND',    (0, 0),  (-1, 0),  C_NAVY),
+        ('BACKGROUND',    (0, -1), (-1, -1), C_STEEL),
+        ('TEXTCOLOR',     (0, 0),  (-1, 0),  colors.white),
+        ('TEXTCOLOR',     (0, -1), (-1, -1), colors.white),
+        ('FONTNAME',      (0, 0),  (-1, 0),  'Helvetica-Bold'),
+        ('FONTNAME',      (0, 1),  (-1, -2), 'Helvetica'),
+        ('FONTNAME',      (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE',      (0, 0),  (-1, -1), 6.5),
+        ('ALIGN',         (0, 0),  (-1, -1), 'CENTER'),
+        ('VALIGN',        (0, 0),  (-1, -1), 'MIDDLE'),
+        ('TOPPADDING',    (0, 0),  (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0),  (-1, -1), 3),
+        ('ROWBACKGROUNDS',(0, 1),  (-1, -2), [colors.white, C_LIGHT]),
+        ('GRID',          (0, 0),  (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+        ('LINEBELOW',     (0, 0),  (-1, 0),  0.8, C_GOLD),
+    ]
+    if nom_idx >= 0:
+        style_cmds.append(('ALIGN', (nom_idx, 1), (nom_idx, -2), 'LEFT'))
+
+    t = Table(rows_pdf, colWidths=col_w, repeatRows=1)
+    t.setStyle(TableStyle(style_cmds))
+    elements.append(t)
 
     doc.build(elements)
     buffer.seek(0)

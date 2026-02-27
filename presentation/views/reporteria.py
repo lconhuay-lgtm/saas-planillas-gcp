@@ -620,21 +620,49 @@ def render():
                     st.markdown("**Vista Previa:**")
                     st.dataframe(df_preview, use_container_width=True, hide_index=True)
 
-                    # Botón de descarga Excel
+                    tipo_file = "PLANILLA" if tipo_rep.startswith("Planilla") else "LOCADORES"
+                    titulo_pdf = (
+                        "PLANILLA DE REMUNERACIONES — REPORTE PERSONALIZADO"
+                        if tipo_rep.startswith("Planilla")
+                        else "LOCADORES DE SERVICIO — REPORTE PERSONALIZADO"
+                    )
+                    dl_xl, dl_pdf = st.columns(2)
+
+                    # Excel
                     import io as _io_p
                     buf_xl_p = _io_p.BytesIO()
                     with pd.ExcelWriter(buf_xl_p, engine='openpyxl') as _writer_p:
                         df_preview.to_excel(_writer_p, sheet_name='Reporte', index=False)
                     buf_xl_p.seek(0)
-                    tipo_file = "PLANILLA" if tipo_rep.startswith("Planilla") else "LOCADORES"
-                    st.download_button(
-                        f"📊 Descargar Reporte_Dinamico_{sel_key}.xlsx",
+                    dl_xl.download_button(
+                        f"📊 Descargar Excel",
                         data=buf_xl_p,
                         file_name=f"Reporte_Dinamico_{tipo_file}_{sel_key}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
-                        key="rep_dl_pers",
+                        key="rep_dl_pers_xl",
                     )
+
+                    # PDF corporativo
+                    try:
+                        from presentation.views.calculo_mensual import generar_pdf_personalizado
+                        buf_pdf_p = generar_pdf_personalizado(
+                            df=df_preview,
+                            empresa_nombre=empresa_nombre,
+                            periodo_key=sel_key,
+                            titulo=titulo_pdf,
+                            empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                        )
+                        dl_pdf.download_button(
+                            f"📄 Descargar PDF",
+                            data=buf_pdf_p,
+                            file_name=f"Reporte_Dinamico_{tipo_file}_{sel_key}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="rep_dl_pers_pdf",
+                        )
+                    except Exception as _e_pdf_p:
+                        dl_pdf.error(f"Error PDF: {_e_pdf_p}")
                 else:
                     st.warning("Seleccione al menos una columna.")
         except Exception as e_pers:
