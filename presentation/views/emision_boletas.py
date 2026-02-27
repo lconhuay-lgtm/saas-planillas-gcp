@@ -271,7 +271,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             # Cabecera
             ('BACKGROUND',    (0,0), (-1,0),  C_STEEL),
             # Columna separadora visual (borde derecho de col 1)
-            ('LINEAFTER',     (1,0), (1,-1),  1.2, C_GOLD),
+            ('LINEAFTER',     (1,0), (1,-1),  1.2, C_STEEL),
             # Filas alternadas ingresos (col 0-1)
             ('ROWBACKGROUNDS',(0,1), (1,-2),  [C_WHITE, C_LIGHT]),
             # Filas alternadas descuentos (col 2-3)

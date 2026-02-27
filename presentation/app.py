@@ -28,9 +28,9 @@ from presentation.views import parametros_legales
 from presentation.views import maestro_conceptos
 from presentation.views import emision_boletas
 from presentation.views import reporteria
+from presentation.views import login
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
-# Se ejecuta una sola vez por sesión de navegador para no penalizar cada clic.
 if not st.session_state.get('_tablas_verificadas'):
     try:
         from infrastructure.database.connection import engine, Base
@@ -54,13 +54,12 @@ if not st.session_state.get('_tablas_verificadas'):
         st.stop()
 # ───────────────────────────────────────────────────────────────────────────────
 
-# 2. Inyección de CSS Corporativo
+# 2. CSS Corporativo
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         header {visibility: hidden;}
-        
         .stButton>button {
             border-radius: 5px;
             font-weight: bold;
@@ -73,16 +72,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Inicializar el cerebro de la app
+# 3. Inicializar estado
 inicializar_estado()
 
-# 4. Renderizar el Menú Lateral y obtener qué vista quiere ver el usuario
+# ── GUARDA DE AUTENTICACIÓN ───────────────────────────────────────────────────
+# Si el usuario no ha iniciado sesión, mostramos solo la pantalla de login.
+if not st.session_state.get('usuario_logueado'):
+    login.render()
+    st.stop()
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 4. Sidebar y enrutador (solo si está autenticado)
 vista_actual = render_sidebar()
 
-# 5. Enrutador Principal (Router)
+# 5. Enrutador Principal
 if vista_actual == "Selector de Empresa" or vista_actual is None:
     selector_empresa.render()
-    
+
 elif vista_actual == "Dashboard Principal":
     st.title("📊 Dashboard Analítico")
     st.info("Aquí construiremos el panel de gráficos estadísticos de la empresa en la próxima fase.")
@@ -98,10 +104,10 @@ elif vista_actual == "Ingreso de Asistencias":
 
 elif vista_actual == "Cálculo de Planilla":
     calculo_mensual.render()
-    
+
 elif vista_actual == "Maestro de Conceptos":
     maestro_conceptos.render()
-    
+
 elif vista_actual == "Emisión de Boletas":
     emision_boletas.render()
 
