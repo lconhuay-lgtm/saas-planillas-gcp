@@ -491,6 +491,356 @@ def generar_pdf_quinta(data_q, empresa_nombre, periodo, nombre_trabajador):
     doc.build(elements)
     buffer.seek(0)
     return buffer
+def generar_excel_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc=""):
+    """Genera Excel corporativo para valorización de locadores (misma clase que sábana planilla)."""
+    periodo_texto = _periodo_legible_calc(periodo_key)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_loc.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False, startrow=5)
+        ws = writer.sheets[f'Honorarios_{periodo_key[:2]}']
+        ws['A1'] = empresa_nombre
+        ws['A1'].font = Font(size=16, bold=True, color="0F2744")
+        ws['A2'] = f"RUC: {empresa_ruc}" if empresa_ruc else ""
+        ws['A2'].font = Font(size=10, color="64748B")
+        ws['A3'] = f"VALORIZACIÓN DE LOCADORES DE SERVICIO (4ta Categoría) — PERIODO: {periodo_texto}"
+        ws['A3'].font = Font(size=11, bold=True, color="1E4D8C")
+        ws['A4'] = f"Fecha de Cálculo: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        ws['A4'].font = Font(size=10, italic=True, color="7F8C8D")
+        fill_header = PatternFill(start_color="1A365D", end_color="1A365D", fill_type="solid")
+        font_header = Font(color="FFFFFF", bold=True)
+        align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        fill_total = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+        for row in ws.iter_rows(min_row=6, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                cell.border = border_thin
+                if cell.row == 6:
+                    cell.fill = fill_header
+                    cell.font = font_header
+                    cell.alignment = align_center
+                elif cell.row == ws.max_row:
+                    cell.fill = fill_total
+                    cell.font = Font(bold=True)
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
+                except: pass
+            ws.column_dimensions[column].width = min(max_length + 2, 25)
+    buffer.seek(0)
+    return buffer
+
+
+def generar_pdf_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc="", empresa_regimen=""):
+    """Genera PDF corporativo para valorización de locadores (igual diseño que sábana planilla)."""
+    periodo_texto = _periodo_legible_calc(periodo_key)
+    W_PAGE = 1008 - 24
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(legal),
+        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+    )
+    elements = []
+    C_NAVY  = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_GOLD  = colors.HexColor("#C9A84C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+    C_GRAY  = colors.HexColor("#64748B")
+    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY, spaceAfter=6)
+    st_sub   = ParagraphStyle('S', fontName="Helvetica",      fontSize=9,  textColor=C_GRAY, spaceAfter=1)
+    st_head  = ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=10, textColor=C_STEEL, spaceAfter=8, spaceBefore=4)
+    fecha_calc = datetime.now().strftime("%d/%m/%Y %H:%M")
+    ruc_line = f"  |  RUC: {empresa_ruc}" if empresa_ruc else ""
+    reg_line = f"  |  {empresa_regimen}" if empresa_regimen else ""
+    elements.append(Paragraph(empresa_nombre + ruc_line, st_title))
+    elements.append(Paragraph(
+        f"VALORIZACIÓN DE LOCADORES DE SERVICIO (4ta CATEGORÍA)  ·  PERIODO: {periodo_texto}{reg_line}", st_head
+    ))
+    elements.append(Paragraph(f"Fecha de cálculo: {fecha_calc}", st_sub))
+    elements.append(Spacer(1, 8))
+
+    cols = list(df_loc.columns)
+    col_widths_map = {
+        "DNI": 55, "Locador": 130,
+        "Honorario Base": 70, "Días no Prestados": 60,
+        "Descuento Días": 65, "Otros Pagos": 65,
+        "Pago Bruto": 65, "Retención 4ta (8%)": 72,
+        "Otros Descuentos": 70, "NETO A PAGAR": 70,
+    }
+    col_w = [col_widths_map.get(c, 60) for c in cols]
+    total_w = sum(col_w)
+    col_w = [w * W_PAGE / total_w for w in col_w]
+
+    hdr_style = ParagraphStyle('HDR', fontName="Helvetica-Bold", fontSize=7,
+                               textColor=colors.white, alignment=1, leading=8)
+    nom_style  = ParagraphStyle('NOM', fontName="Helvetica", fontSize=7,
+                                textColor=colors.black, alignment=0, leading=8, wordWrap='LTR')
+    nom_idx = cols.index("Locador") if "Locador" in cols else -1
+    data_rows = [[Paragraph(c, hdr_style) for c in cols]]
+
+    for _, row in df_loc.iterrows():
+        fila = []
+        for i, val in enumerate(row):
+            if i == nom_idx:
+                fila.append(Paragraph(str(val) if str(val) != "nan" else "", nom_style))
+            elif isinstance(val, float):
+                fila.append(f"{val:,.2f}")
+            else:
+                fila.append(str(val) if str(val) != "nan" else "")
+        data_rows.append(fila)
+
+    # Fila de totales
+    tot_style = ParagraphStyle('TC', fontName="Helvetica-Bold", fontSize=7, textColor=colors.white, alignment=1)
+    totales_row = []
+    cols_texto_loc = {"DNI", "Locador"}
+    for c in cols:
+        if c == "Locador":
+            totales_row.append(Paragraph("<b>TOTALES</b>", tot_style))
+        elif c in cols_texto_loc:
+            totales_row.append("")
+        else:
+            try:
+                v = df_loc[c].sum()
+                totales_row.append(Paragraph(f"<b>{v:,.2f}</b>", tot_style))
+            except Exception:
+                totales_row.append("")
+    data_rows.append(totales_row)
+
+    t = Table(data_rows, colWidths=col_w, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND',    (0,0),  (-1,0),  C_STEEL),
+        ('TEXTCOLOR',     (0,0),  (-1,0),  colors.white),
+        ('ALIGN',         (0,0),  (-1,-1), 'CENTER'),
+        ('VALIGN',        (0,0),  (-1,-1), 'MIDDLE'),
+        ('ALIGN',         (1,1),  (1,-1),  'LEFT'),
+        ('FONTNAME',      (0,1),  (-1,-2), 'Helvetica'),
+        ('FONTSIZE',      (0,1),  (-1,-2), 7),
+        ('TOPPADDING',    (0,0),  (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0),  (-1,-1), 4),
+        ('ROWBACKGROUNDS',(0,1),  (-1,-2), [colors.white, C_LIGHT]),
+        ('BACKGROUND',    (0,-1), (-1,-1), C_NAVY),
+        ('FONTNAME',      (0,-1), (-1,-1), 'Helvetica-Bold'),
+        ('FONTSIZE',      (0,-1), (-1,-1), 7),
+        ('GRID',          (0,0),  (-1,-1), 0.3, colors.HexColor("#CBD5E1")),
+        ('LINEABOVE',     (0,-1), (-1,-1), 0.8, C_NAVY),
+        ('LINEBELOW',     (0,0),  (-1,0),  0.8, C_GOLD),
+    ]))
+    elements.append(t)
+
+    # Resumen de retenciones 4ta
+    elements.append(Spacer(1, 20))
+    st_res = ParagraphStyle('R', fontName="Helvetica-Bold", fontSize=9, textColor=C_NAVY, spaceAfter=6)
+    elements.append(Paragraph("RESUMEN DE RETENCIONES — 4ta CATEGORÍA (Ley SUNAT)", st_res))
+    try:
+        total_bruto = df_loc["Pago Bruto"].sum()
+        total_ret   = df_loc["Retención 4ta (8%)"].sum()
+        total_neto  = df_loc["NETO A PAGAR"].sum()
+        n_loc       = len(df_loc)
+        n_con_ret   = len(df_loc[df_loc["Retención 4ta (8%)"] > 0])
+        resumen = [
+            ["CONCEPTO", "DETALLE", "MONTO (S/)"],
+            ["Pago Bruto Total Locadores", f"{n_loc} persona(s)", f"{total_bruto:,.2f}"],
+            ["Retención 4ta Categoría (8%)", f"{n_con_ret} locador(es) afecto(s)", f"{total_ret:,.2f}"],
+            ["TOTAL NETO A PAGAR", "", f"S/ {total_neto:,.2f}"],
+        ]
+        t_res = Table(resumen, colWidths=[260, 200, 140])
+        estilos_res = [
+            ('BACKGROUND', (0,0),  (-1,0),  colors.HexColor("#34495E")),
+            ('TEXTCOLOR',  (0,0),  (-1,0),  colors.whitesmoke),
+            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#E5E7E9")),
+            ('FONTNAME',   (0,0),  (-1,0),  'Helvetica-Bold'),
+            ('FONTNAME',   (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('FONTSIZE',   (0,0),  (-1,-1), 8),
+            ('ALIGN',      (2,0),  (2,-1),  'RIGHT'),
+            ('ALIGN',      (0,0),  (1,-1),  'LEFT'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('GRID',       (0,0),  (-1,-1), 0.5, colors.HexColor("#BDC3C7")),
+        ]
+        t_res.setStyle(TableStyle(estilos_res))
+        elements.append(t_res)
+    except Exception:
+        pass
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
+def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empresa_ruc="", empresa_regimen=""):
+    """Genera PDF consolidado: Sábana planilla + Valorización locadores + Resumen costo laboral total."""
+    periodo_texto = _periodo_legible_calc(periodo_key)
+    W_PAGE = 1008 - 24
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(legal),
+        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+    )
+    elements = []
+    C_NAVY  = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_GOLD  = colors.HexColor("#C9A84C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+    C_GRAY  = colors.HexColor("#64748B")
+
+    st_title = ParagraphStyle('T',  fontName="Helvetica-Bold", fontSize=13, textColor=C_NAVY, spaceAfter=4)
+    st_head  = ParagraphStyle('H',  fontName="Helvetica-Bold", fontSize=10, textColor=C_STEEL, spaceAfter=6)
+    st_sec   = ParagraphStyle('SE', fontName="Helvetica-Bold", fontSize=9,  textColor=C_NAVY, spaceAfter=4, spaceBefore=10,
+                              borderPad=3, backColor=colors.HexColor("#E8F0FE"))
+    st_sub   = ParagraphStyle('S',  fontName="Helvetica",      fontSize=8,  textColor=C_GRAY, spaceAfter=1)
+
+    fecha_calc = datetime.now().strftime("%d/%m/%Y %H:%M")
+    ruc_line = f"  |  RUC: {empresa_ruc}" if empresa_ruc else ""
+    elements.append(Paragraph(empresa_nombre + ruc_line, st_title))
+    elements.append(Paragraph(
+        f"REPORTE CONSOLIDADO DE COSTO LABORAL  ·  PERIODO: {periodo_texto}", st_head
+    ))
+    elements.append(Paragraph(
+        f"Planilla de Remuneraciones (5ta Cat.) + Locadores de Servicio (4ta Cat.)  |  Generado: {fecha_calc}", st_sub
+    ))
+    elements.append(Spacer(1, 8))
+
+    hdr_s = ParagraphStyle('HS', fontName="Helvetica-Bold", fontSize=6, textColor=colors.white, alignment=1, leading=7)
+    nom_s = ParagraphStyle('NS', fontName="Helvetica", fontSize=6, textColor=colors.black, alignment=0, leading=7, wordWrap='LTR')
+
+    # ── SECCIÓN 1: PLANILLA ───────────────────────────────────────────────────
+    elements.append(Paragraph("▶  1. PLANILLA DE REMUNERACIONES (5ta Categoría)", st_sec))
+    cols_plan = [c for c in df_planilla.columns if c not in _COLS_OCULTAS_SABANA]
+    df_p = df_planilla[cols_plan]
+    col_widths_plan = {
+        "N°": 18, "DNI": 52, "Apellidos y Nombres": 105,
+        "Sist. Pensión": 55, "Seg. Social": 48,
+        "Sueldo Base": 50, "Asig. Fam.": 36, "Otros Ingresos": 50,
+        "TOTAL BRUTO": 50, "ONP (13%)": 42, "AFP Aporte": 42,
+        "AFP Seguro": 42, "AFP Comis.": 42, "Ret. 5ta Cat.": 44,
+        "Dsctos/Faltas": 44, "NETO A PAGAR": 52, "Aporte Seg. Social": 55,
+    }
+    col_w_p = [col_widths_plan.get(c, 46) for c in cols_plan]
+    total_w_p = sum(col_w_p)
+    col_w_p = [w * W_PAGE / total_w_p for w in col_w_p]
+    nom_idx_p = cols_plan.index("Apellidos y Nombres") if "Apellidos y Nombres" in cols_plan else -1
+    rows_p = [[Paragraph(c, hdr_s) for c in cols_plan]]
+    for _, row in df_p.iterrows():
+        fila = []
+        for i, val in enumerate(row):
+            if i == nom_idx_p:
+                fila.append(Paragraph(str(val) if str(val) != "nan" else "", nom_s))
+            elif isinstance(val, float):
+                fila.append(f"{val:,.2f}")
+            else:
+                fila.append(str(val) if str(val) != "nan" else "")
+        rows_p.append(fila)
+    t_p = Table(rows_p, colWidths=col_w_p, repeatRows=1)
+    t_p.setStyle(TableStyle([
+        ('BACKGROUND',    (0,0),  (-1,0),  C_STEEL),
+        ('ALIGN',         (0,0),  (-1,-1), 'CENTER'),
+        ('VALIGN',        (0,0),  (-1,-1), 'MIDDLE'),
+        ('ALIGN',         (2,1),  (2,-1),  'LEFT'),
+        ('FONTNAME',      (0,1),  (-1,-2), 'Helvetica'),
+        ('FONTSIZE',      (0,1),  (-1,-2), 6),
+        ('TOPPADDING',    (0,0),  (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0),  (-1,-1), 3),
+        ('ROWBACKGROUNDS',(0,1),  (-1,-2), [colors.white, C_LIGHT]),
+        ('BACKGROUND',    (0,-1), (-1,-1), colors.HexColor("#CBD5E1")),
+        ('FONTNAME',      (0,-1), (-1,-1), 'Helvetica-Bold'),
+        ('FONTSIZE',      (0,-1), (-1,-1), 6),
+        ('GRID',          (0,0),  (-1,-1), 0.3, colors.HexColor("#CBD5E1")),
+        ('LINEBELOW',     (0,0),  (-1,0),  0.8, C_GOLD),
+    ]))
+    elements.append(t_p)
+
+    # ── SECCIÓN 2: LOCADORES ──────────────────────────────────────────────────
+    if df_loc is not None and not df_loc.empty:
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph("▶  2. VALORIZACIÓN DE LOCADORES DE SERVICIO (4ta Categoría)", st_sec))
+        cols_loc = list(df_loc.columns)
+        col_widths_loc = {
+            "DNI": 52, "Locador": 120,
+            "Honorario Base": 65, "Días no Prestados": 55,
+            "Descuento Días": 60, "Otros Pagos": 60,
+            "Pago Bruto": 60, "Retención 4ta (8%)": 65,
+            "Otros Descuentos": 65, "NETO A PAGAR": 65,
+        }
+        col_w_l = [col_widths_loc.get(c, 55) for c in cols_loc]
+        total_w_l = sum(col_w_l)
+        col_w_l = [w * W_PAGE / total_w_l for w in col_w_l]
+        nom_idx_l = cols_loc.index("Locador") if "Locador" in cols_loc else -1
+        rows_l = [[Paragraph(c, hdr_s) for c in cols_loc]]
+        for _, row in df_loc.iterrows():
+            fila = []
+            for i, val in enumerate(row):
+                if i == nom_idx_l:
+                    fila.append(Paragraph(str(val) if str(val) != "nan" else "", nom_s))
+                elif isinstance(val, float):
+                    fila.append(f"{val:,.2f}")
+                else:
+                    fila.append(str(val) if str(val) != "nan" else "")
+            rows_l.append(fila)
+        t_l = Table(rows_l, colWidths=col_w_l, repeatRows=1)
+        t_l.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0),  (-1,0),  C_STEEL),
+            ('ALIGN',         (0,0),  (-1,-1), 'CENTER'),
+            ('VALIGN',        (0,0),  (-1,-1), 'MIDDLE'),
+            ('ALIGN',         (1,1),  (1,-1),  'LEFT'),
+            ('FONTNAME',      (0,1),  (-1,-1), 'Helvetica'),
+            ('FONTSIZE',      (0,1),  (-1,-1), 6),
+            ('TOPPADDING',    (0,0),  (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0),  (-1,-1), 3),
+            ('ROWBACKGROUNDS',(0,1),  (-1,-1), [colors.white, C_LIGHT]),
+            ('GRID',          (0,0),  (-1,-1), 0.3, colors.HexColor("#CBD5E1")),
+            ('LINEBELOW',     (0,0),  (-1,0),  0.8, C_GOLD),
+        ]))
+        elements.append(t_l)
+
+    # ── SECCIÓN 3: RESUMEN COSTO LABORAL TOTAL ────────────────────────────────
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph("▶  3. RESUMEN CONSOLIDADO DE COSTO LABORAL", st_sec))
+    try:
+        df_plan_data = df_planilla[df_planilla.get('Apellidos y Nombres', pd.Series(dtype=str)) != 'TOTALES'] \
+            if 'Apellidos y Nombres' in df_planilla.columns else df_planilla.iloc[:-1]
+        bruto_plan   = df_plan_data['TOTAL BRUTO'].sum()       if 'TOTAL BRUTO'       in df_plan_data.columns else 0.0
+        neto_plan    = df_plan_data['NETO A PAGAR'].sum()      if 'NETO A PAGAR'      in df_plan_data.columns else 0.0
+        essalud_plan = df_plan_data['Aporte Seg. Social'].sum() if 'Aporte Seg. Social' in df_plan_data.columns else 0.0
+        bruto_loc = df_loc["Pago Bruto"].sum()       if df_loc is not None and not df_loc.empty and "Pago Bruto"       in df_loc.columns else 0.0
+        neto_loc  = df_loc["NETO A PAGAR"].sum()     if df_loc is not None and not df_loc.empty and "NETO A PAGAR"     in df_loc.columns else 0.0
+        ret_4ta   = df_loc["Retención 4ta (8%)"].sum() if df_loc is not None and not df_loc.empty and "Retención 4ta (8%)" in df_loc.columns else 0.0
+        costo_total = bruto_plan + essalud_plan + bruto_loc
+        neto_total  = neto_plan + neto_loc
+
+        res_data = [
+            ["CONCEPTO", "PLANILLA (5ta Cat.)", "LOCADORES (4ta Cat.)", "TOTAL CONSOLIDADO"],
+            ["Masa Salarial / Honorarios Brutos",  f"S/ {bruto_plan:,.2f}",             f"S/ {bruto_loc:,.2f}",  f"S/ {(bruto_plan + bruto_loc):,.2f}"],
+            ["Aporte EsSalud (cargo empleador)",    f"S/ {essalud_plan:,.2f}",           "—",                     f"S/ {essalud_plan:,.2f}"],
+            ["Retenciones PDT (ONP/AFP/5ta/4ta)",  "Ver sábana planilla",               f"S/ {ret_4ta:,.2f}",    "—"],
+            ["Total Neto a Pagar al Personal",      f"S/ {neto_plan:,.2f}",             f"S/ {neto_loc:,.2f}",   f"S/ {neto_total:,.2f}"],
+            ["COSTO LABORAL TOTAL (empresa)",       f"S/ {bruto_plan + essalud_plan:,.2f}", f"S/ {bruto_loc:,.2f}", f"S/ {costo_total:,.2f}"],
+        ]
+        t_res = Table(res_data, colWidths=[200, 145, 145, 165])
+        t_res.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0),  (-1,0),  colors.HexColor("#34495E")),
+            ('TEXTCOLOR',     (0,0),  (-1,0),  colors.whitesmoke),
+            ('BACKGROUND',    (0,-1), (-1,-1), C_NAVY),
+            ('TEXTCOLOR',     (0,-1), (-1,-1), colors.white),
+            ('FONTNAME',      (0,0),  (-1,0),  'Helvetica-Bold'),
+            ('FONTNAME',      (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('FONTSIZE',      (0,0),  (-1,-1), 8),
+            ('ALIGN',         (1,0),  (-1,-1), 'RIGHT'),
+            ('ALIGN',         (0,0),  (0,-1),  'LEFT'),
+            ('BOTTOMPADDING', (0,0),  (-1,-1), 6),
+            ('TOPPADDING',    (0,0),  (-1,-1), 5),
+            ('ROWBACKGROUNDS',(0,1),  (-1,-2), [colors.white, C_LIGHT]),
+            ('GRID',          (0,0),  (-1,-1), 0.5, colors.HexColor("#BDC3C7")),
+        ]))
+        elements.append(t_res)
+    except Exception:
+        pass
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
 # --- 2. MOTOR DE RENDERIZADO Y CÁLCULO ---
 
 def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_seleccionado, periodo_key, mes_idx):
@@ -551,8 +901,32 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
     except Exception:
         pass
 
+    # ── VERIFICAR LOCADORES SIN ASISTENCIA GUARDADA ──────────────────────────
+    locadores_pendientes = False
+    try:
+        db_lv = SessionLocal()
+        n_loc = db_lv.query(Trabajador).filter_by(
+            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
+        ).count()
+        if n_loc > 0:
+            n_vars_loc = db_lv.query(VariablesMes).filter_by(
+                empresa_id=empresa_id, periodo_key=periodo_key
+            ).join(Trabajador, VariablesMes.trabajador_id == Trabajador.id).filter(
+                Trabajador.tipo_contrato == "LOCADOR"
+            ).count()
+            locadores_pendientes = (n_vars_loc < n_loc)
+        db_lv.close()
+    except Exception:
+        pass
+
     if es_cerrada:
         st.error(f"🔒 La planilla del periodo **{periodo_key}** ya fue CERRADA y contabilizada. Vaya al final de la página para reabrirla si tiene permisos de Supervisor.")
+    elif locadores_pendientes:
+        st.warning(
+            f"⚠️ **CÁLCULO BLOQUEADO:** Hay locadores de servicio sin asistencia guardada para **{periodo_key}**. "
+            f"Vaya al módulo **'Ingreso de Asistencias'** → pestaña **'🧾 2. Valorización de Locadores'** "
+            f"y guarde antes de ejecutar el motor de planilla."
+        )
     elif st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
         st.session_state['ultima_planilla_calculada'] = True
         resultados = []
@@ -1108,17 +1482,29 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
         c2.metric("Total Retención 4ta",   f"S/ {df_loc['Retención 4ta (8%)'].sum():,.2f}")
         c3.metric("Total Neto a Pagar",    f"S/ {df_loc['NETO A PAGAR'].sum():,.2f}")
 
-        buf_xls = io.BytesIO()
-        with pd.ExcelWriter(buf_xls, engine='openpyxl') as writer:
-            df_loc.to_excel(writer, index=False, sheet_name=f'Honorarios_{periodo_key[:2]}')
-        buf_xls.seek(0)
-        st.download_button(
-            "📊 Descargar Valorización (.xlsx)",
-            data=buf_xls,
-            file_name=f"HONORARIOS_{periodo_key}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+        st.markdown("---")
+        st.markdown("#### 📥 Exportación Corporativa")
+        col_h1, col_h2 = st.columns(2)
+        empresa_ruc_h = st.session_state.get('empresa_activa_ruc', '')
+        empresa_reg_h = st.session_state.get('empresa_activa_regimen', '')
+        with col_h1:
+            buf_xls = generar_excel_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_h)
+            st.download_button(
+                "📊 Descargar Valorización (.xlsx)",
+                data=buf_xls,
+                file_name=f"HONORARIOS_{periodo_key}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with col_h2:
+            pdf_hon = generar_pdf_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_h, empresa_regimen=empresa_reg_h)
+            st.download_button(
+                "📄 Descargar Valorización (PDF)",
+                data=pdf_hon,
+                file_name=f"HONORARIOS_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
     else:
         if not es_cerrada:
             st.info("Presione el botón para calcular los honorarios del periodo.")
@@ -1146,3 +1532,52 @@ def render():
 
     with tab_hon:
         _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key)
+
+    # ── REPORTE COMBINADO (Planilla + Locadores) ───────────────────────────────
+    df_plan_comb = st.session_state.get('res_planilla', pd.DataFrame())
+    df_loc_comb  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+
+    if not df_plan_comb.empty:
+        st.markdown("---")
+        with st.expander("📋 Reporte Consolidado de Costo Laboral (Planilla + Locadores)", expanded=False):
+            st.markdown(
+                "Genera un único documento PDF/Excel que combina la sábana de planilla y la "
+                "valorización de locadores, más un resumen del costo laboral total de la empresa."
+            )
+            if df_loc_comb.empty:
+                st.info("ℹ️ No hay datos de honorarios calculados para este periodo. El reporte combinado incluirá solo la planilla.")
+
+            col_comb1, col_comb2 = st.columns(2)
+            empresa_ruc_c  = st.session_state.get('empresa_activa_ruc', '')
+            empresa_reg_c  = st.session_state.get('empresa_activa_regimen', '')
+
+            with col_comb1:
+                pdf_comb = generar_pdf_combinado(
+                    df_plan_comb,
+                    df_loc_comb if not df_loc_comb.empty else None,
+                    empresa_nombre, periodo_key,
+                    empresa_ruc=empresa_ruc_c, empresa_regimen=empresa_reg_c
+                )
+                st.download_button(
+                    "📄 Descargar Reporte Combinado (PDF)",
+                    data=pdf_comb,
+                    file_name=f"COSTO_LABORAL_{periodo_key}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                )
+            with col_comb2:
+                # Excel combinado: dos sheets en un solo workbook
+                buf_comb_xl = io.BytesIO()
+                with pd.ExcelWriter(buf_comb_xl, engine='openpyxl') as writer:
+                    df_plan_comb.to_excel(writer, sheet_name=f'Planilla_{periodo_key[:2]}', index=False)
+                    if not df_loc_comb.empty:
+                        df_loc_comb.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False)
+                buf_comb_xl.seek(0)
+                st.download_button(
+                    "📊 Descargar Reporte Combinado (.xlsx)",
+                    data=buf_comb_xl,
+                    file_name=f"COSTO_LABORAL_{periodo_key}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )

@@ -67,6 +67,19 @@ def render():
             .all()
         )
 
+        # Fix 5: Excluir trabajadores que ingresan DESPUÉS del periodo seleccionado
+        _mes_asis  = int(mes_sel[:2])
+        _anio_asis = int(anio_sel)
+
+        def _activo_en_periodo(t):
+            if not t.fecha_ingreso:
+                return True
+            fi = t.fecha_ingreso
+            return not (fi.year > _anio_asis or (fi.year == _anio_asis and fi.month > _mes_asis))
+
+        planilleros = [t for t in planilleros if _activo_en_periodo(t)]
+        locadores   = [t for t in locadores   if _activo_en_periodo(t)]
+
         # Conceptos dinámicos de la empresa (para planilla)
         conceptos      = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
         conceptos_ing  = [c for c in conceptos if c.tipo == "INGRESO"  and c.nombre not in CONCEPTOS_FIJOS]
@@ -101,6 +114,15 @@ def render():
         # TAB 1 — PLANILLA DE EMPLEADOS
         # ══════════════════════════════════════════════════════════════════════
         with tab_plan:
+            # Aviso obligatorio si hay locadores sin asistencia guardada para este periodo
+            if locadores and not es_cerrada:
+                loc_sin_vars = [l for l in locadores if l.id not in variables_exist]
+                if loc_sin_vars:
+                    st.warning(
+                        f"⚠️ **PASO OBLIGATORIO:** Hay **{len(locadores)}** locador(es) de servicio "
+                        f"registrado(s). Después de guardar esta pestaña, guarde también la pestaña "
+                        f"**'🧾 2. Valorización de Locadores'** antes de ejecutar el Cálculo de Planilla."
+                    )
             if not planilleros:
                 st.info("No hay empleados de planilla activos. Registre trabajadores con tipo 'Planilla (5ta Categoría)' en el Maestro de Personal.")
             else:
