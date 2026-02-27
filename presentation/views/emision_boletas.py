@@ -136,8 +136,10 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
 
     for _, row in df_data.iterrows():
         dni = str(row['DNI'])
-        trabajador = df_trabajadores[df_trabajadores['Num. Doc.'] == dni].iloc[0]
-        variables  = df_variables[df_variables['Num. Doc.'] == dni].iloc[0]
+        trab_rows = df_trabajadores[df_trabajadores['Num. Doc.'] == dni]
+        trabajador = trab_rows.iloc[0] if not trab_rows.empty else pd.Series(dtype=object)
+        var_rows = df_variables[df_variables['Num. Doc.'] == dni] if not df_variables.empty and 'Num. Doc.' in df_variables.columns else pd.DataFrame()
+        variables = var_rows.iloc[0] if not var_rows.empty else pd.Series(dtype=object)
         data_aud   = auditoria_data.get(dni, {})
 
         nombre        = row['Apellidos y Nombres']
