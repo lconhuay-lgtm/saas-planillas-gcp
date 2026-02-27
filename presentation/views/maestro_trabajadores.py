@@ -78,6 +78,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     n_doc = c2.text_input("Nro. Documento", value=n_doc_val, max_chars=12,
                           key=f"{key_prefix}_ndoc", disabled=es_edicion)
     f_nac = c5.date_input("Fecha Nacimiento*", value=f_nac_val,
+                          min_value=datetime.date(1920, 1, 1),
+                          max_value=datetime.date.today(),
                           key=f"{key_prefix}_fnac")
 
     # Apellidos y nombres separados (requeridos para PLAME / AFPnet)
@@ -106,6 +108,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     cl1, cl2, cl3, cl4 = st.columns(4)
     cargo = cl1.text_input("Cargo / Puesto", value=cargo_val, key=f"{key_prefix}_cargo")
     f_ingreso = cl2.date_input("Fecha de Ingreso*", value=f_ingreso_val,
+                               min_value=datetime.date(1960, 1, 1),
+                               max_value=datetime.date.today(),
                                key=f"{key_prefix}_fingreso")
     s_base = cl3.number_input("Sueldo Mensual (S/)*", min_value=1025.0, step=50.0,
                               value=s_base_val, key=f"{key_prefix}_sbase")
