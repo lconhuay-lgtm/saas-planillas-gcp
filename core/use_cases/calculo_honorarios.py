@@ -40,10 +40,11 @@ def calcular_recibo_honorarios(
     otros_pagos       = float(variables.get('otros_pagos', 0.0) or 0.0)
     otros_descuentos  = float(variables.get('otros_descuentos', 0.0) or 0.0)
 
-    # Descuento proporcional por días no prestados
+    # Descuento proporcional por días no prestados — Base 30 (Mes Comercial Mixto)
     monto_descuento = 0.0
-    if dias_del_mes > 0 and dias_no_prestados > 0:
-        monto_descuento = (honorario_base / dias_del_mes) * dias_no_prestados
+    if dias_no_prestados > 0:
+        valor_dia = honorario_base / 30.0
+        monto_descuento = valor_dia * dias_no_prestados
 
     pago_bruto = max(0.0, honorario_base - monto_descuento + otros_pagos)
 
@@ -57,6 +58,12 @@ def calcular_recibo_honorarios(
 
     neto_a_pagar = pago_bruto - retencion_4ta - otros_descuentos
 
+    obs_loc = []
+    if dias_no_prestados > 0:
+        obs_loc.append(f"No prestó servicios {dias_no_prestados} día(s)")
+    if tiene_suspension:
+        obs_loc.append("Constancia de suspensión SUNAT activa")
+
     return {
         'honorario_base':       round(honorario_base, 2),
         'dias_no_prestados':    dias_no_prestados,
@@ -67,4 +74,5 @@ def calcular_recibo_honorarios(
         'otros_descuentos':     round(otros_descuentos, 2),
         'neto_a_pagar':         round(neto_a_pagar, 2),
         'tiene_suspension_4ta': tiene_suspension,
+        'observaciones':        " | ".join(obs_loc),
     }
