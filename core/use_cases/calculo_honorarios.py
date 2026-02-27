@@ -48,17 +48,23 @@ def calcular_recibo_honorarios(
     pago_bruto = max(0.0, honorario_base - monto_descuento + otros_pagos)
 
     # Retención 8% solo si pago_bruto supera el tope legal
-    retencion_4ta = round(pago_bruto * (tasa_4ta / 100.0), 2) if pago_bruto > tope_4ta else 0.0
+    # Si el locador tiene constancia de suspensión SUNAT, la retención es 0
+    tiene_suspension = bool(getattr(locador, 'tiene_suspension_4ta', False) or False)
+    if tiene_suspension:
+        retencion_4ta = 0.0
+    else:
+        retencion_4ta = round(pago_bruto * (tasa_4ta / 100.0), 2) if pago_bruto > tope_4ta else 0.0
 
     neto_a_pagar = pago_bruto - retencion_4ta - otros_descuentos
 
     return {
-        'honorario_base':    round(honorario_base, 2),
-        'dias_no_prestados': dias_no_prestados,
-        'monto_descuento':   round(monto_descuento, 2),
-        'otros_pagos':       round(otros_pagos, 2),
-        'pago_bruto':        round(pago_bruto, 2),
-        'retencion_4ta':     retencion_4ta,
-        'otros_descuentos':  round(otros_descuentos, 2),
-        'neto_a_pagar':      round(neto_a_pagar, 2),
+        'honorario_base':       round(honorario_base, 2),
+        'dias_no_prestados':    dias_no_prestados,
+        'monto_descuento':      round(monto_descuento, 2),
+        'otros_pagos':          round(otros_pagos, 2),
+        'pago_bruto':           round(pago_bruto, 2),
+        'retencion_4ta':        retencion_4ta,
+        'otros_descuentos':     round(otros_descuentos, 2),
+        'neto_a_pagar':         round(neto_a_pagar, 2),
+        'tiene_suspension_4ta': tiene_suspension,
     }

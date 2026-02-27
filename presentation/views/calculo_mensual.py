@@ -69,6 +69,9 @@ def _cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
             "CUSPP": t.cuspp or "",
             "Cargo": t.cargo or "",
             "Seguro Social": getattr(t, 'seguro_social', None) or "ESSALUD",
+            "Banco": t.banco or "",
+            "Cuenta Bancaria": t.cuenta_bancaria or "",
+            "CCI": t.cci or "",
         })
     return pd.DataFrame(rows)
 
@@ -841,6 +844,236 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
     return buffer
 
 
+def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, auditoria_data=None, empresa_ruc=""):
+    """Genera PDF de Tesorería (Landscape Legal): planilla con columnas de ingresos dinámicas + locadores con datos bancarios."""
+    import calendar as _cal_teso
+    periodo_texto = _periodo_legible_calc(periodo_key)
+    W_PAGE = 1008 - 24
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(legal),
+        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+    )
+    elements = []
+
+    C_NAVY  = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_GOLD  = colors.HexColor("#C9A84C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+
+    st_title = ParagraphStyle('TT',  fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY, spaceAfter=4)
+    st_sub   = ParagraphStyle('TS',  fontName="Helvetica",      fontSize=9,  textColor=colors.HexColor("#64748B"), spaceAfter=2)
+    st_sec   = ParagraphStyle('TSC', fontName="Helvetica-Bold", fontSize=9,  textColor=C_STEEL, spaceBefore=8, spaceAfter=4)
+    hdr_s    = ParagraphStyle('TH',  fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,  alignment=TA_CENTER, wordWrap='CJK')
+    nom_s    = ParagraphStyle('TN',  fontName="Helvetica",      fontSize=6.5, textColor=colors.black,  wordWrap='CJK')
+    tot_s    = ParagraphStyle('TTOT',fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,  alignment=TA_CENTER)
+
+    elements.append(Paragraph(empresa_nombre.upper(), st_title))
+    if empresa_ruc:
+        elements.append(Paragraph(f"RUC: {empresa_ruc}", st_sub))
+    elements.append(Paragraph(f"REPORTE DE TESORERÍA — PAGOS DE NÓMINA  |  Periodo: {periodo_texto}", st_sub))
+    elements.append(Paragraph(f"Emitido el {datetime.now().strftime('%d/%m/%Y %H:%M')}", st_sub))
+    elements.append(Spacer(1, 6))
+
+    # ── TABLA 1: PLANILLA ────────────────────────────────────────────────────────
+    elements.append(Paragraph("▶  1. PLANILLA DE REMUNERACIONES (5ta Categoría)", st_sec))
+
+    if df_planilla is not None and not df_planilla.empty:
+        df_plan_data = df_planilla[df_planilla.get('Apellidos y Nombres', pd.Series(dtype=str)) != 'TOTALES'] \
+            if 'Apellidos y Nombres' in df_planilla.columns else df_planilla.iloc[:-1]
+
+        # Detectar columnas de ingreso dinámicas (solo si suma > 0)
+        dynamic_income = []  # lista de (col_en_df, display_name)
+        for src, dsp in [("Sueldo Base", "Sueldo Básico"), ("Asig. Fam.", "Asig. Fam.")]:
+            if src in df_plan_data.columns and df_plan_data[src].sum() > 0:
+                dynamic_income.append((src, dsp))
+
+        # Detectar ingresos extra desde auditoria_data
+        known_extra = ["Horas Extra 25%", "Horas Extra 35%", "Gratificación", "Bono Ext. 9%"]
+        extra_sums = {k: 0.0 for k in known_extra}
+        if auditoria_data:
+            for _dni, _info in auditoria_data.items():
+                for k, v in _info.get('ingresos', {}).items():
+                    if k in extra_sums:
+                        extra_sums[k] += float(v or 0.0)
+        for k in known_extra:
+            if extra_sums.get(k, 0.0) > 0:
+                dynamic_income.append((k, k))
+
+        has_5ta   = "Ret. 5ta Cat."  in df_plan_data.columns and df_plan_data["Ret. 5ta Cat."].sum() > 0
+        has_dscto = "Dsctos/Faltas"  in df_plan_data.columns and df_plan_data["Dsctos/Faltas"].sum() > 0
+
+        headers_p = ["N°", "DNI", "Nombres y Apellidos"]
+        for _, dsp in dynamic_income:
+            headers_p.append(dsp)
+        headers_p += ["TOTAL BRUTO", "Ret. Pensiones"]
+        if has_5ta:
+            headers_p.append("Ret. 5ta Cat.")
+        if has_dscto:
+            headers_p.append("Otros Dsctos")
+        headers_p += ["NETO A PAGAR", "Banco", "N° Cuenta", "CCI"]
+
+        col_w_map = {
+            "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
+            "Sueldo Básico": 58, "Asig. Fam.": 50,
+            "Horas Extra 25%": 48, "Horas Extra 35%": 48,
+            "Gratificación": 58, "Bono Ext. 9%": 50,
+            "TOTAL BRUTO": 62, "Ret. Pensiones": 62,
+            "Ret. 5ta Cat.": 52, "Otros Dsctos": 52,
+            "NETO A PAGAR": 62, "Banco": 55, "N° Cuenta": 72, "CCI": 82,
+        }
+        col_w_p = [col_w_map.get(h, 55) for h in headers_p]
+        total_wp = sum(col_w_p)
+        col_w_p = [w * W_PAGE / total_wp for w in col_w_p]
+
+        rows_p = [[Paragraph(h, hdr_s) for h in headers_p]]
+        tot_p = {h: 0.0 for h in headers_p}
+        for h in ["N°", "DNI", "Nombres y Apellidos", "Banco", "N° Cuenta", "CCI"]:
+            tot_p[h] = None  # texto → no sumar
+
+        for i, (_, row) in enumerate(df_plan_data.iterrows()):
+            ret_pens = sum(float(row.get(c, 0.0) or 0.0) for c in ["ONP (13%)", "AFP Aporte", "AFP Seguro", "AFP Comis."])
+            fila = [str(i + 1), str(row.get("DNI", "")), Paragraph(str(row.get("Apellidos y Nombres", "")), nom_s)]
+            for src, dsp in dynamic_income:
+                val = 0.0
+                if src in row.index:
+                    val = float(row.get(src, 0.0) or 0.0)
+                elif auditoria_data:
+                    val = float((auditoria_data.get(str(row.get("DNI", "")), {}).get('ingresos', {}) or {}).get(src, 0.0) or 0.0)
+                fila.append(f"{val:,.2f}")
+                tot_p[dsp] = tot_p.get(dsp, 0.0) + val
+            bruto = float(row.get("TOTAL BRUTO", 0.0) or 0.0)
+            neto  = float(row.get("NETO A PAGAR", 0.0) or 0.0)
+            fila += [f"{bruto:,.2f}", f"{ret_pens:,.2f}"]
+            tot_p["TOTAL BRUTO"] = tot_p.get("TOTAL BRUTO", 0.0) + bruto
+            tot_p["Ret. Pensiones"] = tot_p.get("Ret. Pensiones", 0.0) + ret_pens
+            if has_5ta:
+                v5 = float(row.get("Ret. 5ta Cat.", 0.0) or 0.0)
+                fila.append(f"{v5:,.2f}")
+                tot_p["Ret. 5ta Cat."] = tot_p.get("Ret. 5ta Cat.", 0.0) + v5
+            if has_dscto:
+                vd = float(row.get("Dsctos/Faltas", 0.0) or 0.0)
+                fila.append(f"{vd:,.2f}")
+                tot_p["Otros Dsctos"] = tot_p.get("Otros Dsctos", 0.0) + vd
+            fila += [f"{neto:,.2f}", str(row.get("Banco", "") or ""), str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
+            tot_p["NETO A PAGAR"] = tot_p.get("NETO A PAGAR", 0.0) + neto
+            rows_p.append(fila)
+
+        # Fila de totales
+        tot_fila = [Paragraph("TOTALES", tot_s), "", ""]
+        for _, dsp in dynamic_income:
+            tot_fila.append(f"{tot_p.get(dsp, 0.0):,.2f}")
+        tot_fila += [f"{tot_p.get('TOTAL BRUTO', 0.0):,.2f}", f"{tot_p.get('Ret. Pensiones', 0.0):,.2f}"]
+        if has_5ta:
+            tot_fila.append(f"{tot_p.get('Ret. 5ta Cat.', 0.0):,.2f}")
+        if has_dscto:
+            tot_fila.append(f"{tot_p.get('Otros Dsctos', 0.0):,.2f}")
+        tot_fila += [f"{tot_p.get('NETO A PAGAR', 0.0):,.2f}", "", "", ""]
+        rows_p.append(tot_fila)
+
+        t1 = Table(rows_p, colWidths=col_w_p, repeatRows=1)
+        t1.setStyle(TableStyle([
+            ('BACKGROUND',    (0, 0),  (-1, 0),  C_NAVY),
+            ('BACKGROUND',    (0, -1), (-1, -1), C_STEEL),
+            ('TEXTCOLOR',     (0, 0),  (-1, 0),  colors.white),
+            ('TEXTCOLOR',     (0, -1), (-1, -1), colors.white),
+            ('FONTNAME',      (0, 0),  (-1, 0),  'Helvetica-Bold'),
+            ('FONTNAME',      (0, 1),  (-1, -2), 'Helvetica'),
+            ('FONTNAME',      (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE',      (0, 0),  (-1, -1), 6.5),
+            ('ALIGN',         (0, 0),  (-1, -1), 'CENTER'),
+            ('ALIGN',         (2, 1),  (2, -2),  'LEFT'),
+            ('VALIGN',        (0, 0),  (-1, -1), 'MIDDLE'),
+            ('TOPPADDING',    (0, 0),  (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0),  (-1, -1), 3),
+            ('ROWBACKGROUNDS',(0, 1),  (-1, -2), [colors.white, C_LIGHT]),
+            ('GRID',          (0, 0),  (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+            ('LINEBELOW',     (0, 0),  (-1, 0),  0.8, C_GOLD),
+        ]))
+        elements.append(t1)
+    else:
+        elements.append(Paragraph("(Sin datos de planilla para este periodo)", st_sub))
+
+    # ── TABLA 2: LOCADORES ────────────────────────────────────────────────────────
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph("▶  2. LOCADORES DE SERVICIO (4ta Categoría)", st_sec))
+
+    if df_loc is not None and not df_loc.empty:
+        mes_num  = int(periodo_key[:2])
+        anio_num = int(periodo_key[3:])
+        dias_mes = _cal_teso.monthrange(anio_num, mes_num)[1]
+        has_dnp  = "Días no Prestados" in df_loc.columns
+
+        headers_l = ["N°", "DNI", "Nombres y Apellidos"]
+        if has_dnp:
+            headers_l += ["Días Laborados", "Días no Prest."]
+        headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco", "N° Cuenta", "CCI"]
+
+        col_w_lmap = {
+            "N°": 20, "DNI": 48, "Nombres y Apellidos": 120,
+            "Días Laborados": 52, "Días no Prest.": 52,
+            "Pago Bruto": 62, "Retención 4ta": 62, "Otros Dsctos": 55, "NETO A PAGAR": 62,
+            "Banco": 55, "N° Cuenta": 72, "CCI": 82,
+        }
+        col_w_l = [col_w_lmap.get(h, 55) for h in headers_l]
+        total_wl = sum(col_w_l)
+        col_w_l = [w * W_PAGE / total_wl for w in col_w_l]
+
+        loc_col = "Locador" if "Locador" in df_loc.columns else df_loc.columns[2]
+        rows_l = [[Paragraph(h, hdr_s) for h in headers_l]]
+        tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
+
+        for i, (_, row) in enumerate(df_loc.iterrows()):
+            dnp    = int(row.get("Días no Prestados", 0) or 0)
+            bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
+            ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
+            dscto  = float(row.get("Otros Descuentos", 0.0) or 0.0)
+            neto   = float(row.get("NETO A PAGAR", 0.0) or 0.0)
+            fila   = [str(i + 1), str(row.get("DNI", "") or ""), Paragraph(str(row.get(loc_col, "") or ""), nom_s)]
+            if has_dnp:
+                fila += [str(dias_mes - dnp), str(dnp)]
+            fila += [
+                f"{bruto:,.2f}", f"{ret:,.2f}", f"{dscto:,.2f}", f"{neto:,.2f}",
+                str(row.get("Banco", "") or ""), str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or ""),
+            ]
+            rows_l.append(fila)
+            tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
+
+        tot_l_fila = [Paragraph("TOTALES", tot_s), "", ""]
+        if has_dnp:
+            tot_l_fila += ["", ""]
+        tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", "", "", ""]
+        rows_l.append(tot_l_fila)
+
+        t2 = Table(rows_l, colWidths=col_w_l, repeatRows=1)
+        t2.setStyle(TableStyle([
+            ('BACKGROUND',    (0, 0),  (-1, 0),  C_NAVY),
+            ('BACKGROUND',    (0, -1), (-1, -1), C_STEEL),
+            ('TEXTCOLOR',     (0, 0),  (-1, 0),  colors.white),
+            ('TEXTCOLOR',     (0, -1), (-1, -1), colors.white),
+            ('FONTNAME',      (0, 0),  (-1, 0),  'Helvetica-Bold'),
+            ('FONTNAME',      (0, 1),  (-1, -2), 'Helvetica'),
+            ('FONTNAME',      (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE',      (0, 0),  (-1, -1), 6.5),
+            ('ALIGN',         (0, 0),  (-1, -1), 'CENTER'),
+            ('ALIGN',         (2, 1),  (2, -2),  'LEFT'),
+            ('VALIGN',        (0, 0),  (-1, -1), 'MIDDLE'),
+            ('TOPPADDING',    (0, 0),  (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0),  (-1, -1), 3),
+            ('ROWBACKGROUNDS',(0, 1),  (-1, -2), [colors.white, C_LIGHT]),
+            ('GRID',          (0, 0),  (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+            ('LINEBELOW',     (0, 0),  (-1, 0),  0.8, C_GOLD),
+        ]))
+        elements.append(t2)
+    else:
+        elements.append(Paragraph("(Sin locadores de servicio para este periodo)", st_sub))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
 # --- 2. MOTOR DE RENDERIZADO Y CÁLCULO ---
 
 def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_seleccionado, periodo_key, mes_idx):
@@ -1169,6 +1402,10 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "Aporte Seg. Social": round(aporte_essalud, 2),
                 # Alias para compatibilidad con boletas (leen 'EsSalud Patronal')
                 "EsSalud Patronal": round(aporte_essalud, 2),
+                # Datos bancarios para reporte de tesorería
+                "Banco":     str(row.get('Banco', '') or ''),
+                "N° Cuenta": str(row.get('Cuenta Bancaria', '') or ''),
+                "CCI":       str(row.get('CCI', '') or ''),
             })
 
             auditoria_data[dni_trabajador] = {
@@ -1195,8 +1432,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         df_resultados = pd.DataFrame(resultados).fillna(0.0)
         
         # --- FILA DE TOTALES DINÁMICA ---
-        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social"}
-        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": ""}
+        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI"}
+        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": ""}
         for col in df_resultados.columns:
             if col not in cols_texto:
                 totales[col] = df_resultados[col].sum()
@@ -1255,6 +1492,27 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
             pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
             st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
+
+        # Reporte de Tesorería (planilla + locadores con datos bancarios)
+        df_loc_teso = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+        try:
+            buf_teso = generar_pdf_tesoreria(
+                df_planilla=df_resultados,
+                df_loc=df_loc_teso if not df_loc_teso.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=periodo_key,
+                auditoria_data=auditoria_data,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+            )
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF)",
+                data=buf_teso,
+                file_name=f"TESORERIA_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as _e_teso:
+            st.warning(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
 
         st.markdown("---")
         st.markdown("### 🔍 Panel de Auditoría Tributaria y Liquidaciones")
@@ -1468,6 +1726,9 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
                 "Retención 4ta (8%)":  resultado['retencion_4ta'],
                 "Otros Descuentos":    resultado['otros_descuentos'],
                 "NETO A PAGAR":        resultado['neto_a_pagar'],
+                "Banco":               getattr(loc, 'banco', '') or '',
+                "N° Cuenta":           getattr(loc, 'cuenta_bancaria', '') or '',
+                "CCI":                 getattr(loc, 'cci', '') or '',
             })
         st.session_state[f'res_honorarios_{periodo_key}'] = pd.DataFrame(resultados_loc)
 

@@ -56,6 +56,8 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE variables_mes ADD COLUMN IF NOT EXISTS dias_descuento_locador INTEGER DEFAULT 0",
             "ALTER TABLE parametros_legales ADD COLUMN IF NOT EXISTS tasa_4ta FLOAT DEFAULT 8.0",
             "ALTER TABLE parametros_legales ADD COLUMN IF NOT EXISTS tope_4ta FLOAT DEFAULT 1500.0",
+            # Suspensión de retenciones 4ta Cat. para locadores con constancia SUNAT
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS tiene_suspension_4ta BOOLEAN DEFAULT false",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

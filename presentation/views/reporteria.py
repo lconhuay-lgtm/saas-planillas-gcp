@@ -127,10 +127,10 @@ def render():
         return
 
     # Tabs de detalle
-    tab_sabana, tab_resumen, tab_audit, tab_interfaces, tab_loc = st.tabs(
+    tab_sabana, tab_resumen, tab_audit, tab_interfaces, tab_loc, tab_tesoreria, tab_personalizado = st.tabs(
         ["📋 Sábana de Planilla", "📊 Resumen de Obligaciones",
          "🔍 Auditoría por Trabajador", "📥 Interfaces SUNAT/AFPnet",
-         "🧾 Locadores (4ta Cat.)"]
+         "🧾 Locadores (4ta Cat.)", "🏦 Reporte Tesorería", "🛠️ Reporte Personalizado"]
     )
 
     with tab_sabana:
@@ -443,3 +443,199 @@ def render():
             _db2.close()
         except Exception as e_loc:
             st.error(f"Error cargando datos de locadores: {e_loc}")
+
+    # ── TAB: REPORTE DE TESORERÍA ─────────────────────────────────────────────
+    with tab_tesoreria:
+        st.markdown("### 🏦 Reporte de Tesorería — Pagos de Nómina")
+        st.markdown(f"**Periodo:** {_periodo_legible(sel_key)}  |  **Estado:** {badge}")
+        st.markdown("---")
+
+        try:
+            from presentation.views.calculo_mensual import generar_pdf_tesoreria
+            from core.use_cases.calculo_honorarios import calcular_recibo_honorarios
+
+            _db_t = SessionLocal()
+            locadores_t = (
+                _db_t.query(Trabajador)
+                .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
+                .all()
+            )
+            p_t = _db_t.query(ParametroLegal).filter_by(
+                empresa_id=empresa_id, periodo_key=sel_key
+            ).first()
+            variables_t = {
+                v.trabajador_id: v
+                for v in _db_t.query(VariablesMes).filter_by(
+                    empresa_id=empresa_id, periodo_key=sel_key
+                ).all()
+            }
+            _db_t.close()
+
+            # Recalcular locadores
+            import json as _json_t
+            mes_t = int(sel_key[:2]); anio_t = int(sel_key[3:])
+            dias_mes_t = _cal.monthrange(anio_t, mes_t)[1]
+            tasa_4ta_t  = getattr(p_t, 'tasa_4ta',  8.0)    if p_t else 8.0
+            tope_4ta_t  = getattr(p_t, 'tope_4ta', 1500.0) if p_t else 1500.0
+
+            resultados_t = []
+            for loc in locadores_t:
+                v = variables_t.get(loc.id)
+                if v:
+                    cj = _json_t.loads(v.conceptos_json or '{}')
+                    vl = {
+                        'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
+                        'otros_pagos':       float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
+                        'otros_descuentos':  float(cj.get('_otros_descuentos_loc', 0.0) or 0.0),
+                    }
+                else:
+                    vl = {'dias_no_prestados': 0, 'otros_pagos': 0.0, 'otros_descuentos': 0.0}
+                res = calcular_recibo_honorarios(loc, vl, dias_mes_t, tasa_4ta=tasa_4ta_t, tope_4ta=tope_4ta_t)
+                resultados_t.append({
+                    "DNI":                loc.num_doc,
+                    "Locador":            loc.nombres,
+                    "Días no Prestados":  res['dias_no_prestados'],
+                    "Pago Bruto":         res['pago_bruto'],
+                    "Retención 4ta (8%)": res['retencion_4ta'],
+                    "Otros Descuentos":   res['otros_descuentos'],
+                    "NETO A PAGAR":       res['neto_a_pagar'],
+                    "Banco":              getattr(loc, 'banco', '') or '',
+                    "N° Cuenta":          getattr(loc, 'cuenta_bancaria', '') or '',
+                    "CCI":                getattr(loc, 'cci', '') or '',
+                })
+
+            df_loc_t = pd.DataFrame(resultados_t) if resultados_t else pd.DataFrame()
+
+            # KPIs
+            if not df_loc_t.empty:
+                kt1, kt2, kt3 = st.columns(3)
+                kt1.metric("Locadores", len(df_loc_t))
+                kt2.metric("Total Bruto Locadores", f"S/ {df_loc_t['Pago Bruto'].sum():,.2f}")
+                kt3.metric("Total Neto Locadores",  f"S/ {df_loc_t['NETO A PAGAR'].sum():,.2f}")
+            if 'NETO A PAGAR' in df_planilla.columns:
+                df_plan_sin_tot = df_planilla[df_planilla.get('Apellidos y Nombres', pd.Series(dtype=str)) != 'TOTALES'] \
+                    if 'Apellidos y Nombres' in df_planilla.columns else df_planilla.iloc[:-1]
+                kp1, kp2 = st.columns(2)
+                kp1.metric("Total Bruto Planilla",  f"S/ {df_plan_sin_tot.get('TOTAL BRUTO', pd.Series([0])).sum():,.2f}")
+                kp2.metric("Total Neto Planilla",   f"S/ {df_plan_sin_tot['NETO A PAGAR'].sum():,.2f}")
+
+            st.markdown("---")
+            buf_teso = generar_pdf_tesoreria(
+                df_planilla=df_planilla,
+                df_loc=df_loc_t if not df_loc_t.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=sel_key,
+                auditoria_data=auditoria,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+            )
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF)",
+                data=buf_teso,
+                file_name=f"TESORERIA_{sel_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="rep_dl_teso",
+            )
+        except Exception as e_teso:
+            st.error(f"Error generando Reporte de Tesorería: {e_teso}")
+
+    # ── TAB: REPORTE PERSONALIZADO ────────────────────────────────────────────
+    with tab_personalizado:
+        st.markdown("### 🛠️ Reporte Personalizado")
+        st.markdown(f"**Periodo:** {_periodo_legible(sel_key)}  |  **Estado:** {badge}")
+        st.markdown("---")
+
+        tipo_rep = st.radio(
+            "Seleccione el tipo de reporte:",
+            ["Planilla (5ta Categoría)", "Locadores (4ta Categoría)"],
+            horizontal=True,
+            key="rep_pers_tipo",
+        )
+
+        try:
+            import json as _json_p
+            if tipo_rep.startswith("Planilla"):
+                df_base_p = df_planilla.copy()
+                if 'Apellidos y Nombres' in df_base_p.columns:
+                    df_base_p = df_base_p[df_base_p['Apellidos y Nombres'] != 'TOTALES']
+                cols_disp = list(df_base_p.columns)
+            else:
+                # Recalcular locadores para reporte personalizado
+                from core.use_cases.calculo_honorarios import calcular_recibo_honorarios as _chr_p
+                _db_p = SessionLocal()
+                locadores_p = (
+                    _db_p.query(Trabajador)
+                    .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
+                    .all()
+                )
+                p_p = _db_p.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=sel_key).first()
+                variables_p = {
+                    v.trabajador_id: v
+                    for v in _db_p.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=sel_key).all()
+                }
+                _db_p.close()
+                mes_p = int(sel_key[:2]); anio_p = int(sel_key[3:])
+                dias_mes_p = _cal.monthrange(anio_p, mes_p)[1]
+                tasa_4ta_p = getattr(p_p, 'tasa_4ta',  8.0)    if p_p else 8.0
+                tope_4ta_p = getattr(p_p, 'tope_4ta', 1500.0) if p_p else 1500.0
+                rows_p = []
+                for loc in locadores_p:
+                    v = variables_p.get(loc.id)
+                    if v:
+                        cj = _json_p.loads(v.conceptos_json or '{}')
+                        vl = {'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
+                              'otros_pagos': float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
+                              'otros_descuentos': float(cj.get('_otros_descuentos_loc', 0.0) or 0.0)}
+                    else:
+                        vl = {'dias_no_prestados': 0, 'otros_pagos': 0.0, 'otros_descuentos': 0.0}
+                    res = _chr_p(loc, vl, dias_mes_p, tasa_4ta=tasa_4ta_p, tope_4ta=tope_4ta_p)
+                    rows_p.append({
+                        "DNI": loc.num_doc, "Locador": loc.nombres, "Cargo": loc.cargo or "",
+                        "Honorario Base": res['honorario_base'],
+                        "Días no Prestados": res['dias_no_prestados'],
+                        "Descuento Días": res['monto_descuento'],
+                        "Otros Pagos": res['otros_pagos'],
+                        "Pago Bruto": res['pago_bruto'],
+                        "Retención 4ta (8%)": res['retencion_4ta'],
+                        "Otros Descuentos": res['otros_descuentos'],
+                        "NETO A PAGAR": res['neto_a_pagar'],
+                        "Banco": getattr(loc, 'banco', '') or '',
+                        "N° Cuenta": getattr(loc, 'cuenta_bancaria', '') or '',
+                        "CCI": getattr(loc, 'cci', '') or '',
+                    })
+                df_base_p = pd.DataFrame(rows_p) if rows_p else pd.DataFrame()
+                cols_disp = list(df_base_p.columns)
+
+            if df_base_p.empty:
+                st.info("No hay datos disponibles para el tipo de reporte seleccionado.")
+            else:
+                cols_sel = st.multiselect(
+                    "Seleccione las columnas a incluir:",
+                    options=cols_disp,
+                    default=cols_disp,
+                    key="rep_pers_cols",
+                )
+                if cols_sel:
+                    df_preview = df_base_p[cols_sel]
+                    st.markdown("**Vista Previa:**")
+                    st.dataframe(df_preview, use_container_width=True, hide_index=True)
+
+                    # Botón de descarga Excel
+                    import io as _io_p
+                    buf_xl_p = _io_p.BytesIO()
+                    with pd.ExcelWriter(buf_xl_p, engine='openpyxl') as _writer_p:
+                        df_preview.to_excel(_writer_p, sheet_name='Reporte', index=False)
+                    buf_xl_p.seek(0)
+                    tipo_file = "PLANILLA" if tipo_rep.startswith("Planilla") else "LOCADORES"
+                    st.download_button(
+                        f"📊 Descargar Reporte_Dinamico_{sel_key}.xlsx",
+                        data=buf_xl_p,
+                        file_name=f"Reporte_Dinamico_{tipo_file}_{sel_key}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="rep_dl_pers",
+                    )
+                else:
+                    st.warning("Seleccione al menos una columna.")
+        except Exception as e_pers:
+            st.error(f"Error generando Reporte Personalizado: {e_pers}")
