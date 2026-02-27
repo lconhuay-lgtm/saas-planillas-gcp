@@ -51,6 +51,7 @@ def _cargar_planilla_periodo(db, empresa_id, periodo_key):
         'Fecha Ingreso': t.fecha_ingreso,
         'Sistema Pensión': t.sistema_pension or 'NO AFECTO',
         'CUSPP': t.cuspp or '',
+        'Seguro Social': getattr(t, 'seguro_social', None) or 'ESSALUD',
     } for t in trabajadores])
 
     # Variables del periodo (solo necesitamos horas extras para las boletas)
@@ -104,22 +105,32 @@ def generar_pdf_boletas_masivas(empresa_nombre, periodo, df_resultados, df_traba
         sistema_pension = trabajador.get('Sistema Pensión', 'NO AFECTO')
         cuspp = trabajador.get('CUSPP', '')
         if pd.isna(cuspp) or cuspp == "N/A" or cuspp == "": cuspp = "---"
-        
-        dias_laborados = data_aud.get('dias', 30) # Recuperado de la auditoria exacta
+
+        # Seguro social: leer de auditoría (más confiable) o de la sábana
+        seguro_social_label = data_aud.get('seguro_social', row.get('Seg. Social', 'ESSALUD'))
+        aporte_seg_social = data_aud.get('aporte_seg_social', row.get('Aporte Seg. Social', row.get('EsSalud Patronal', 0.0)))
+        if seguro_social_label == "SIS":
+            etiqueta_aporte = "SIS (S/15 fijo)"
+        elif seguro_social_label == "ESSALUD-EPS":
+            etiqueta_aporte = "ESSALUD-EPS"
+        else:
+            etiqueta_aporte = "ESSALUD (9%)"
+
+        dias_laborados = data_aud.get('dias', 30)
         hrs_ext = float(variables.get('Hrs Extras 25%', 0)) + float(variables.get('Hrs Extras 35%', 0))
-        
+
         ingresos_dict = data_aud.get('ingresos', {})
         descuentos_dict = data_aud.get('descuentos', {})
-        aportes_dict = {"EsSalud Patronal": row.get('EsSalud Patronal', 0.0)}
+        aportes_dict = {etiqueta_aporte: aporte_seg_social}
         
         ing_list = [(k, f"{v:,.2f}") for k, v in ingresos_dict.items() if v > 0]
         desc_list = [(k, f"{v:,.2f}") for k, v in descuentos_dict.items() if v > 0]
         apo_list = [(k, f"{v:,.2f}") for k, v in aportes_dict.items() if v > 0]
         
         tot_ing = row.get('TOTAL BRUTO', 0.0)
-        tot_apo = row.get('EsSalud Patronal', 0.0)
-        tot_desc = row.get('T. DESCUENTOS', 0.0) # Se usa el total de la sábana
-        if tot_desc == 0.0: # Fallback por si la columna cambió de nombre
+        tot_apo = aporte_seg_social
+        tot_desc = row.get('T. DESCUENTOS', 0.0)
+        if tot_desc == 0.0:
             tot_desc = tot_ing - row.get('NETO A PAGAR', 0.0)
             
         neto = row.get('NETO A PAGAR', 0.0)
@@ -137,6 +148,7 @@ def generar_pdf_boletas_masivas(empresa_nombre, periodo, df_resultados, df_traba
             ["TRABAJADOR:", nombre, "DOC. IDENTIDAD:", dni],
             ["CARGO:", cargo, "FECHA INGRESO:", fecha_ingreso],
             ["SIST. PENSIÓN:", sistema_pension, "CUSPP:", cuspp],
+            ["SEGURO SOCIAL:", seguro_social_label, "APORTE EMPLEADOR:", f"S/ {aporte_seg_social:,.2f}"],
             ["DÍAS LABORADOS:", str(int(dias_laborados)), "HORAS EXTRAS:", str(hrs_ext)]
         ]
         t_info = Table(info_data, colWidths=[110, 200, 105, 100])

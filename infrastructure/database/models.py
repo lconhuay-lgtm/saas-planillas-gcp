@@ -57,6 +57,8 @@ class Trabajador(Base):
     sistema_pension = Column(String(50))
     comision_afp = Column(String(50))
     cuspp = Column(String(50))
+    # Seguro de salud: "ESSALUD" (9%) o "SIS" (S/15.00 fijo, solo Micro Empresa)
+    seguro_social = Column(String(20), default="ESSALUD", nullable=False, server_default="ESSALUD")
     
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="trabajadores")
