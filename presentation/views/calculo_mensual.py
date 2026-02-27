@@ -310,7 +310,7 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
     
     # --- CUADRO RESUMEN DE PREVISIONES (AFP/ONP/SEGURIDAD SOCIAL/5TA) ---
     elements.append(Spacer(1, 30))
-    elements.append(Paragraph("<b>RESUMEN GENERAL DE OBLIGACIONES DEL EMPLEADOR Y RETENCIONES</b>", sub_style))
+    elements.append(Paragraph("<b>RESUMEN GENERAL DE OBLIGACIONES DEL EMPLEADOR Y RETENCIONES</b>", st_sub))
     elements.append(Spacer(1, 10))
 
     df_data = df.iloc[:-1]  # Sin fila de totales
