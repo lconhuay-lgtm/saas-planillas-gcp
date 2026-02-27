@@ -82,13 +82,15 @@ def generar_archivos_plame(
             if cod:
                 cod_map[cc["Nombre del Concepto"]] = cod
 
-    # Conceptos de sistema con códigos fijos
+    # Conceptos de sistema con códigos fijos (Tabla 22 SUNAT oficial)
     cod_map.update({
-        "Sueldo Base":             "0121",
-        "Asignación Familiar":     "0201",
-        "Gratificación":           "0401",
-        "Bono Ext. 9%":            "0305",
-        "Horas Extras":            "0801",
+        "Asignación Familiar": "0201",
+        "Gratificación":       "0406",
+        "Bono Ext. 9%":        "0312",
+        "Horas Extras 25%":    "0105",
+        "Horas Extras 35%":    "0106",
+        # Alias legacy (por si existen en auditoria antigua)
+        "Horas Extras":        "0105",
     })
 
     # Mapa doc → trabajador
@@ -109,13 +111,27 @@ def generar_archivos_plame(
         tipo_doc = _tipo_doc_sunat(trab.get("Tipo Doc.", "DNI") if isinstance(trab, dict) else trab.get("Tipo Doc.", "DNI"))
         aud      = auditoria_data.get(dni, {})
 
-        # ── .REM — líneas por cada concepto devengado ──────────────────────
+        # ── .REM — líneas por cada concepto devengado (Ingresos y Descuentos) ──
+        # 1. Procesar Ingresos
         for concepto, monto in aud.get("ingresos", {}).items():
             if monto and float(monto) > 0:
-                cod_sunat = cod_map.get(concepto, "0903")  # fallback "Otros Ingresos"
+                # Interceptar nombre dinámico del Sueldo Base ("Sueldo Base (N días)")
+                if concepto.startswith("Sueldo Base"):
+                    cod_sunat = "0121"
+                else:
+                    cod_sunat = cod_map.get(concepto, "0903")  # fallback "Otros Ingresos"
                 lines_rem.append(
                     f"{tipo_doc}|{dni}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|"
                 )
+
+        # 2. Procesar Descuentos aplicables al PLAME (Tardanzas → 0704)
+        for concepto, monto in aud.get("descuentos", {}).items():
+            if monto and float(monto) > 0:
+                if concepto == "Tardanzas":
+                    cod_sunat = "0704"
+                    lines_rem.append(
+                        f"{tipo_doc}|{dni}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|"
+                    )
 
         # ── .JOR — jornada ─────────────────────────────────────────────────
         horas_ord  = int(aud.get("horas_ordinarias", 0))

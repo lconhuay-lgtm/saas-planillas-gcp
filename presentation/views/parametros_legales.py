@@ -67,6 +67,13 @@ def render():
         t_afp_tope = col6.number_input("Rem. Máx. Asegurable AFP (S/)", value=float(p_data.tope_afp if p_data else 13583.51), step=100.0)
 
         st.markdown("<br>---", unsafe_allow_html=True)
+        st.subheader("1b. Retención de 4ta Categoría (Locadores de Servicio)")
+        st.caption("Aplica al pago de honorarios a locadores. La retención solo se efectúa si el pago bruto supera el tope.")
+        col_4a, col_4b = st.columns(2)
+        t_4ta  = col_4a.number_input("Tasa Retención 4ta Cat. (%)", value=float(getattr(p_data, 'tasa_4ta', 8.0) if p_data else 8.0), step=0.5, min_value=0.0, max_value=100.0)
+        tope_4ta = col_4b.number_input("Tope mínimo para retener (S/)", value=float(getattr(p_data, 'tope_4ta', 1500.0) if p_data else 1500.0), step=50.0, min_value=0.0)
+
+        st.markdown("<br>---", unsafe_allow_html=True)
         st.subheader("2. Tasas del Sistema Privado de Pensiones (AFP)")
         st.markdown(
             "<div style='margin-top: -10px; margin-bottom: 20px;'>"
@@ -128,6 +135,7 @@ def render():
                 p_db.i_ap = i_ap; p_db.i_pr = i_pr; p_db.i_fl = i_fl; p_db.i_mx = i_mx
                 p_db.p_ap = p_ap; p_db.p_pr = p_pr; p_db.p_fl = p_fl; p_db.p_mx = p_mx
                 p_db.pr_ap = pr_ap; p_db.pr_pr = pr_pr; p_db.pr_fl = pr_fl; p_db.pr_mx = pr_mx
+                p_db.tasa_4ta = t_4ta; p_db.tope_4ta = tope_4ta
             else: # CREAR NUEVO
                 nuevo = ParametroLegal(
                     empresa_id=empresa_id, periodo_key=periodo_key,
@@ -136,7 +144,8 @@ def render():
                     h_ap=h_ap, h_pr=h_pr, h_fl=h_fl, h_mx=h_mx,
                     i_ap=i_ap, i_pr=i_pr, i_fl=i_fl, i_mx=i_mx,
                     p_ap=p_ap, p_pr=p_pr, p_fl=p_fl, p_mx=p_mx,
-                    pr_ap=pr_ap, pr_pr=pr_pr, pr_fl=pr_fl, pr_mx=pr_mx
+                    pr_ap=pr_ap, pr_pr=pr_pr, pr_fl=pr_fl, pr_mx=pr_mx,
+                    tasa_4ta=t_4ta, tope_4ta=tope_4ta,
                 )
                 db.add(nuevo)
             
