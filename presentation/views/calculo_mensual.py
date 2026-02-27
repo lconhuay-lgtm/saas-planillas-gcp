@@ -875,7 +875,7 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(legal),
-        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+        rightMargin=12, leftMargin=12, topMargin=95, bottomMargin=15
     )
     elements = []
 
@@ -884,19 +884,58 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
     C_GOLD  = colors.HexColor("#C9A84C")
     C_LIGHT = colors.HexColor("#F0F4F9")
 
-    st_title = ParagraphStyle('TT',  fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY, spaceAfter=4)
     st_sub   = ParagraphStyle('TS',  fontName="Helvetica",      fontSize=9,  textColor=colors.HexColor("#64748B"), spaceAfter=2)
     st_sec   = ParagraphStyle('TSC', fontName="Helvetica-Bold", fontSize=9,  textColor=C_STEEL, spaceBefore=8, spaceAfter=4)
     hdr_s    = ParagraphStyle('TH',  fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,  alignment=TA_CENTER, wordWrap='CJK')
     nom_s    = ParagraphStyle('TN',  fontName="Helvetica",      fontSize=6.5, textColor=colors.black,  wordWrap='CJK')
     tot_s    = ParagraphStyle('TTOT',fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,  alignment=TA_CENTER)
+    st_obs   = ParagraphStyle('OBS', fontName="Helvetica",      fontSize=7.5, textColor=C_NAVY, leading=11, leftIndent=10, spaceAfter=2)
 
-    elements.append(Paragraph(empresa_nombre.upper(), st_title))
-    if empresa_ruc:
-        elements.append(Paragraph(f"RUC: {empresa_ruc}", st_sub))
-    elements.append(Paragraph(f"REPORTE DE TESORERÍA — PAGOS DE NÓMINA  |  Periodo: {periodo_texto}", st_sub))
-    elements.append(Paragraph(f"Emitido el {datetime.now().strftime('%d/%m/%Y %H:%M')}", st_sub))
-    elements.append(Spacer(1, 6))
+    _fecha_emision = datetime.now().strftime('%d/%m/%Y %H:%M')
+
+    def draw_header(canvas_obj, doc_obj):
+        """Membrete fijo en canvas — se repite en cada página."""
+        canvas_obj.saveState()
+        page_w, page_h = landscape(legal)
+        x0, x1 = 12, page_w - 12
+        offset_ruc = 14 if empresa_ruc else 0
+
+        # Empresa nombre
+        canvas_obj.setFont("Helvetica-Bold", 13)
+        canvas_obj.setFillColor(C_NAVY)
+        canvas_obj.drawString(x0, page_h - 22, empresa_nombre.upper())
+
+        # Página (derecha)
+        canvas_obj.setFont("Helvetica", 7)
+        canvas_obj.setFillColor(colors.HexColor("#64748B"))
+        canvas_obj.drawRightString(x1, page_h - 22, f"Pág. {doc_obj.page}")
+
+        # RUC
+        if empresa_ruc:
+            canvas_obj.setFont("Helvetica", 9)
+            canvas_obj.setFillColor(colors.HexColor("#64748B"))
+            canvas_obj.drawString(x0, page_h - 36, f"RUC: {empresa_ruc}")
+
+        # Título del reporte
+        canvas_obj.setFont("Helvetica-Bold", 9)
+        canvas_obj.setFillColor(C_STEEL)
+        canvas_obj.drawString(x0, page_h - 36 - offset_ruc,
+                              f"REPORTE DE TESORERÍA — PAGOS DE NÓMINA  |  Periodo: {periodo_texto}")
+
+        # Fecha de emisión
+        canvas_obj.setFont("Helvetica", 8)
+        canvas_obj.setFillColor(colors.HexColor("#64748B"))
+        canvas_obj.drawString(x0, page_h - 50 - offset_ruc, f"Emitido el {_fecha_emision}")
+
+        # Líneas separadoras corporativas
+        canvas_obj.setStrokeColor(C_NAVY)
+        canvas_obj.setLineWidth(1.2)
+        canvas_obj.line(x0, page_h - 63 - offset_ruc, x1, page_h - 63 - offset_ruc)
+        canvas_obj.setStrokeColor(C_GOLD)
+        canvas_obj.setLineWidth(0.5)
+        canvas_obj.line(x0, page_h - 67 - offset_ruc, x1, page_h - 67 - offset_ruc)
+
+        canvas_obj.restoreState()
 
     # ── TABLA 1: PLANILLA ────────────────────────────────────────────────────────
     elements.append(Paragraph("▶  1. PLANILLA DE REMUNERACIONES (5ta Categoría)", st_sec))
@@ -1092,7 +1131,28 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
     else:
         elements.append(Paragraph("(Sin locadores de servicio para este periodo)", st_sub))
 
-    doc.build(elements)
+    # ── SECCIÓN 3: OBSERVACIONES DEL PERIODO ─────────────────────────────────────
+    obs_all = []
+    if auditoria_data:
+        for _dni_o, _info_o in auditoria_data.items():
+            obs_str = _info_o.get('observaciones', '')
+            if obs_str:
+                nombre_o = _info_o.get('nombres', str(_dni_o))
+                obs_all.append(f"[Planilla] {nombre_o} ({_dni_o}): {obs_str}")
+    if df_loc is not None and not df_loc.empty and 'Observaciones' in df_loc.columns:
+        _loc_col_o = "Locador" if "Locador" in df_loc.columns else df_loc.columns[2]
+        for _, row_o in df_loc.iterrows():
+            obs_str = str(row_o.get('Observaciones', '') or '')
+            if obs_str:
+                obs_all.append(f"[Locador] {str(row_o.get(_loc_col_o, ''))} ({str(row_o.get('DNI', ''))}): {obs_str}")
+
+    if obs_all:
+        elements.append(Spacer(1, 14))
+        elements.append(Paragraph("▶  3. OBSERVACIONES DEL PERIODO", st_sec))
+        for obs_line in obs_all:
+            elements.append(Paragraph(f"• {obs_line}", st_obs))
+
+    doc.build(elements, onFirstPage=draw_header, onLaterPages=draw_header)
     buffer.seek(0)
     return buffer
 
@@ -1368,14 +1428,16 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 anio_calc = int(anio_seleccionado)
 
                 dias_del_mes = calendar.monthrange(anio_calc, mes_calc)[1]
+                ingreso_este_mes = (fecha_ingreso.year == anio_calc and fecha_ingreso.month == mes_calc)
                 dias_computables = dias_del_mes
-                if fecha_ingreso.year == anio_calc and fecha_ingreso.month == mes_calc:
+                if ingreso_este_mes:
                     dias_computables = max(0, dias_del_mes - fecha_ingreso.day + 1)
                 elif fecha_ingreso.year > anio_calc or (fecha_ingreso.year == anio_calc and fecha_ingreso.month > mes_calc):
                     dias_computables = 0
             except Exception:
                 dias_del_mes = 30
                 dias_computables = 30
+                ingreso_este_mes = False
 
             # Trabajador aún no ingresa en este periodo — omitir completamente
             if dias_computables == 0:
@@ -1392,11 +1454,21 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             horas_ordinarias  = int(dias_laborados * horas_jornada)
 
             sueldo_base_nominal = float(row['Sueldo Base'])
-            valor_dia           = sueldo_base_nominal / dias_del_mes
+            valor_dia           = sueldo_base_nominal / 30.0   # Base 30 — Mes Comercial Mixto
             valor_hora          = valor_dia / horas_jornada
 
-            # Sueldo proporcional a días efectivamente laborados (ausencias ya descuentan días)
-            sueldo_computable = max(0.0, valor_dia * dias_laborados)
+            # Mes Comercial Mixto: mes completo sin ausencias → sueldo íntegro; caso mixto → proporcional/30
+            if not ingreso_este_mes and total_ausencias == 0:
+                sueldo_computable = sueldo_base_nominal
+            else:
+                sueldo_computable = max(0.0, valor_dia * dias_laborados)
+
+            # --- OBSERVACIONES DEL PERIODO ---
+            obs_trab = []
+            if ingreso_este_mes:
+                obs_trab.append(f"Ingresó a laborar el {fecha_ingreso.strftime('%d/%m/%Y')}")
+            if total_ausencias > 0:
+                obs_trab.append(f"Faltó {int(total_ausencias)} día(s)")
 
             dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
 
@@ -1570,12 +1642,14 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "Banco":     str(row.get('Banco', '') or ''),
                 "N° Cuenta": str(row.get('Cuenta Bancaria', '') or ''),
                 "CCI":       str(row.get('CCI', '') or ''),
+                "Observaciones": " | ".join(obs_trab) if obs_trab else "",
             })
 
             auditoria_data[dni_trabajador] = {
                 "nombres": nombres, "periodo": periodo_key,
                 "dias": dias_laborados,               # días efectivamente laborados
                 "dias_computables": dias_computables,  # base de proporcionalidad
+                "observaciones": " | ".join(obs_trab),
                 "horas_ordinarias": horas_ordinarias,  # para .JOR de PLAME
                 "suspensiones": susp_dict,             # para .SNL de PLAME
                 "base_afp": round(base_afp_onp, 2),   # para AFPnet
@@ -1596,8 +1670,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         df_resultados = pd.DataFrame(resultados).fillna(0.0)
         
         # --- FILA DE TOTALES DINÁMICA ---
-        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI"}
-        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": ""}
+        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI", "Observaciones"}
+        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": "", "Observaciones": ""}
         for col in df_resultados.columns:
             if col not in cols_texto:
                 totales[col] = df_resultados[col].sum()
@@ -1917,6 +1991,7 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
                 "Banco":               getattr(loc, 'banco', '') or '',
                 "N° Cuenta":           getattr(loc, 'cuenta_bancaria', '') or '',
                 "CCI":                 getattr(loc, 'cci', '') or '',
+                "Observaciones":       resultado['observaciones'],
             })
         st.session_state[f'res_honorarios_{periodo_key}'] = pd.DataFrame(resultados_loc)
 
