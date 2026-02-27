@@ -135,23 +135,23 @@ def render():
             st.markdown("---")
 
             # ── Sección B: Edición inteligente — reasignar código SUNAT ──────
-            st.subheader("✏️ Editar Concepto — Reasignar Código SUNAT")
-            st.info(
+            with st.expander("✏️ Editar Concepto — Reasignar Código SUNAT", expanded=False):
+              st.info(
                 "Seleccione un concepto existente y asígnele (o cambie) su código del "
                 "catálogo oficial SUNAT (Tabla 22 PLAME). Las afectaciones se autocompletarán."
-            )
+              )
 
-            # Selectbox para elegir concepto existente
-            nombres_existentes = [c.nombre for c in conceptos_db]
-            concepto_a_editar = st.selectbox(
+              # Selectbox para elegir concepto existente
+              nombres_existentes = [c.nombre for c in conceptos_db]
+              concepto_a_editar = st.selectbox(
                 "Concepto a editar:",
                 nombres_existentes,
                 key="sel_concepto_editar",
-            )
+              )
 
-            obj_editar = next((c for c in conceptos_db if c.nombre == concepto_a_editar), None)
+              obj_editar = next((c for c in conceptos_db if c.nombre == concepto_a_editar), None)
 
-            if obj_editar:
+              if obj_editar:
                 # Preseleccionar el código actual en el catálogo (si existe)
                 cod_actual = getattr(obj_editar, 'codigo_sunat', None) or ''
                 idx_default = 0
@@ -173,11 +173,10 @@ def render():
                     cod_nuevo  = _COD_POR_OPCION[catalogo_sel]
                     info_nuevo = CATALOGO_T22_INGRESOS[cod_nuevo]
 
-                    # Afectaciones automáticas (solo lectura)
                     st.markdown("**Afectaciones automáticas según SUNAT:**")
-                    st.checkbox("Afecto AFP/ONP",       value=info_nuevo["afp"],      disabled=True, key="e_cb_afp")
-                    st.checkbox("Afecto 5ta Categoría", value=info_nuevo["quinta"],   disabled=True, key="e_cb_5ta")
-                    st.checkbox("Afecto EsSalud",        value=info_nuevo["essalud"],  disabled=True, key="e_cb_ess")
+                    st.checkbox("Afecto AFP/ONP",       value=info_nuevo["afp"],     disabled=True, key="e_cb_afp")
+                    st.checkbox("Afecto 5ta Categoría", value=info_nuevo["quinta"],  disabled=True, key="e_cb_5ta")
+                    st.checkbox("Afecto EsSalud",       value=info_nuevo["essalud"], disabled=True, key="e_cb_ess")
                     st.caption(f"Tipo SUNAT: **{info_nuevo['tipo']}**  |  Código: **{cod_nuevo}**")
 
                 with col_der:
@@ -207,7 +206,6 @@ def render():
                         nombre_final = (obj_editar.nombre if es_oblig
                                         else (nombre_edit.strip().upper() or obj_editar.nombre))
 
-                        # Verificar duplicado de nombre (solo si cambió)
                         if nombre_final != obj_editar.nombre:
                             dup = db.query(Concepto).filter_by(
                                 empresa_id=empresa_id, nombre=nombre_final
@@ -216,13 +214,13 @@ def render():
                                 st.error(f"Ya existe un concepto con el nombre '{nombre_final}'.")
                                 st.stop()
 
-                        obj_editar.nombre          = nombre_final
-                        obj_editar.codigo_sunat    = cod_nuevo
-                        obj_editar.tipo            = info_nuevo["tipo"]
-                        obj_editar.afecto_afp      = info_nuevo["afp"]
-                        obj_editar.afecto_5ta      = info_nuevo["quinta"]
-                        obj_editar.afecto_essalud  = info_nuevo["essalud"]
-                        obj_editar.computable_cts  = comp_cts_edit
+                        obj_editar.nombre           = nombre_final
+                        obj_editar.codigo_sunat     = cod_nuevo
+                        obj_editar.tipo             = info_nuevo["tipo"]
+                        obj_editar.afecto_afp       = info_nuevo["afp"]
+                        obj_editar.afecto_5ta       = info_nuevo["quinta"]
+                        obj_editar.afecto_essalud   = info_nuevo["essalud"]
+                        obj_editar.computable_cts   = comp_cts_edit
                         obj_editar.computable_grati = comp_grati_edit
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (

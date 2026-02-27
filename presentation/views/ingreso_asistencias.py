@@ -132,8 +132,12 @@ def render():
             col_cfg_t[etq] = st.column_config.NumberColumn(min_value=0, max_value=31, step=1,
                                                             help=f"Código SUNAT: {_COL_A_COD[etq]}")
 
-        col_cfg_m = {c.nombre: st.column_config.NumberColumn(min_value=0.0, step=50.0, format="S/ %.2f")
-                     for c in (conceptos_ing + conceptos_desc)}
+        col_cfg_ing  = {c.nombre: st.column_config.NumberColumn(
+                            label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
+                        for c in conceptos_ing}
+        col_cfg_desc = {c.nombre: st.column_config.NumberColumn(
+                            label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
+                        for c in conceptos_desc}
 
         tab_t, tab_i, tab_d = st.tabs(["Tiempos y Asistencias", "Ingresos Variables", "Descuentos Directos"])
 
@@ -161,7 +165,7 @@ def render():
                 df_ingresos,
                 disabled=["Num. Doc.", "Nombres y Apellidos", "Sueldo Base", "Asig. Fam."],
                 num_rows="fixed", use_container_width=True, hide_index=True,
-                column_config=col_cfg_m, key="ed_ingresos",
+                column_config=col_cfg_ing, key="ed_ingresos",
             )
 
         with tab_d:
@@ -173,7 +177,7 @@ def render():
                     df_descuentos,
                     disabled=["Num. Doc.", "Nombres y Apellidos"],
                     num_rows="fixed", use_container_width=True, hide_index=True,
-                    column_config=col_cfg_m, key="ed_descuentos",
+                    column_config=col_cfg_desc, key="ed_descuentos",
                 )
 
         st.markdown("---")
