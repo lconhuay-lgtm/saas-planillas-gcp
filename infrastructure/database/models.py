@@ -20,22 +20,25 @@ class Usuario(Base):
 # 1. TABLA MAESTRA DE EMPRESAS
 class Empresa(Base):
     __tablename__ = "empresas"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     ruc = Column(String(11), unique=True, index=True, nullable=False)
     razon_social = Column(String(200), nullable=False)
-    
+
     # --- DATOS CORPORATIVOS ---
     domicilio = Column(String(300))
     representante_legal = Column(String(200))
     correo_electronico = Column(String(100))
-    
+
     # --- RÉGIMEN LABORAL ---
     regimen_laboral = Column(String(100), nullable=False, default="Régimen General")
-    fecha_acogimiento = Column(Date, nullable=True) # Solo para MYPEs
-    
+    fecha_acogimiento = Column(Date, nullable=True)
+
+    # --- JORNADA LABORAL ---
+    horas_jornada_diaria = Column(Float, default=8.0)
+
     fecha_registro = Column(DateTime, default=datetime.now)
-    
+
     # Relaciones
     trabajadores = relationship("Trabajador", back_populates="empresa", cascade="all, delete-orphan")
     conceptos = relationship("Concepto", back_populates="empresa", cascade="all, delete-orphan")
@@ -49,9 +52,13 @@ class Trabajador(Base):
     empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     # Datos Personales
-    tipo_doc = Column(String(20))
+    tipo_doc = Column(String(20))    # 01=DNI, 04=CE, 07=Pasaporte
     num_doc = Column(String(20), index=True, nullable=False)
+    # Nombre completo (campo original — mantener para compat. con registros existentes)
     nombres = Column(String(200), nullable=False)
+    # Campos separados para PLAME / AFPnet
+    apellido_paterno = Column(String(100), nullable=True)
+    apellido_materno = Column(String(100), nullable=True)
     fecha_nac = Column(Date)
     
     # Datos Laborales
@@ -86,8 +93,9 @@ class Concepto(Base):
     empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
     nombre = Column(String(100), nullable=False)
-    tipo = Column(String(20), nullable=False) # "INGRESO" o "DESCUENTO"
-    
+    tipo = Column(String(20), nullable=False)          # "INGRESO" o "DESCUENTO"
+    codigo_sunat = Column(String(4), nullable=True)    # Código Tabla 22 PLAME (ej: "0121")
+
     # Afectaciones Tributarias
     afecto_afp = Column(Boolean, default=False)
     afecto_5ta = Column(Boolean, default=False)
@@ -143,10 +151,13 @@ class VariablesMes(Base):
     periodo_key = Column(String(10), nullable=False)  # Formato "MM-YYYY", ej: "02-2026"
 
     # Campos fijos de tiempo
-    dias_faltados = Column(Integer, default=0)
+    dias_faltados = Column(Integer, default=0)         # Legado — usar suspensiones_json
     min_tardanza = Column(Integer, default=0)
     hrs_extras_25 = Column(Float, default=0.0)
     hrs_extras_35 = Column(Float, default=0.0)
+
+    # Suspensiones por tipo SUNAT Tabla 21: {"07": 2, "20": 3}
+    suspensiones_json = Column(Text, default='{}')
 
     # Montos de conceptos dinámicos: {"BONO DE RIESGO": 500.0, "GRATIFICACION (JUL/DIC)": 3000.0}
     conceptos_json = Column(Text, default='{}')

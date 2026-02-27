@@ -126,8 +126,9 @@ def render():
         return
 
     # Tabs de detalle
-    tab_sabana, tab_resumen, tab_audit = st.tabs(
-        ["📋 Sábana de Planilla", "📊 Resumen de Obligaciones", "🔍 Auditoría por Trabajador"]
+    tab_sabana, tab_resumen, tab_audit, tab_interfaces = st.tabs(
+        ["📋 Sábana de Planilla", "📊 Resumen de Obligaciones",
+         "🔍 Auditoría por Trabajador", "📥 Interfaces SUNAT/AFPnet"]
     )
 
     with tab_sabana:
@@ -209,3 +210,91 @@ def render():
 
             neto_audit = tot_ing - tot_desc
             st.info(f"**Neto a Pagar: S/ {neto_audit:,.2f}**")
+
+    with tab_interfaces:
+        st.markdown("### 📥 Exportación de Interfaces Oficiales")
+
+        if estado_sel != "CERRADA":
+            st.warning(
+                "⚠️ Solo se pueden exportar interfaces de planillas **CERRADAS**. "
+                "Cierre la planilla desde el módulo Cálculo de Planilla."
+            )
+        else:
+            empresa_ruc = st.session_state.get('empresa_activa_ruc', '')
+            mes_num, anio_num = int(sel_key[:2]), int(sel_key[3:])
+
+            # Cargar conceptos para validación
+            try:
+                from infrastructure.database.connection import SessionLocal as _SL
+                from infrastructure.database.models import Concepto as _Concepto, Trabajador as _Trab
+                _db = _SL()
+                empresa_id_rep = st.session_state.get('empresa_activa_id')
+                conc_db  = _db.query(_Concepto).filter_by(empresa_id=empresa_id_rep).all()
+                trab_db  = _db.query(_Trab).filter_by(empresa_id=empresa_id_rep).all()
+                _db.close()
+                df_conceptos_rep = pd.DataFrame([{
+                    "Nombre del Concepto": c.nombre,
+                    "Cód. SUNAT": getattr(c, 'codigo_sunat', '') or '',
+                } for c in conc_db])
+                df_trabajadores_rep = pd.DataFrame([{
+                    "Num. Doc.":        t.num_doc,
+                    "Apellido Paterno": getattr(t, 'apellido_paterno', '') or '',
+                    "Apellido Materno": getattr(t, 'apellido_materno', '') or '',
+                    "Nombres y Apellidos": t.nombres,
+                    "Tipo Doc.":        t.tipo_doc or "DNI",
+                    "Fecha Ingreso":    t.fecha_ingreso,
+                    "CUSPP":            t.cuspp or '',
+                    "Sistema Pensión":  t.sistema_pension or '',
+                } for t in trab_db])
+            except Exception as e_load:
+                st.error(f"Error cargando datos: {e_load}")
+                df_conceptos_rep = pd.DataFrame()
+                df_trabajadores_rep = pd.DataFrame()
+
+            col_p, col_a = st.columns(2)
+
+            with col_p:
+                st.markdown("#### Archivos PLAME (T-REGISTRO)")
+                st.caption("Genera .REM · .JOR · .SNL comprimidos en un ZIP con nombre oficial SUNAT.")
+                if st.button("Generar ZIP PLAME", type="primary", use_container_width=True, key="btn_plame"):
+                    try:
+                        from core.use_cases.generador_interfaces import generar_archivos_plame
+                        buf_zip = generar_archivos_plame(
+                            empresa_ruc=empresa_ruc, anio=anio_num, mes=mes_num,
+                            df_planilla=df_planilla, auditoria_data=auditoria,
+                            df_trabajadores=df_trabajadores_rep,
+                            df_conceptos=df_conceptos_rep,
+                        )
+                        nombre_zip = f"0601{anio_num}{str(mes_num).zfill(2)}{empresa_ruc.zfill(11)}.zip"
+                        st.download_button(
+                            f"⬇️ Descargar {nombre_zip}", data=buf_zip,
+                            file_name=nombre_zip, mime="application/zip",
+                            use_container_width=True, key="dl_plame",
+                        )
+                    except ValueError as ve:
+                        st.error(f"❌ {ve}")
+                    except Exception as ex:
+                        st.error(f"Error inesperado: {ex}")
+
+            with col_a:
+                st.markdown("#### Archivo AFPnet")
+                st.caption("18 columnas estrictas para declaración AFP: Habitat, Integra, Prima, Profuturo.")
+                if st.button("Generar Excel AFPnet", type="primary", use_container_width=True, key="btn_afpnet"):
+                    try:
+                        from core.use_cases.generador_interfaces import generar_excel_afpnet
+                        buf_afp = generar_excel_afpnet(
+                            anio=anio_num, mes=mes_num,
+                            df_planilla=df_planilla, auditoria_data=auditoria,
+                            df_trabajadores=df_trabajadores_rep,
+                        )
+                        nombre_afp = f"AFPnet_{sel_key.replace('-','_')}.xlsx"
+                        st.download_button(
+                            f"⬇️ Descargar {nombre_afp}", data=buf_afp,
+                            file_name=nombre_afp,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, key="dl_afpnet",
+                        )
+                    except ValueError as ve:
+                        st.error(f"❌ {ve}")
+                    except Exception as ex:
+                        st.error(f"Error inesperado: {ex}")

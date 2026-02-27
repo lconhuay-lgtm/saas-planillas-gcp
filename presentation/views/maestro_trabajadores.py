@@ -35,7 +35,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     es_micro_empresa = "Micro Empresa" in regimen_empresa
 
     if t is None:
-        t_doc_val, n_doc_val, nombres_val = "DNI", "", ""
+        t_doc_val, n_doc_val = "DNI", ""
+        ap_pat_val, ap_mat_val, nombres_val = "", "", ""
         f_nac_val = datetime.date(1990, 1, 1)
         cargo_val, f_ingreso_val = "", datetime.date.today()
         s_base_val, situacion_val = 1025.0, "ACTIVO"
@@ -47,6 +48,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         opciones_doc = ["DNI", "CE", "PTP"]
         t_doc_val = t.tipo_doc if t.tipo_doc in opciones_doc else "DNI"
         n_doc_val = t.num_doc or ""
+        ap_pat_val = getattr(t, 'apellido_paterno', '') or ''
+        ap_mat_val = getattr(t, 'apellido_materno', '') or ''
         nombres_val = t.nombres or ""
         f_nac_val = t.fecha_nac or datetime.date(1990, 1, 1)
         cargo_val = t.cargo or ""
@@ -65,7 +68,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     # ── Sección 1: Identidad ───────────────────────────────────────────────────
     st.markdown("##### 1. Identidad y Datos Básicos")
-    c1, c2, c3, c4 = st.columns([1, 1.5, 3, 1.5])
+    c1, c2, c5 = st.columns([1, 1.5, 1.5])
 
     opciones_doc = ["DNI", "CE", "PTP"]
     es_edicion = (t is not None)
@@ -74,20 +77,29 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
                          key=f"{key_prefix}_tdoc", disabled=es_edicion)
     n_doc = c2.text_input("Nro. Documento", value=n_doc_val, max_chars=12,
                           key=f"{key_prefix}_ndoc", disabled=es_edicion)
+    f_nac = c5.date_input("Fecha Nacimiento*", value=f_nac_val,
+                          key=f"{key_prefix}_fnac")
+
+    # Apellidos y nombres separados (requeridos para PLAME / AFPnet)
+    r1, r2, r3 = st.columns([2, 2, 3])
+    ap_pat = r1.text_input("Apellido Paterno*", value=ap_pat_val.upper(),
+                           key=f"{key_prefix}_appat")
+    ap_mat = r2.text_input("Apellido Materno*", value=ap_mat_val.upper(),
+                           key=f"{key_prefix}_apmat")
 
     # Auto-búsqueda solo en Alta
-    nombres_auto, fecha_nac_auto = nombres_val, f_nac_val
+    nombres_auto = nombres_val
     if not es_edicion and t_doc == "DNI" and len(n_doc) == 8:
         resultado = consultar_dni_automatico(n_doc)
         if resultado:
             nombres_auto = resultado["nombres"]
-            fecha_nac_auto = resultado["nacimiento"]
             st.toast(f"✅ Datos de {n_doc} encontrados", icon="👤")
 
-    nombres = c3.text_input("Apellidos y Nombres*", value=nombres_auto.upper(),
+    nombres = r3.text_input("Nombres (sin apellidos)*", value=nombres_auto.upper(),
                             key=f"{key_prefix}_nombres")
-    f_nac = c4.date_input("Fecha Nacimiento*", value=fecha_nac_auto,
-                          key=f"{key_prefix}_fnac")
+
+    # Nombre completo para compatibilidad con el resto del sistema
+    nombre_completo = f"{ap_pat} {ap_mat} {nombres}".strip()
 
     # ── Sección 2: Información Laboral ─────────────────────────────────────────
     st.markdown("##### 2. Información Laboral")
@@ -170,7 +182,9 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         return {
             "tipo_doc": t_doc,
             "num_doc": n_doc,
-            "nombres": nombres.upper(),
+            "apellido_paterno": ap_pat.upper(),
+            "apellido_materno": ap_mat.upper(),
+            "nombres": nombre_completo.upper(),   # campo legado (nombre completo)
             "fecha_nac": f_nac,
             "cargo": cargo,
             "fecha_ingreso": f_ingreso,
