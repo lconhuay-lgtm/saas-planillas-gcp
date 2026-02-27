@@ -3,6 +3,20 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from infrastructure.database.connection import Base
 
+
+# 0. TABLA DE USUARIOS DEL SISTEMA
+class Usuario(Base):
+    __tablename__ = "usuarios"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    username         = Column(String(50), unique=True, nullable=False, index=True)
+    password_hash    = Column(String(64), nullable=False)   # SHA-256 hex
+    rol              = Column(String(20), nullable=False)   # analista | supervisor
+    nombre_completo  = Column(String(100), nullable=True)
+    activo           = Column(Boolean, default=True)
+    fecha_registro   = Column(DateTime, default=datetime.now)
+
+
 # 1. TABLA MAESTRA DE EMPRESAS
 class Empresa(Base):
     __tablename__ = "empresas"
