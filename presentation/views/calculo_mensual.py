@@ -361,12 +361,16 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
             resumen_data.append(["RETENCIÓN ONP (13%)", f"{n_onp} trabajador(es)", f"{onp_total:,.2f}"])
             total_general += onp_total
 
-    # AFP por entidad
+    # AFP por entidad — columnas pueden no existir si el filtro de ceros las eliminó
     if 'Sist. Pensión' in df_data.columns:
         for afp in df_data['Sist. Pensión'].unique():
             if "AFP" in str(afp):
                 df_afp = df_data[df_data['Sist. Pensión'] == afp]
-                tot = df_afp['AFP Aporte'].sum() + df_afp['AFP Seguro'].sum() + df_afp['AFP Comis.'].sum()
+                tot = (
+                    (df_afp['AFP Aporte'].sum() if 'AFP Aporte' in df_afp.columns else 0.0) +
+                    (df_afp['AFP Seguro'].sum() if 'AFP Seguro' in df_afp.columns else 0.0) +
+                    (df_afp['AFP Comis.'].sum() if 'AFP Comis.' in df_afp.columns else 0.0)
+                )
                 if tot > 0:
                     resumen_data.append([f"RETENCIÓN {afp}", f"{len(df_afp)} trabajador(es)", f"{tot:,.2f}"])
                     total_general += tot
@@ -773,7 +777,9 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
     if df_loc is not None and not df_loc.empty:
         elements.append(Spacer(1, 10))
         elements.append(Paragraph("▶  2. VALORIZACIÓN DE LOCADORES DE SERVICIO (4ta Categoría)", st_sec))
-        cols_loc = list(df_loc.columns)
+        # Excluir columnas bancarias — solo pertenecen al Reporte de Tesorería
+        _BANCO_COMB = {"Banco", "N° Cuenta", "CCI"}
+        cols_loc = [c for c in df_loc.columns if c not in _BANCO_COMB]
         col_widths_loc = {
             "DNI": 52, "Locador": 120,
             "Honorario Base": 65, "Días no Prestados": 55,
@@ -786,7 +792,7 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
         col_w_l = [w * W_PAGE / total_w_l for w in col_w_l]
         nom_idx_l = cols_loc.index("Locador") if "Locador" in cols_loc else -1
         rows_l = [[Paragraph(c, hdr_s) for c in cols_loc]]
-        for _, row in df_loc.iterrows():
+        for _, row in df_loc[cols_loc].iterrows():
             fila = []
             for i, val in enumerate(row):
                 if i == nom_idx_l:
@@ -1635,42 +1641,66 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
         st.markdown("---")
         st.markdown("#### 📥 Exportación Corporativa")
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            try:
-                empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
-                empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
-                excel_file = generar_excel_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
-                st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            except Exception:
-                csv = df_resultados.to_csv(index=False).encode('utf-8')
-                st.download_button("📊 Descargar Sábana (CSV)", data=csv, file_name=f"PLANILLA_{periodo_key}.csv", mime="text/csv", use_container_width=True)
-        with col_btn2:
+
+        # ── Gate de descarga: si hay locadores activos, ambos cálculos deben estar listos ──
+        try:
+            _db_gate = SessionLocal()
+            _n_loc_activos = _db_gate.query(Trabajador).filter_by(
+                empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR'
+            ).count()
+            _db_gate.close()
+        except Exception:
+            _n_loc_activos = 0
+
+        df_loc_teso = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+        _honorarios_calculados = isinstance(df_loc_teso, pd.DataFrame) and not df_loc_teso.empty
+        _puede_descargar = (_n_loc_activos == 0) or _honorarios_calculados
+
+        if not _puede_descargar:
+            st.warning(
+                "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
+                "Para garantizar reportes completos y sin información faltante, "
+                "primero calcule los **Honorarios de Locadores** en la pestaña "
+                "**'🧾 2. Honorarios (4ta Categoría)'** y luego regrese aquí."
+            )
+            if st.button("👉 Continuar de todas formas (solo planilla)", key="btn_forzar_descarga"):
+                _puede_descargar = True
+
+        if _puede_descargar:
             empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
             empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
-            pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
-            st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
 
-        # Reporte de Tesorería (planilla + locadores con datos bancarios)
-        df_loc_teso = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-        try:
-            buf_teso = generar_pdf_tesoreria(
-                df_planilla=df_resultados,
-                df_loc=df_loc_teso if not df_loc_teso.empty else None,
-                empresa_nombre=empresa_nombre,
-                periodo_key=periodo_key,
-                auditoria_data=auditoria_data,
-                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-            )
-            st.download_button(
-                "🏦 Descargar Reporte de Tesorería (PDF)",
-                data=buf_teso,
-                file_name=f"TESORERIA_{periodo_key}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-        except Exception as _e_teso:
-            st.warning(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                try:
+                    excel_file = generar_excel_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
+                    st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                except Exception:
+                    csv = df_resultados.to_csv(index=False).encode('utf-8')
+                    st.download_button("📊 Descargar Sábana (CSV)", data=csv, file_name=f"PLANILLA_{periodo_key}.csv", mime="text/csv", use_container_width=True)
+            with col_btn2:
+                pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
+                st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
+
+            # Reporte de Tesorería — incluye locadores si ya fueron calculados
+            try:
+                buf_teso = generar_pdf_tesoreria(
+                    df_planilla=df_resultados,
+                    df_loc=df_loc_teso if _honorarios_calculados else None,
+                    empresa_nombre=empresa_nombre,
+                    periodo_key=periodo_key,
+                    auditoria_data=auditoria_data,
+                    empresa_ruc=empresa_ruc_s,
+                )
+                st.download_button(
+                    "🏦 Descargar Reporte de Tesorería (PDF)",
+                    data=buf_teso,
+                    file_name=f"TESORERIA_{periodo_key}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as _e_teso:
+                st.warning(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
 
         st.markdown("---")
         st.markdown("### 🔍 Panel de Auditoría Tributaria y Liquidaciones")
@@ -1957,46 +1987,62 @@ def render():
     df_loc_comb  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
 
     if not df_plan_comb.empty:
+        # Gate del reporte combinado: misma lógica que en _render_planilla_tab
+        try:
+            _db_gc = SessionLocal()
+            _n_loc_gc = _db_gc.query(Trabajador).filter_by(
+                empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR'
+            ).count()
+            _db_gc.close()
+        except Exception:
+            _n_loc_gc = 0
+        _gate_comb = (_n_loc_gc == 0) or (not df_loc_comb.empty)
+
         st.markdown("---")
         with st.expander("📋 Reporte Consolidado de Costo Laboral (Planilla + Locadores)", expanded=False):
             st.markdown(
                 "Genera un único documento PDF/Excel que combina la sábana de planilla y la "
                 "valorización de locadores, más un resumen del costo laboral total de la empresa."
             )
-            if df_loc_comb.empty:
+            if not _gate_comb:
+                st.warning(
+                    "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
+                    "Calcule primero los **Honorarios** en la pestaña '🧾 2. Honorarios (4ta Categoría)' "
+                    "para que el reporte incluya la información completa."
+                )
+            elif df_loc_comb.empty:
                 st.info("ℹ️ No hay datos de honorarios calculados para este periodo. El reporte combinado incluirá solo la planilla.")
 
-            col_comb1, col_comb2 = st.columns(2)
-            empresa_ruc_c  = st.session_state.get('empresa_activa_ruc', '')
-            empresa_reg_c  = st.session_state.get('empresa_activa_regimen', '')
-
-            with col_comb1:
-                pdf_comb = generar_pdf_combinado(
-                    df_plan_comb,
-                    df_loc_comb if not df_loc_comb.empty else None,
-                    empresa_nombre, periodo_key,
-                    empresa_ruc=empresa_ruc_c, empresa_regimen=empresa_reg_c
-                )
-                st.download_button(
-                    "📄 Descargar Reporte Combinado (PDF)",
-                    data=pdf_comb,
-                    file_name=f"COSTO_LABORAL_{periodo_key}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                )
-            with col_comb2:
-                # Excel combinado: dos sheets en un solo workbook
-                buf_comb_xl = io.BytesIO()
-                with pd.ExcelWriter(buf_comb_xl, engine='openpyxl') as writer:
-                    df_plan_comb.to_excel(writer, sheet_name=f'Planilla_{periodo_key[:2]}', index=False)
-                    if not df_loc_comb.empty:
-                        df_loc_comb.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False)
-                buf_comb_xl.seek(0)
-                st.download_button(
-                    "📊 Descargar Reporte Combinado (.xlsx)",
-                    data=buf_comb_xl,
-                    file_name=f"COSTO_LABORAL_{periodo_key}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
+            if _gate_comb:
+                empresa_ruc_c = st.session_state.get('empresa_activa_ruc', '')
+                empresa_reg_c = st.session_state.get('empresa_activa_regimen', '')
+                col_comb1, col_comb2 = st.columns(2)
+                with col_comb1:
+                    pdf_comb = generar_pdf_combinado(
+                        df_plan_comb,
+                        df_loc_comb if not df_loc_comb.empty else None,
+                        empresa_nombre, periodo_key,
+                        empresa_ruc=empresa_ruc_c, empresa_regimen=empresa_reg_c
+                    )
+                    st.download_button(
+                        "📄 Descargar Reporte Combinado (PDF)",
+                        data=pdf_comb,
+                        file_name=f"COSTO_LABORAL_{periodo_key}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary",
+                    )
+                with col_comb2:
+                    buf_comb_xl = io.BytesIO()
+                    with pd.ExcelWriter(buf_comb_xl, engine='openpyxl') as writer:
+                        df_plan_comb.to_excel(writer, sheet_name=f'Planilla_{periodo_key[:2]}', index=False)
+                        if not df_loc_comb.empty:
+                            df_loc_comb.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False)
+                    buf_comb_xl.seek(0)
+                    st.download_button(
+                        "📊 Descargar Reporte Combinado (.xlsx)",
+                        data=buf_comb_xl,
+                        file_name=f"COSTO_LABORAL_{periodo_key}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
