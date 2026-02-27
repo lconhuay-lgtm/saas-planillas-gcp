@@ -33,8 +33,17 @@ from presentation.views import emision_boletas
 if not st.session_state.get('_tablas_verificadas'):
     try:
         from infrastructure.database.connection import engine, Base
+        from sqlalchemy import text
         import infrastructure.database.models  # noqa: registra todos los modelos en Base.metadata
         Base.metadata.create_all(bind=engine)
+        # Migraciones incrementales: añaden columnas nuevas sin borrar datos
+        _migraciones = [
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
+        ]
+        with engine.connect() as _conn:
+            for _sql in _migraciones:
+                _conn.execute(text(_sql))
+            _conn.commit()
         st.session_state['_tablas_verificadas'] = True
     except Exception as _err_tablas:
         st.error(f"❌ No se pudo conectar a la base de datos: {_err_tablas}")

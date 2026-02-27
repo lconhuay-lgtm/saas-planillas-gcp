@@ -31,6 +31,9 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     Retorna un dict con los datos si el usuario presionó Guardar, o None.
     """
     # ── Valores iniciales ──────────────────────────────────────────────────────
+    regimen_empresa = st.session_state.get('empresa_activa_regimen', 'Régimen General')
+    es_micro_empresa = "Micro Empresa" in regimen_empresa
+
     if t is None:
         t_doc_val, n_doc_val, nombres_val = "DNI", "", ""
         f_nac_val = datetime.date(1990, 1, 1)
@@ -39,6 +42,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         s_pension_val, t_comision_val, cuspp_val = "ONP", "FLUJO", ""
         banco_val, n_cuenta_val, cci_val = "BCP", "", ""
         a_fam_val, eps_val = False, False
+        seguro_social_val = "ESSALUD"
     else:
         opciones_doc = ["DNI", "CE", "PTP"]
         t_doc_val = t.tipo_doc if t.tipo_doc in opciones_doc else "DNI"
@@ -57,6 +61,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         cci_val = t.cci or ""
         a_fam_val = bool(t.asig_fam)
         eps_val = bool(t.eps)
+        seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
 
     # ── Sección 1: Identidad ───────────────────────────────────────────────────
     st.markdown("##### 1. Identidad y Datos Básicos")
@@ -119,6 +124,25 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             unsafe_allow_html=True
         )
 
+    # ── Sección 3b: Seguro de Salud ────────────────────────────────────────────
+    st.markdown("##### 3b. Seguro de Salud del Empleador")
+    if es_micro_empresa:
+        opciones_seguro = ["ESSALUD", "SIS"]
+        seg_idx = opciones_seguro.index(seguro_social_val) if seguro_social_val in opciones_seguro else 0
+        seguro_social = st.radio(
+            "Régimen de Seguro de Salud",
+            opciones_seguro, index=seg_idx, horizontal=True,
+            key=f"{key_prefix}_seguro",
+            help="ESSALUD: 9% del sueldo bruto. SIS: S/ 15.00 fijo mensual (solo Micro Empresa)."
+        )
+        if seguro_social == "ESSALUD":
+            st.caption("📋 ESSALUD — Aporte patronal: **9%** del total de remuneraciones.")
+        else:
+            st.caption("📋 SIS (Seguro Integral de Salud) — Aporte patronal fijo: **S/ 15.00** por mes.")
+    else:
+        seguro_social = "ESSALUD"
+        st.caption("📋 ESSALUD — Aporte patronal: **9%** del total de remuneraciones (régimen estándar).")
+
     # ── Sección 4: Información de Pago ────────────────────────────────────────
     st.markdown("##### 4. Información de Pago")
     b1, b2, b3 = st.columns(3)
@@ -160,6 +184,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "cci": cci if es_banco else "",
             "asig_fam": a_fam,
             "eps": eps_afecto,
+            "seguro_social": seguro_social,
         }
     return None
 

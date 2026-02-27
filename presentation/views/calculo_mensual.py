@@ -63,6 +63,7 @@ def _cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
             "EPS": "Sí" if t.eps else "No",
             "CUSPP": t.cuspp or "",
             "Cargo": t.cargo or "",
+            "Seguro Social": getattr(t, 'seguro_social', None) or "ESSALUD",
         })
     return pd.DataFrame(rows)
 
@@ -248,54 +249,79 @@ def generar_pdf_sabana(df, empresa_nombre, periodo):
     t.setStyle(TableStyle(estilo_tabla))
     elements.append(t)
     
-    # --- NUEVO: CUADRO RESUMEN DE PREVISIONES (AFP/ONP) ---
+    # --- CUADRO RESUMEN DE PREVISIONES (AFP/ONP/SEGURIDAD SOCIAL/5TA) ---
     elements.append(Spacer(1, 30))
-    elements.append(Paragraph("<b>RESUMEN GENERAL DE RETENCIONES PREVISIONALES</b>", sub_style))
+    elements.append(Paragraph("<b>RESUMEN GENERAL DE OBLIGACIONES DEL EMPLEADOR Y RETENCIONES</b>", sub_style))
     elements.append(Spacer(1, 10))
-    
-    df_data = df.iloc[:-1] # Filtramos la fila de totales para no duplicar
-    resumen_data = [["ENTIDAD", "APORTE / FONDO", "SEGURO / PRIMA", "COMISIÓN", "TOTAL A PAGAR"]]
-    
+
+    df_data = df.iloc[:-1]  # Sin fila de totales
+    resumen_data = [["CONCEPTO", "DETALLE", "MONTO (S/)  "]]
     total_general = 0.0
-    
-    # Calcular ONP
+
+    # ONP
     if 'ONP (13%)' in df_data.columns:
         onp_total = df_data['ONP (13%)'].sum()
         if onp_total > 0:
-            resumen_data.append(["ONP (Sistema Nacional)", f"{onp_total:,.2f}", "-", "-", f"{onp_total:,.2f}"])
+            n_onp = len(df_data[df_data['ONP (13%)'] > 0])
+            resumen_data.append(["RETENCIÓN ONP (13%)", f"{n_onp} trabajador(es)", f"{onp_total:,.2f}"])
             total_general += onp_total
-            
-    # Calcular AFPs
+
+    # AFP por entidad
     if 'Sist. Pensión' in df_data.columns:
-        afps = df_data['Sist. Pensión'].unique()
-        for afp in afps:
+        for afp in df_data['Sist. Pensión'].unique():
             if "AFP" in str(afp):
                 df_afp = df_data[df_data['Sist. Pensión'] == afp]
-                aporte = df_afp['AFP Aporte'].sum()
-                seguro = df_afp['AFP Seguro'].sum()
-                comis = df_afp['AFP Comis.'].sum()
-                tot = aporte + seguro + comis
+                tot = df_afp['AFP Aporte'].sum() + df_afp['AFP Seguro'].sum() + df_afp['AFP Comis.'].sum()
                 if tot > 0:
-                    resumen_data.append([afp, f"{aporte:,.2f}", f"{seguro:,.2f}", f"{comis:,.2f}", f"{tot:,.2f}"])
+                    resumen_data.append([f"RETENCIÓN {afp}", f"{len(df_afp)} trabajador(es)", f"{tot:,.2f}"])
                     total_general += tot
-                    
-    resumen_data.append(["TOTAL A DECLARAR", "", "", "", f"S/ {total_general:,.2f}"])
-    
-    t_res = Table(resumen_data, colWidths=[180, 90, 90, 90, 100])
-    t_res.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#34495E")),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
-        ('ALIGN', (0,0), (0,-1), 'LEFT'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#BDC3C7")),
-        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#E5E7E9")),
-        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-    ]))
-    
-    # Solo mostramos la tabla si hay aportes
+
+    # Renta 5ta Categoría
+    if 'Ret. 5ta Cat.' in df_data.columns:
+        quinta_total = df_data['Ret. 5ta Cat.'].sum()
+        if quinta_total > 0:
+            n_quinta = len(df_data[df_data['Ret. 5ta Cat.'] > 0])
+            resumen_data.append(["RETENCIÓN RENTA 5TA CAT.", f"{n_quinta} trabajador(es)", f"{quinta_total:,.2f}"])
+            total_general += quinta_total
+
+    resumen_data.append(["TOTAL RETENCIONES (A DECLARAR PDT)", "", f"S/ {total_general:,.2f}"])
+
+    # Seguridad Social (ESSALUD + SIS) — a cargo del empleador
+    resumen_data.append(["", "", ""])
+    aporte_seg_total = 0.0
+    col_seg = 'Aporte Seg. Social' if 'Aporte Seg. Social' in df_data.columns else 'EsSalud Patronal'
+    if col_seg in df_data.columns and 'Seg. Social' in df_data.columns:
+        for tipo_seg in df_data['Seg. Social'].unique():
+            df_seg = df_data[df_data['Seg. Social'] == tipo_seg]
+            monto_seg = df_seg[col_seg].sum()
+            if monto_seg > 0:
+                resumen_data.append([f"APORTE {tipo_seg} (EMPLEADOR)", f"{len(df_seg)} trabajador(es)", f"{monto_seg:,.2f}"])
+                aporte_seg_total += monto_seg
+    elif col_seg in df_data.columns:
+        aporte_seg_total = df_data[col_seg].sum()
+        resumen_data.append(["APORTE ESSALUD (EMPLEADOR)", f"{len(df_data)} trabajador(es)", f"{aporte_seg_total:,.2f}"])
+
+    if aporte_seg_total > 0:
+        resumen_data.append(["TOTAL SEGURIDAD SOCIAL (A PAGAR SUNAT)", "", f"S/ {aporte_seg_total:,.2f}"])
+
+    t_res = Table(resumen_data, colWidths=[250, 150, 150])
+    estilos_res = [
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
+        ('ALIGN', (0, 0), (1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+    ]
+    # Filas de subtotal en negrita con fondo
+    for i, row_data in enumerate(resumen_data):
+        if row_data[0].startswith("TOTAL"):
+            estilos_res.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor("#E5E7E9")))
+            estilos_res.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
+    t_res.setStyle(TableStyle(estilos_res))
+
     if len(resumen_data) > 2:
         elements.append(t_res)
 
@@ -594,18 +620,27 @@ def render():
                 retencion_quinta = int(round(max(0.0, (impuesto_anual - retencion_previa_historica) / divisor)))
                 if retencion_quinta > 0: desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
 
-            # --- ESSALUD Y NETO ---
-            tasa_essalud = (p['tasa_eps'] / 100) if row.get('EPS', 'No') == "Sí" else (p['tasa_essalud'] / 100)
-            aporte_essalud = max(base_essalud, p['rmv']) * tasa_essalud
+            # --- SEGURO SOCIAL (ESSALUD o SIS) Y NETO ---
+            seguro_social = str(row.get('Seguro Social', 'ESSALUD')).upper()
+            if seguro_social == "SIS":
+                aporte_essalud = 15.0  # Monto fijo SIS - Solo Micro Empresa
+                etiqueta_seguro = "SIS"
+            elif row.get('EPS', 'No') == "Sí":
+                aporte_essalud = max(base_essalud, p['rmv']) * (p['tasa_eps'] / 100)
+                etiqueta_seguro = "ESSALUD-EPS"
+            else:
+                aporte_essalud = max(base_essalud, p['rmv']) * (p['tasa_essalud'] / 100)
+                etiqueta_seguro = "ESSALUD"
             
             neto_pagar = ingresos_totales - total_pension - retencion_quinta - descuentos_manuales
 
             # --- FILA DE LA SÁBANA CORPORATIVA ---
             resultados.append({
                 "N°": index + 1,
-                "DNI": dni_trabajador, # ✅ AQUI RESTAURAMOS EL DNI PARA QUE LAS BOLETAS FUNCIONEN
+                "DNI": dni_trabajador,
                 "Apellidos y Nombres": nombres,
                 "Sist. Pensión": sistema,
+                "Seg. Social": etiqueta_seguro,
                 "Sueldo Base": round(sueldo_computable, 2),
                 "Asig. Fam.": round(monto_asig_fam, 2),
                 "Otros Ingresos": round((pago_he_25 + pago_he_35 + monto_grati + otros_ingresos), 2),
@@ -617,11 +652,15 @@ def render():
                 "Ret. 5ta Cat.": float(retencion_quinta),
                 "Dsctos/Faltas": round(descuentos_manuales, 2),
                 "NETO A PAGAR": round(neto_pagar, 2),
-                "EsSalud Patronal": round(aporte_essalud, 2) 
+                "Aporte Seg. Social": round(aporte_essalud, 2),
+                # Alias para compatibilidad con boletas (leen 'EsSalud Patronal')
+                "EsSalud Patronal": round(aporte_essalud, 2),
             })
 
             auditoria_data[dni_trabajador] = {
                 "nombres": nombres, "periodo": periodo_key, "dias": dias_computables,
+                "seguro_social": etiqueta_seguro,
+                "aporte_seg_social": round(aporte_essalud, 2),
                 "ingresos": desglose_ingresos, "descuentos": desglose_descuentos,
                 "totales": {"ingreso": ingresos_totales, "descuento": (total_pension + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
                 "quinta": {
@@ -637,9 +676,11 @@ def render():
         df_resultados = pd.DataFrame(resultados).fillna(0.0)
         
         # --- FILA DE TOTALES DINÁMICA ---
-        totales = { "N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "" }
-        for col in df_resultados.columns[4:]: # Sumar desde la columna 4 (Sueldo Base)
-            totales[col] = df_resultados[col].sum()
+        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social"}
+        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": ""}
+        for col in df_resultados.columns:
+            if col not in cols_texto:
+                totales[col] = df_resultados[col].sum()
             
         df_resultados = pd.concat([df_resultados, pd.DataFrame([totales])], ignore_index=True)
         st.session_state['res_planilla'] = df_resultados
