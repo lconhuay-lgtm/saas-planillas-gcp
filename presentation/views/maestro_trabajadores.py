@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 from infrastructure.database.connection import get_db
-from infrastructure.database.models import Trabajador
+from infrastructure.database.models import Trabajador, PlanillaMensual
 
 
 def determinar_regimen_trabajador(fecha_ingreso, regimen_empresa, fecha_acogimiento):
@@ -52,7 +52,13 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         n_doc_val = t.num_doc or ""
         ap_pat_val = getattr(t, 'apellido_paterno', '') or ''
         ap_mat_val = getattr(t, 'apellido_materno', '') or ''
-        nombres_val = t.nombres or ""
+        # Extraer solo primeros nombres (sin apellidos) para evitar duplicación al editar
+        _full = t.nombres or ""
+        _prefix = f"{ap_pat_val} {ap_mat_val}".strip().upper()
+        if _prefix and _full.upper().startswith(_prefix):
+            nombres_val = _full[len(_prefix):].strip()
+        else:
+            nombres_val = _full
         f_nac_val = t.fecha_nac or datetime.date(1990, 1, 1)
         cargo_val = t.cargo or ""
         f_ingreso_val = t.fecha_ingreso or datetime.date.today()
@@ -318,9 +324,9 @@ def render():
         else:
             st.caption(f"{len(trabajadores_db)} trabajador(es) registrado(s)")
             for t in trabajadores_db:
-                reg = determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
+                determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
                 with st.container(border=True):
-                    c1, c2, c3, c4, c5 = st.columns([2.5, 1.5, 1.5, 1.5, 0.8])
+                    c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.6, 0.6])
                     tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
                     c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
                     c2.markdown(f"Doc: `{t.num_doc}`")
@@ -330,16 +336,69 @@ def render():
                         st.session_state['_editando_trabajador_id'] = t.id
                         st.rerun()
 
+                    # Botón eliminar (solo si no hay planilla cerrada con este trabajador)
+                    confirmar_key = f"_confirmar_elim_{t.id}"
+                    if st.session_state.get(confirmar_key):
+                        # Modo confirmación
+                        with st.container(border=True):
+                            st.warning(f"⚠️ ¿Eliminar a **{t.nombres}** (`{t.num_doc}`)? Esta acción no se puede deshacer.")
+                            bc1, bc2 = st.columns(2)
+                            if bc1.button("✅ Sí, eliminar", key=f"confirm_si_{t.id}", type="primary"):
+                                try:
+                                    db.delete(t)
+                                    db.commit()
+                                    st.session_state.pop(confirmar_key, None)
+                                    st.session_state['_msg_trabajador'] = f"🗑️ Trabajador **{t.nombres}** eliminado correctamente."
+                                    st.rerun()
+                                except Exception as e_del:
+                                    st.error(f"❌ Error al eliminar: {e_del}")
+                            if bc2.button("❌ Cancelar", key=f"confirm_no_{t.id}"):
+                                st.session_state.pop(confirmar_key, None)
+                                st.rerun()
+                    else:
+                        if c6.button("🗑️", key=f"del_{t.id}", help="Eliminar trabajador"):
+                            # Verificar si aparece en alguna planilla cerrada
+                            try:
+                                import json as _jdel
+                                planillas_cerradas = db.query(PlanillaMensual).filter_by(
+                                    empresa_id=empresa_id, estado='CERRADA'
+                                ).all()
+                                en_cerrada = any(
+                                    any(str(row.get('DNI', '')) == str(t.num_doc)
+                                        for row in _jdel.loads(p.resultado_json or '[]'))
+                                    for p in planillas_cerradas
+                                )
+                                if en_cerrada:
+                                    st.error(
+                                        f"❌ No se puede eliminar a **{t.nombres}**: aparece en una o más planillas cerradas. "
+                                        "Cambie su situación a 'CESADO' en su lugar."
+                                    )
+                                else:
+                                    st.session_state[confirmar_key] = True
+                                    st.rerun()
+                            except Exception as e_chk:
+                                st.error(f"Error al verificar planillas: {e_chk}")
+
     with tab_nuevo:
         datos = _render_form_trabajador(key_prefix="nuevo")
         if datos:
             try:
-                nuevo_t = Trabajador(empresa_id=empresa_id, **datos)
-                db.add(nuevo_t)
-                db.commit()
-                st.session_state['_msg_trabajador'] = (
-                    f"✅ ¡Trabajador **{datos['nombres']}** registrado e inscrito en la nube exitosamente!"
-                )
-                st.rerun()
+                # Verificar que el DNI no esté ya registrado en esta empresa
+                existente = db.query(Trabajador).filter_by(
+                    empresa_id=empresa_id, num_doc=datos['num_doc']
+                ).first()
+                if existente:
+                    st.error(
+                        f"❌ Ya existe un trabajador con el documento **{datos['num_doc']}** "
+                        f"(`{existente.nombres}`) registrado en esta empresa."
+                    )
+                else:
+                    nuevo_t = Trabajador(empresa_id=empresa_id, **datos)
+                    db.add(nuevo_t)
+                    db.commit()
+                    st.session_state['_msg_trabajador'] = (
+                        f"✅ ¡Trabajador **{datos['nombres']}** registrado e inscrito en la nube exitosamente!"
+                    )
+                    st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al guardar: {e}")
