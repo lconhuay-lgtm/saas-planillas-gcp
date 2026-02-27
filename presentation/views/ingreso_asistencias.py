@@ -2,7 +2,7 @@ import json
 import streamlit as st
 import pandas as pd
 from infrastructure.database.connection import SessionLocal
-from infrastructure.database.models import Trabajador, Concepto, VariablesMes
+from infrastructure.database.models import Trabajador, Concepto, VariablesMes, PlanillaMensual
 from core.domain.catalogos_sunat import CATALOGO_T21_SUSPENSIONES
 
 MESES = ["01 - Enero", "02 - Febrero", "03 - Marzo", "04 - Abril", "05 - Mayo", "06 - Junio",
@@ -72,7 +72,15 @@ def render():
             v = variables_exist.get(t.id)
             conceptos_vals[t.id] = json.loads(v.conceptos_json) if v else {}
 
-        if variables_exist:
+        # Verificar si el periodo está cerrado
+        planilla_estado = db.query(PlanillaMensual).filter_by(
+            empresa_id=empresa_id, periodo_key=periodo_key
+        ).first()
+        es_cerrada = planilla_estado is not None and getattr(planilla_estado, 'estado', 'ABIERTA') == 'CERRADA'
+
+        if es_cerrada:
+            st.error(f"🔒 El periodo **{periodo_key}** está CERRADO. Los datos mostrados son de solo lectura. Solicite a un Supervisor que reabra la planilla si necesita hacer modificaciones.")
+        elif variables_exist:
             st.info(f"Datos previos cargados para **{periodo_key}**.")
         else:
             st.success(f"Nueva hoja de variables para **{periodo_key}**.")
@@ -148,22 +156,23 @@ def render():
             )
             df_t_edit = st.data_editor(
                 df_tiempos,
-                disabled=["Num. Doc.", "Nombres y Apellidos"],
+                disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos"],
                 num_rows="fixed", use_container_width=True, hide_index=True,
                 column_config=col_cfg_t, key="ed_tiempos",
             )
-            st.markdown("**Suspensiones adicionales** (código libre Tabla 21 SUNAT):")
-            col_aux1, col_aux2 = st.columns([1, 3])
-            with col_aux1:
-                opciones_susp = [f"{k} — {v}" for k, v in sorted(CATALOGO_T21_SUSPENSIONES.items())]
-                cod_extra = st.selectbox("Tipo adicional:", opciones_susp, key="susp_extra_cod")
-            with col_aux2:
-                st.caption("Días para este tipo se ingresarán en la grilla como columna extra en el próximo guardado.")
+            if not es_cerrada:
+                st.markdown("**Suspensiones adicionales** (código libre Tabla 21 SUNAT):")
+                col_aux1, col_aux2 = st.columns([1, 3])
+                with col_aux1:
+                    opciones_susp = [f"{k} — {v}" for k, v in sorted(CATALOGO_T21_SUSPENSIONES.items())]
+                    cod_extra = st.selectbox("Tipo adicional:", opciones_susp, key="susp_extra_cod")
+                with col_aux2:
+                    st.caption("Días para este tipo se ingresarán en la grilla como columna extra en el próximo guardado.")
 
         with tab_i:
             df_i_edit = st.data_editor(
                 df_ingresos,
-                disabled=["Num. Doc.", "Nombres y Apellidos", "Sueldo Base", "Asig. Fam."],
+                disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos", "Sueldo Base", "Asig. Fam."],
                 num_rows="fixed", use_container_width=True, hide_index=True,
                 column_config=col_cfg_ing, key="ed_ingresos",
             )
@@ -175,14 +184,14 @@ def render():
             else:
                 df_d_edit = st.data_editor(
                     df_descuentos,
-                    disabled=["Num. Doc.", "Nombres y Apellidos"],
+                    disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos"],
                     num_rows="fixed", use_container_width=True, hide_index=True,
                     column_config=col_cfg_desc, key="ed_descuentos",
                 )
 
         st.markdown("---")
 
-        if st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
+        if not es_cerrada and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
             try:
                 for _, fila_t in df_t_edit.iterrows():
                     doc    = fila_t["Num. Doc."]
