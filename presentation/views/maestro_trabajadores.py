@@ -45,6 +45,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         a_fam_val, eps_val = False, False
         seguro_social_val = "ESSALUD"
         tipo_contrato_val = "PLANILLA"
+        suspension_4ta_val = False
     else:
         opciones_doc = ["DNI", "CE", "PTP"]
         t_doc_val = t.tipo_doc if t.tipo_doc in opciones_doc else "DNI"
@@ -67,6 +68,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         eps_val = bool(t.eps)
         seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
         tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
+        suspension_4ta_val = bool(getattr(t, 'tiene_suspension_4ta', False) or False)
 
     # ── Tipo de Contratación ───────────────────────────────────────────────────
     opciones_contrato = ["Planilla (5ta Categoría)", "Locador de Servicio (4ta Categoría)"]
@@ -207,10 +209,17 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         st.caption("⚠️ **Asignación Familiar** y **EPS** no aplican a locadores de servicio (no hay beneficios sociales).")
         a_fam = False
         eps_afecto = False
+        tiene_suspension_4ta_val = st.checkbox(
+            "🧾 Suspensión de Retenciones 4ta Categoría",
+            value=suspension_4ta_val,
+            key=f"{key_prefix}_susp4ta",
+            help="Marque si el locador presenta constancia de suspensión de retenciones ante SUNAT. La retención del 8% quedará en S/ 0.00."
+        )
     else:
         col_opt1, col_opt2 = st.columns(2)
         a_fam = col_opt1.checkbox("Asignación Familiar", value=a_fam_val, key=f"{key_prefix}_afam")
         eps_afecto = col_opt2.checkbox("Afecto a EPS", value=eps_val, key=f"{key_prefix}_eps")
+        tiene_suspension_4ta_val = False
 
     label_btn = "💾 Guardar Cambios" if es_edicion else "💾 Registrar e Inscribir en la Nube"
     if st.button(label_btn, type="primary", use_container_width=True, key=f"{key_prefix}_btn"):
@@ -242,6 +251,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "asig_fam": a_fam,
             "eps": eps_afecto,
             "seguro_social": seguro_social,
+            "tiene_suspension_4ta": tiene_suspension_4ta_val,
         }
     return None
 

@@ -73,6 +73,8 @@ class Trabajador(Base):
     banco = Column(String(100))
     cuenta_bancaria = Column(String(100))
     cci = Column(String(20))
+    # Suspensión de retenciones 4ta categoría (locadores con constancia SUNAT)
+    tiene_suspension_4ta = Column(Boolean, default=False, server_default='false')
     
     # Datos Previsionales y Seguros
     asig_fam = Column(Boolean, default=False)
