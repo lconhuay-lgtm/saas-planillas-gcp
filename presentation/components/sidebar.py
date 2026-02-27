@@ -32,13 +32,14 @@ def render_sidebar():
             menu = st.radio(
                 "Navegación",
                 (
-                    "Dashboard Principal", # Aquí irán los gráficos futuros
-                    "Parámetros Legales", 
-                    "Maestro de Personal", 
-                    "Maestro de Conceptos", 
-                    "Ingreso de Asistencias", 
-                    "Cálculo de Planilla", 
-                    "Emisión de Boletas"
+                    "Dashboard Principal",
+                    "Parámetros Legales",
+                    "Maestro de Personal",
+                    "Maestro de Conceptos",
+                    "Ingreso de Asistencias",
+                    "Cálculo de Planilla",
+                    "Emisión de Boletas",
+                    "Reportería",
                 ),
                 label_visibility="collapsed"
             )

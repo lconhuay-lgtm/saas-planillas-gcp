@@ -100,12 +100,12 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
     # ── Paleta corporativa ────────────────────────────────────────────────────
     C_NAVY   = colors.HexColor("#0F2744")   # azul marino oscuro — cabeceras
     C_STEEL  = colors.HexColor("#1E4D8C")   # azul medio — sub-cabeceras
-    C_GOLD   = colors.HexColor("#C9A84C")   # dorado — línea decorativa
     C_LIGHT  = colors.HexColor("#F0F4F9")   # celeste muy suave — filas alternas
     C_WHITE  = colors.white
     C_BORDER = colors.HexColor("#CBD5E1")
     C_TOTAL  = colors.HexColor("#1E4D8C")   # fondo fila totales
-    C_NETO   = colors.HexColor("#0A3D2B")   # verde oscuro — neto a pagar
+    C_NETO   = colors.HexColor("#0D2B5E")   # azul BI profundo — neto a pagar
+    C_NETO_ACC = colors.HexColor("#90CAF9") # acento celeste BI — cifra neto
     C_GRAY   = colors.HexColor("#64748B")
 
     empresa_nombre   = empresa_info.get('nombre', '')
@@ -169,15 +169,6 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
         neto     = float(row.get('NETO A PAGAR', 0.0))
 
         # ── A. CABECERA DE EMPRESA ──────────────────────────────────────────
-        # Línea dorada superior
-        line_data = [["" ]]
-        t_line = Table(line_data, colWidths=[W])
-        t_line.setStyle(TableStyle([
-            ('BACKGROUND',  (0,0), (-1,-1), C_GOLD),
-            ('TOPPADDING',  (0,0), (-1,-1), 2),
-            ('BOTTOMPADDING',(0,0),(-1,-1), 2),
-        ]))
-        elements.append(t_line)
         elements.append(Spacer(1, 4))
 
         # Cuerpo cabecera empresa
@@ -337,7 +328,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             Paragraph("NETO A PAGAR AL TRABAJADOR",
                        ParagraphStyle('NL', fontName="Helvetica-Bold", fontSize=11, textColor=C_WHITE, alignment=TA_RIGHT)),
             Paragraph(f"S/  {neto:,.2f}",
-                       ParagraphStyle('NV', fontName="Helvetica-Bold", fontSize=13, textColor=C_GOLD, alignment=TA_CENTER)),
+                       ParagraphStyle('NV', fontName="Helvetica-Bold", fontSize=13, textColor=C_NETO_ACC, alignment=TA_CENTER)),
         ]]
         t_neto = Table(neto_data, colWidths=[W * 0.65, W * 0.35])
         t_neto.setStyle(TableStyle([
@@ -348,7 +339,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             ('TOPPADDING',    (0,0), (-1,-1), 10),
             ('BOTTOMPADDING', (0,0), (-1,-1), 10),
             ('LEFTPADDING',   (0,0), (-1,-1), 10),
-            ('BOX',           (0,0), (-1,-1), 1, C_GOLD),
+            ('BOX',           (0,0), (-1,-1), 1, C_STEEL),
         ]))
         elements.append(t_neto)
         elements.append(Spacer(1, 50))
@@ -370,9 +361,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
         ]))
         elements.append(t_sig)
 
-        # Línea dorada inferior
         elements.append(Spacer(1, 10))
-        elements.append(t_line)
         elements.append(PageBreak())
 
     doc.build(elements)
