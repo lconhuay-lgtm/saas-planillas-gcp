@@ -1066,16 +1066,16 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         dias_mes = _cal_teso.monthrange(anio_num, mes_num)[1]
         has_dias_lab = "Días Laborados" in df_loc.columns
 
-        headers_l = ["N°", "DNI", "Nombres y Apellidos"]
+        headers_l = ["N°", "DNI", "Nombres y Apellidos", "Honorario Base"]
         if has_dias_lab:
             headers_l.append("Días Laborados")
         headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco", "N° Cuenta", "CCI"]
 
         col_w_lmap = {
-            "N°": 20, "DNI": 48, "Nombres y Apellidos": 120,
-            "Días Laborados": 52,
-            "Pago Bruto": 62, "Retención 4ta": 62, "Otros Dsctos": 55, "NETO A PAGAR": 62,
-            "Banco": 55, "N° Cuenta": 72, "CCI": 82,
+            "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
+            "Honorario Base": 60, "Días Laborados": 48,
+            "Pago Bruto": 60, "Retención 4ta": 60, "Otros Dsctos": 52, "NETO A PAGAR": 60,
+            "Banco": 52, "N° Cuenta": 70, "CCI": 80,
         }
         col_w_l = [col_w_lmap.get(h, 55) for h in headers_l]
         total_wl = sum(col_w_l)
@@ -1083,15 +1083,18 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
 
         loc_col = "Locador" if "Locador" in df_loc.columns else df_loc.columns[2]
         rows_l = [[Paragraph(h, hdr_s) for h in headers_l]]
-        tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
+        tot_hon = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
 
         for i, (_, row) in enumerate(df_loc.iterrows()):
             dias_lab = int(row.get("Días Laborados", 0) or 0)
+            hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
             bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
             ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
             dscto  = float(row.get("Otros Descuentos", 0.0) or 0.0)
             neto   = float(row.get("NETO A PAGAR", 0.0) or 0.0)
-            fila   = [str(i + 1), str(row.get("DNI", "") or ""), Paragraph(str(row.get(loc_col, "") or ""), nom_s)]
+            fila   = [str(i + 1), str(row.get("DNI", "") or ""),
+                      Paragraph(str(row.get(loc_col, "") or ""), nom_s),
+                      f"{hon_b:,.2f}"]
             if has_dias_lab:
                 fila.append(str(dias_lab))
             fila += [
@@ -1099,10 +1102,10 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
                 str(row.get("Banco", "") or ""), str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or ""),
             ]
             rows_l.append(fila)
-            tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
+            tot_hon += hon_b; tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
 
         # Fila de totales locadores: "TOTALES" en columna de nombres (índice 2)
-        tot_l_fila = ["", "", Paragraph("TOTALES", tot_s)]
+        tot_l_fila = ["", "", Paragraph("TOTALES", tot_s), f"{tot_hon:,.2f}"]
         if has_dias_lab:
             tot_l_fila.append("")
         tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", "", "", ""]
@@ -1652,8 +1655,19 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 if retencion_quinta > 0: desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
 
             # --- SEGURO SOCIAL (ESSALUD o SIS) Y NETO ---
+            # Regla: EsSalud mínimo sobre RMV siempre que el trabajador tenga al
+            # menos 1 día remunerado (trabajado o pagado).  Si el mes completo fue
+            # suspensión sin goce de haber (días_remunerados == 0) → EsSalud = 0.
             seguro_social = str(row.get('Seguro Social', 'ESSALUD')).upper()
-            if seguro_social == "SIS":
+            _mes_completo_ssgh = (dias_remunerados == 0)
+
+            if _mes_completo_ssgh:
+                # Suspensión sin goce de haber todo el mes → sin aporte patronal
+                aporte_essalud = 0.0
+                etiqueta_seguro = ("SIS" if seguro_social == "SIS"
+                                   else ("ESSALUD-EPS" if row.get('EPS', 'No') == "Sí"
+                                         else "ESSALUD"))
+            elif seguro_social == "SIS":
                 aporte_essalud = 15.0  # Monto fijo SIS - Solo Micro Empresa
                 etiqueta_seguro = "SIS"
             elif row.get('EPS', 'No') == "Sí":
@@ -1803,6 +1817,37 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             with col_btn2:
                 pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
+
+        # ── REPORTE DE TESORERÍA ─────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 🏦 Reporte de Tesorería")
+        if not _honorarios_calculados and _n_loc_activos > 0:
+            st.warning(
+                "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
+                "Calcule primero los **Honorarios** en la pestaña "
+                "**'🧾 2. Honorarios (4ta Categoría)'** para generar el Reporte de Tesorería completo."
+            )
+        elif _puede_descargar:
+            empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
+            try:
+                buf_teso = generar_pdf_tesoreria(
+                    df_planilla=df_resultados,
+                    df_loc=df_loc_teso if _honorarios_calculados else None,
+                    empresa_nombre=empresa_nombre,
+                    periodo_key=periodo_key,
+                    auditoria_data=auditoria_data,
+                    empresa_ruc=empresa_ruc_s,
+                )
+                st.download_button(
+                    "🏦 Descargar Reporte de Tesorería (PDF)",
+                    data=buf_teso,
+                    file_name=f"TESORERIA_{periodo_key}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                )
+            except Exception as _e_teso:
+                st.warning(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
 
         st.markdown("---")
         st.markdown("### 🔍 Panel de Auditoría Tributaria y Liquidaciones")
@@ -2178,53 +2223,3 @@ def render():
                         use_container_width=True,
                     )
 
-    # ── REPORTE DE TESORERÍA ──────────────────────────────────────────────────
-    # Se muestra fuera de los módulos de cálculo; requiere AMBAS planillas calculadas
-    # (o que no haya locadores activos).
-    df_plan_teso = st.session_state.get('res_planilla', pd.DataFrame())
-    df_loc_teso  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-    aud_teso     = st.session_state.get('auditoria_data', {})
-
-    if not df_plan_teso.empty:
-        try:
-            _db_teso = SessionLocal()
-            _n_loc_teso = _db_teso.query(Trabajador).filter_by(
-                empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR'
-            ).count()
-            _db_teso.close()
-        except Exception:
-            _n_loc_teso = 0
-
-        _loc_calc_teso = isinstance(df_loc_teso, pd.DataFrame) and not df_loc_teso.empty
-        _gate_teso = (_n_loc_teso == 0) or _loc_calc_teso
-
-        st.markdown("---")
-        st.markdown("### 🏦 Reporte de Tesorería")
-
-        if not _gate_teso:
-            st.warning(
-                "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
-                "Calcule primero los **Honorarios** en la pestaña "
-                "**'🧾 2. Honorarios (4ta Categoría)'** para generar el Reporte de Tesorería completo."
-            )
-        else:
-            empresa_ruc_t  = st.session_state.get('empresa_activa_ruc', '')
-            try:
-                buf_teso = generar_pdf_tesoreria(
-                    df_planilla=df_plan_teso,
-                    df_loc=df_loc_teso if _loc_calc_teso else None,
-                    empresa_nombre=empresa_nombre,
-                    periodo_key=periodo_key,
-                    auditoria_data=aud_teso,
-                    empresa_ruc=empresa_ruc_t,
-                )
-                st.download_button(
-                    "🏦 Descargar Reporte de Tesorería (PDF)",
-                    data=buf_teso,
-                    file_name=f"TESORERIA_{periodo_key}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                )
-            except Exception as _e_teso:
-                st.error(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
