@@ -447,6 +447,57 @@ def render():
     # ── TAB: REPORTE DE TESORERÍA ─────────────────────────────────────────────
     with tab_tesoreria:
         st.markdown("### 🏦 Reporte de Tesorería — Pagos de Nómina")
+
+        # --- FASE BCP: INTERFAZ DE TELECRÉDITO ---
+        st.markdown("#### 💳 Pago Masivo BCP (Telecrédito)")
+        col_bcp1, col_bcp2 = st.columns(2)
+        with col_bcp1:
+            cta_cargo = st.text_input("Cuenta de Cargo BCP (13 o 14 dígitos)", 
+                                     placeholder="Ej: 191-1234567-0-12",
+                                     help="Cuenta de la empresa desde donde se debitarán los sueldos.")
+        with col_bcp2:
+            f_pago = st.date_input("Fecha de Pago Programada", value=datetime.now())
+
+        if st.button("📥 Generar TXT Telecrédito BCP", use_container_width=True):
+            if not cta_cargo:
+                st.error("Debe ingresar la cuenta de cargo de la empresa.")
+            else:
+                try:
+                    from core.use_cases.generador_interfaces import generar_txt_bcp
+                    # Necesitamos locadores calculados para el TXT si existen
+                    from core.use_cases.calculo_honorarios import calcular_recibo_honorarios as _chr_txt
+                    _db_txt = SessionLocal()
+                    locs_txt = _db_txt.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").all()
+                    vars_txt = {v.trabajador_id: v for v in _db_txt.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=sel_key).all()}
+                    p_txt = _db_txt.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=sel_key).first()
+                    _db_txt.close()
+                    
+                    res_l_txt = []
+                    mes_i = int(sel_key[:2]); ani_i = int(sel_key[3:])
+                    d_mes_i = _cal.monthrange(ani_i, mes_i)[1]
+                    for l in locs_txt:
+                        v = vars_txt.get(l.id)
+                        cj = json.loads(v.conceptos_json or '{}') if v else {}
+                        vl = {'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
+                              'otros_pagos': float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
+                              'otros_descuentos': float(cj.get('_otros_descuentos_loc', 0.0) or 0.0)}
+                        r = _chr_txt(l, vl, d_mes_i, 
+                                     tasa_4ta=getattr(p_txt, 'tasa_4ta', 8.0) if p_txt else 8.0,
+                                     tope_4ta=getattr(p_txt, 'tope_4ta', 1500.0) if p_txt else 1500.0)
+                        res_l_txt.append({"DNI": l.num_doc, "Locador": l.nombres, "NETO A PAGAR": r['neto_a_pagar'], "CCI": l.cci, "Banco": l.banco})
+                    
+                    txt_bcp = generar_txt_bcp(df_planilla, cta_cargo, f_pago, df_loc=pd.DataFrame(res_l_txt))
+                    st.download_button(
+                        f"⬇️ Descargar BCP_HABERES_{f_pago.strftime('%Y%m%d')}.txt",
+                        data=txt_bcp,
+                        file_name=f"BCP_HABERES_{f_pago.strftime('%Y%m%d')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Error al generar el TXT: {e}")
+
+        st.markdown("---")
         st.markdown(f"**Periodo:** {_periodo_legible(sel_key)}  |  **Estado:** {badge}")
         st.markdown("---")
 

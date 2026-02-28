@@ -6,6 +6,7 @@ Generador de interfaces oficiales SUNAT/AFPnet.
 """
 import io
 import zipfile
+import unicodedata
 from datetime import date
 
 import pandas as pd
@@ -167,6 +168,107 @@ def generar_archivos_plame(
         zf.writestr(f"{base_name}.SNL", "\n".join(lines_snl) if lines_snl else "")
     buffer.seek(0)
     return buffer
+
+
+# ── TELECRÉDITO BCP ──────────────────────────────────────────────────────────
+
+def _limpiar_texto_bcp(texto: str) -> str:
+    """Quita tildes, eñes y caracteres especiales para estándares bancarios."""
+    if not texto: return ""
+    s = str(texto).upper()
+    s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+    return s.replace('Ñ', 'N').strip()
+
+def generar_txt_bcp(df_planilla: pd.DataFrame, cuenta_cargo: str, fecha_pago: date, df_loc: pd.DataFrame = None) -> io.BytesIO:
+    """Genera el TXT de Pago Masivo para Telecrédito BCP."""
+    # 1. Consolidar personal (Planilla + Locadores si existen)
+    p_data = df_planilla[df_planilla['Apellidos y Nombres'] != 'TOTALES'].copy()
+    p_data = p_data[p_data['NETO A PAGAR'] > 0]
+    
+    personal = []
+    for _, r in p_data.iterrows():
+        personal.append({
+            'nombre': r['Apellidos y Nombres'],
+            'cuenta': str(r.get('N° Cuenta', r.get('Cuenta Bancaria', ''))).replace("-", ""),
+            'dni': str(r['DNI']),
+            'neto': float(r['NETO A PAGAR']),
+            'tipo_doc': "1" if len(str(r['DNI'])) == 8 else "3" # 1=DNI, 3=CE
+        })
+    
+    if df_loc is not None and not df_loc.empty:
+        l_data = df_loc[df_loc['NETO A PAGAR'] > 0]
+        for _, r in l_data.iterrows():
+            personal.append({
+                'nombre': r.get('Locador', r.get('Nombres y Apellidos', '')),
+                'cuenta': str(r.get('N° Cuenta', r.get('CCI', ''))).replace("-", ""),
+                'dni': str(r['DNI']),
+                'neto': float(r['NETO A PAGAR']),
+                'tipo_doc': "1" if len(str(r['DNI'])) == 8 else "3"
+            })
+
+    if not personal:
+        raise ValueError("No hay pagos pendientes con monto mayor a cero.")
+
+    # 2. Cálculos globales
+    cuenta_cargo_clean = str(cuenta_cargo).replace("-", "")
+    sum_netos = sum(p['neto'] for p in personal)
+    monto_total_str = str(int(round(sum_netos * 100))).zfill(17)
+    fecha_pago_str = fecha_pago.strftime("%Y%m%d")
+
+    # Checksum BCP
+    sumatoria_cuentas = int(cuenta_cargo_clean[:11] or 0)
+    for p in personal:
+        c = p['cuenta']
+        if len(c) >= 20: # CCI
+            sumatoria_cuentas += int(c[:10] or 0)
+        else: # BCP (13 o 14)
+            sumatoria_cuentas += int(c[:11] or 0)
+    
+    checksum = str(sumatoria_cuentas).zfill(15)
+
+    # 3. REGISTRO DE CABECERA
+    lineas = []
+    cabecera = (
+        f"1"                                  # Tipo
+        f"{str(len(personal)).zfill(6)}"      # Cant abonos
+        f"{fecha_pago_str}"                    # Fecha Proceso
+        f" "                                   # Subtipo
+        f"C"                                   # Tipo Cta Cargo (C=Corriente)
+        f"0001"                                # Moneda (Soles)
+        f"{cuenta_cargo_clean.ljust(20)}"      # Cta Cargo
+        f"{monto_total_str}"                   # Monto Total
+        f"{'PAGO PLANILLA'.ljust(40)}"         # Referencia
+        f"{checksum}"                          # Checksum
+    )
+    lineas.append(cabecera)
+
+    # 4. REGISTROS DE DETALLE
+    for p in personal:
+        cta = p['cuenta']
+        t_cta = "I" if len(cta) >= 20 else ("C" if len(cta) == 14 else "A") # I=Interbancaria, C=Corriente, A=Ahorro
+        monto_p = str(int(round(p['neto'] * 100))).zfill(17)
+        nombre_clean = _limpiar_texto_bcp(p['nombre'])[:75]
+        
+        detalle = (
+            f"2"                               # Tipo
+            f"{t_cta}"                         # Tipo Cta Abono
+            f"{cta.ljust(20)}"                 # Cta Abono
+            f"{p['tipo_doc']}"                 # Tipo Doc
+            f"{p['dni'].ljust(15)}"            # Num Doc
+            f"   "                             # Correlativo
+            f"{nombre_clean.ljust(75)}"        # Nombre
+            f"{'HABERES'.ljust(40)}"           # Ref Beneficiario
+            f"{'PLANILLA'.ljust(20)}"          # Ref Empresa
+            f"0001"                            # Moneda Abono
+            f"{monto_p}"                       # Monto Abono
+            f"S"                               # IDC
+        )
+        lineas.append(detalle)
+
+    output = io.BytesIO()
+    output.write("\n".join(lineas).encode('utf-8'))
+    output.seek(0)
+    return output
 
 
 # ── AFPnet ────────────────────────────────────────────────────────────────────

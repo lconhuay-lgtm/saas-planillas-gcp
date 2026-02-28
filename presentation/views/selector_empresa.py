@@ -146,6 +146,7 @@ def render():
                         emp.representante_legal = representante
                         emp.correo_electronico = correo
                         emp.domicilio = domicilio
+                        emp.cuenta_cargo_bcp = st.session_state.get('_edit_cta_cargo', emp.cuenta_cargo_bcp)
                         db.commit()
                         # Actualizar session_state si es la empresa activa
                         if st.session_state.get('empresa_activa_id') == editando_id:

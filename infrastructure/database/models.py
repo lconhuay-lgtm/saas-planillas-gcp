@@ -39,6 +39,7 @@ class Empresa(Base):
     domicilio = Column(String(300))
     representante_legal = Column(String(200))
     correo_electronico = Column(String(100))
+    cuenta_cargo_bcp = Column(String(20)) # Para Telecrédito
 
     # --- RÉGIMEN LABORAL ---
     regimen_laboral = Column(String(100), nullable=False, default="Régimen General")
