@@ -9,19 +9,26 @@ def _hash(password: str) -> str:
 
 
 def _seed_usuarios(db):
-    """Crea los usuarios por defecto si la tabla está vacía."""
-    if db.query(Usuario).count() == 0:
-        db.add_all([
-            Usuario(username="admin",   password_hash=_hash("admin123"),
-                    rol="admin",   nombre_completo="Administrador del Sistema", 
-                    activo=True, acceso_total=True),
-            Usuario(username="analista",   password_hash=_hash("analista123"),
-                    rol="analista",   nombre_completo="Analista de Planillas", activo=True),
-            Usuario(username="supervisor", password_hash=_hash("supervisor123"),
-                    rol="supervisor", nombre_completo="Supervisor de Planillas", 
-                    activo=True, acceso_total=True),
-        ])
-        db.commit()
+    """Crea los usuarios base solo si no existen por nombre de usuario."""
+    usuarios_base = [
+        ("admin", "admin123", "admin", "Administrador del Sistema", True),
+        ("analista", "analista123", "analista", "Analista de Planillas", False),
+        ("supervisor", "supervisor123", "supervisor", "Supervisor de Planillas", True),
+    ]
+    
+    for u_name, u_pass, u_rol, u_full, u_total in usuarios_base:
+        existe = db.query(Usuario).filter_by(username=u_name).first()
+        if not existe:
+            nuevo = Usuario(
+                username=u_name, 
+                password_hash=_hash(u_pass),
+                rol=u_rol, 
+                nombre_completo=u_full, 
+                activo=True, 
+                acceso_total=u_total
+            )
+            db.add(nuevo)
+    db.commit()
 
 
 def render():
