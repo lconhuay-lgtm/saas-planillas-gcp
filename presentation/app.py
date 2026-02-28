@@ -21,6 +21,7 @@ from presentation.components.sidebar import render_sidebar
 
 # Importación de las Vistas
 from presentation.views import selector_empresa
+from presentation.views import dashboard
 from presentation.views import maestro_trabajadores
 from presentation.views import ingreso_asistencias
 from presentation.views import calculo_mensual
