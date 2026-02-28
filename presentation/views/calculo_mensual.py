@@ -1928,7 +1928,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                             _cr.estado = 'PENDIENTE'
                         db_up.commit()
                         db_up.close()
-                        st.success("Planilla reabierta correctamente.")
+                        st.toast("Planilla REABIERTA para edición", icon="🔓")
                         st.rerun()
                     except Exception as e_re:
                         st.error(f"Error al reabrir: {e_re}")
@@ -1963,7 +1963,9 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                                 _cp.estado = 'PAGADA'
                             db_up.commit()
                             db_up.close()
-                            st.success(f"Planilla {periodo_key} cerrada por {nombre_usuario}.")
+                            db_up.commit()
+                            db_up.close()
+                            st.toast(f"Planilla {periodo_key} CERRADA exitosamente", icon="🔒")
                             st.rerun()
                         except Exception as e_cl:
                             st.error(f"Error al cerrar: {e_cl}")

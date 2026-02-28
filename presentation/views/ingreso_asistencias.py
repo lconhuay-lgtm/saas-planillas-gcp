@@ -104,6 +104,10 @@ def render():
         else:
             st.success(f"Nueva hoja de variables para **{periodo_key}**.")
 
+        # Mostrar mensajes de éxito diferidos (tras rerun)
+        if st.session_state.get('_msg_asistencia'):
+            st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
+
         # ── Tres pestañas principales ──────────────────────────────────────────
         tab_plan, tab_loc, tab_notas = st.tabs([
             "📋 1. Planilla (5ta Cat.)",
@@ -286,7 +290,7 @@ def render():
                                 ))
 
                         db.commit()
-                        st.success(f"Variables de **{periodo_key}** guardadas correctamente.")
+                        st.session_state['_msg_asistencia'] = f"Variables de Planilla ({periodo_key}) guardadas con éxito."
                         st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -377,7 +381,7 @@ def render():
                                 ))
 
                         db.commit()
-                        st.success(f"Valorizaciones de locadores para **{periodo_key}** guardadas correctamente.")
+                        st.session_state['_msg_asistencia'] = f"Valorizaciones de Locadores ({periodo_key}) guardadas con éxito."
                         st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -429,7 +433,7 @@ def render():
                                     periodo_key=periodo_key, notas_gestion=txt
                                 ))
                         db.commit()
-                        st.success("✅ Notas de gestión actualizadas.")
+                        st.session_state['_msg_asistencia'] = "Notas de Gestión actualizadas correctamente."
                         st.rerun()
                     except Exception as e:
                         db.rollback()

@@ -150,5 +150,5 @@ def render():
                 db.add(nuevo)
             
             db.commit()
-            st.success(f"✅ Sincronizado con éxito para el periodo {periodo_key}.")
+            st.toast(f"Parámetros de {periodo_key} sincronizados en la nube", icon="☁️")
             st.rerun()
