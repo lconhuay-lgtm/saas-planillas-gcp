@@ -1087,7 +1087,10 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         tot_hon = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
 
         for i, (_, row) in enumerate(df_loc.iterrows()):
-            dias_lab = int(row.get("Días Laborados", 0) or 0)
+            # Ajuste visual solo para Tesorería: días calendario - días no prestados
+            d_no_p_teso = int(row.get("Días no Prestados", 0) or 0)
+            dias_lab = max(0, dias_mes - d_no_p_teso)
+            
             hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
             bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
             ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
@@ -2183,9 +2186,6 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
                 tasa_4ta=tasa_4ta, tope_4ta=tope_4ta,
                 anio_calc=anio_int, mes_calc=mes_int,
             )
-            # Corrección para Reporte de Tesorería: días laborados reales del calendario
-            d_no_p = int(vars_loc.get('dias_no_prestados', 0) or 0)
-            dias_laborados_reales = max(0, dias_del_mes - d_no_p)
             
             if obs_p:
                 resultado['observaciones'] = f"{resultado['observaciones']} | {obs_p}" if resultado['observaciones'] else obs_p
@@ -2199,7 +2199,7 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
                 "DNI":                 dni,
                 "Locador":             loc.nombres,
                 "Honorario Base":      resultado['honorario_base'],
-                "Días Laborados":      dias_laborados_reales,
+                "Días Laborados":      resultado['dias_laborados'],
                 "Días no Prestados":   resultado['dias_no_prestados'],
                 "Descuento Días":      resultado['monto_descuento'],
                 "Otros Pagos":         resultado['otros_pagos'],
