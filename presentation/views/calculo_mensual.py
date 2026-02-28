@@ -1852,7 +1852,35 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         auditoria_data = st.session_state.get('auditoria_data', {})
 
         st.success("✅ Planilla generada con éxito.")
+
+        # ── SECCIÓN GLOBAL DE TESORERÍA (REUBICADA AL INICIO) ──────────────────
+        df_loc_glob = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+        try:
+            _db_glob = SessionLocal()
+            _n_loc_glob = _db_glob.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+            _db_glob.close()
+        except: _n_loc_glob = 0
+
+        st.subheader("🏦 Gestión de Tesorería")
+        if _n_loc_glob > 0 and df_loc_glob.empty:
+            st.warning("⚠️ Esta empresa tiene **Locadores de Servicio activos**. Calcule los Honorarios en la pestaña '🧾 2. Honorarios' para un reporte completo.")
         
+        c_teso1, c_teso2 = st.columns([1, 1])
+        with c_teso1:
+            if st.button("🏦 Generar Reporte de Tesorería (PDF)", type="primary", use_container_width=True, key="btn_teso_global"):
+                try:
+                    buf_t = generar_pdf_tesoreria(
+                        df_planilla=df_resultados,
+                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                        empresa_nombre=empresa_nombre,
+                        periodo_key=periodo_key,
+                        auditoria_data=auditoria_data,
+                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                    )
+                    st.download_button("⬇️ Descargar Reporte de Tesorería", data=buf_t, file_name=f"TESORERIA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e: st.error(f"Error: {e}")
+
+        st.markdown("---")
         st.markdown("### 📊 Matriz de Nómina")
         # Mostramos la tabla en pantalla (Ocultando el DNI visualmente solo aquí si lo deseas, o dejándolo)
         st.dataframe(df_resultados.iloc[:-1], use_container_width=True, hide_index=True)
@@ -2155,6 +2183,9 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
                 tasa_4ta=tasa_4ta, tope_4ta=tope_4ta,
                 anio_calc=anio_int, mes_calc=mes_int,
             )
+            # Corrección para Reporte de Tesorería: días laborados reales del calendario
+            d_no_p = int(vars_loc.get('dias_no_prestados', 0) or 0)
+            dias_laborados_reales = max(0, dias_del_mes - d_no_p)
             
             if obs_p:
                 resultado['observaciones'] = f"{resultado['observaciones']} | {obs_p}" if resultado['observaciones'] else obs_p
@@ -2168,7 +2199,7 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
                 "DNI":                 dni,
                 "Locador":             loc.nombres,
                 "Honorario Base":      resultado['honorario_base'],
-                "Días Laborados":      resultado['dias_laborados'],
+                "Días Laborados":      dias_laborados_reales,
                 "Días no Prestados":   resultado['dias_no_prestados'],
                 "Descuento Días":      resultado['monto_descuento'],
                 "Otros Pagos":         resultado['otros_pagos'],
@@ -2262,28 +2293,6 @@ def render():
     _plan_listo = not df_plan_glob.empty
     _loc_listo  = not df_loc_glob.empty or _n_loc_glob == 0
 
-    if _plan_listo or not df_loc_glob.empty:
-        st.subheader("🏦 Gestión de Tesorería y Reportes Consolidados")
-        
-        if _n_loc_glob > 0 and not df_loc_glob.empty and df_plan_glob.empty:
-            st.warning("⚠️ Planilla de empleados (5ta Cat) aún no calculada. El reporte solo incluirá locadores.")
-        elif _n_loc_glob > 0 and df_loc_glob.empty and not df_plan_glob.empty:
-            st.warning("⚠️ Honorarios de locadores (4ta Cat) aún no calculados. El reporte solo incluirá planilla.")
-
-        c_teso1, c_teso2 = st.columns(2)
-        with c_teso1:
-            if st.button("🏦 Generar Reporte de Tesorería (PDF)", type="primary", use_container_width=True):
-                try:
-                    buf_t = generar_pdf_tesoreria(
-                        df_planilla=df_plan_glob if _plan_listo else None,
-                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
-                        empresa_nombre=empresa_nombre,
-                        periodo_key=periodo_key,
-                        auditoria_data=aud_glob,
-                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-                    )
-                    st.download_button("⬇️ Descargar Reporte de Tesorería", data=buf_t, file_name=f"TESORERIA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e: st.error(f"Error: {e}")
 
     # ── REPORTE COMBINADO (Planilla + Locadores) ───────────────────────────────
     df_plan_comb = st.session_state.get('res_planilla', pd.DataFrame())
