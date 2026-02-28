@@ -2273,13 +2273,7 @@ def render():
     # ── SECCIÓN GLOBAL DE TESORERÍA ──────────────────────────────────────────
     df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
     df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-    aud_glob     = st.session_state.get('auditoria_data', {})
-    
-    try:
-        _db_glob = SessionLocal()
-        _n_loc_glob = _db_glob.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-        _db_glob.close()
-    except: _n_loc_glob = 0
+    aud_glob  = st.session_state.get('auditoria_data', {})
 
     if not df_plan_glob.empty or not df_loc_glob.empty:
         st.markdown("---")
