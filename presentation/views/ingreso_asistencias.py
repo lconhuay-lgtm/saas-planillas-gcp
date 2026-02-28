@@ -108,11 +108,12 @@ def render():
         if st.session_state.get('_msg_asistencia'):
             st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
 
-        # ── Tres pestañas principales ──────────────────────────────────────────
-        tab_plan, tab_loc, tab_notas = st.tabs([
+        # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
+        tab_plan, tab_loc, tab_notas, tab_ajustes = st.tabs([
             "📋 1. Planilla (5ta Cat.)",
             "🧾 2. Locadores (4ta Cat.)",
-            "📝 3. Notas de Gestión"
+            "📝 3. Notas de Gestión",
+            "🔧 4. Ajustes de Auditoría"
         ])
 
         # ══════════════════════════════════════════════════════════════════════
@@ -434,6 +435,68 @@ def render():
                                 ))
                         db.commit()
                         st.session_state['_msg_asistencia'] = "Notas de Gestión actualizadas correctamente."
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Error: {e}")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 4 — AJUSTES DE AUDITORÍA (SAP/ORACLE STYLE)
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_ajustes:
+            st.subheader("🔧 Ajustes y Regularizaciones de Nómina")
+            st.info("Utilice esta sección para ingresar montos manuales que regularicen errores de meses previos o sistemas externos. Estos montos afectan directamente al Neto a Pagar.")
+            
+            if not planilleros:
+                st.info("No hay personal en planilla para aplicar ajustes.")
+            else:
+                df_ajustes_data = []
+                for t in planilleros:
+                    v = variables_exist.get(t.id)
+                    cj = json.loads(v.conceptos_json or '{}') if v else {}
+                    df_ajustes_data.append({
+                        "ID": t.id,
+                        "Trabajador": t.nombres,
+                        "Ajuste AFP (S/)": float(cj.get('_ajuste_afp', 0.0)),
+                        "Ajuste Quinta Cat (S/)": float(cj.get('_ajuste_quinta', 0.0)),
+                        "Otros Ajustes (S/)": float(cj.get('_ajuste_otros', 0.0))
+                    })
+                
+                df_aj = pd.DataFrame(df_ajustes_data)
+                df_aj_edit = st.data_editor(
+                    df_aj,
+                    column_config={
+                        "ID": None,
+                        "Trabajador": st.column_config.TextColumn(disabled=True),
+                        "Ajuste AFP (S/)": st.column_config.NumberColumn(format="%.2f"),
+                        "Ajuste Quinta Cat (S/)": st.column_config.NumberColumn(format="%.2f"),
+                        "Otros Ajustes (S/)": st.column_config.NumberColumn(format="%.2f")
+                    },
+                    hide_index=True, use_container_width=True, key="ed_ajustes_audit",
+                    disabled=True if es_cerrada else False
+                )
+
+                if not es_cerrada and st.button("💾 Guardar Ajustes de Auditoría", type="primary", use_container_width=True):
+                    try:
+                        for _, fila in df_aj_edit.iterrows():
+                            tid = fila["ID"]
+                            v_ex = variables_exist.get(tid)
+                            cj = json.loads(v_ex.conceptos_json or '{}') if v_ex else {}
+                            
+                            # Inyectar claves de ajuste en el JSON
+                            cj['_ajuste_afp'] = float(fila["Ajuste AFP (S/)"] or 0.0)
+                            cj['_ajuste_quinta'] = float(fila["Ajuste Quinta Cat (S/)"] or 0.0)
+                            cj['_ajuste_otros'] = float(fila["Otros Ajustes (S/)"] or 0.0)
+                            
+                            if v_ex:
+                                v_ex.conceptos_json = json.dumps(cj)
+                            else:
+                                db.add(VariablesMes(
+                                    empresa_id=empresa_id, trabajador_id=tid, 
+                                    periodo_key=periodo_key, conceptos_json=json.dumps(cj)
+                                ))
+                        db.commit()
+                        st.session_state['_msg_asistencia'] = "Ajustes de Auditoría guardados correctamente."
                         st.rerun()
                     except Exception as e:
                         db.rollback()
