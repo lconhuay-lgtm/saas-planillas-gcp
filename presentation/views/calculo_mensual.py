@@ -2278,6 +2278,13 @@ def render():
     if not df_plan_glob.empty or not df_loc_glob.empty:
         st.markdown("---")
         st.subheader("🏦 Gestión de Tesorería")
+
+        try:
+            _db_chk = SessionLocal()
+            _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+            _db_chk.close()
+        except:
+            _n_loc_glob = 0
         
         if _n_loc_glob > 0 and df_loc_glob.empty:
             st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
