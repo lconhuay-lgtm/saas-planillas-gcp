@@ -64,8 +64,8 @@ def calcular_recibo_honorarios(
 
     # Descuento proporcional — Base 30 (Mes Comercial Mixto)
     monto_descuento = 0.0
-    if not ingreso_este_mes and dias_no_prestados == 0:
-        # Mes completo sin novedades → honorario íntegro
+    if dias_no_prestados == 0 and (not ingreso_este_mes or dias_vinculados >= dias_del_mes):
+        # Trabajó todos los días disponibles (incluye ingreso día 1) → honorario íntegro
         pass
     else:
         valor_dia = honorario_base / 30.0
