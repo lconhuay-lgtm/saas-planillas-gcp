@@ -1,0 +1,47 @@
+Actúa como un Desarrollador Senior experto en integraciones bancarias peruesas. Necesitamos generar el archivo TXT para el pago masivo de haberes mediante "Telecrédito BCP" respetando estrictamente su manual técnico.
+
+FASE 1: Lógica de Generación del TXT
+En el archivo `core/use_cases/generador_interfaces.py`, crea una nueva función llamada `generar_txt_bcp(df_planilla, cuenta_cargo_bcp, fecha_pago)`.
+Aplica estas reglas estrictas de formato:
+
+1. Filtrar Datos: Toma `df_planilla` y excluye la fila donde 'Apellidos y Nombres' == 'TOTALES'. Filtra solo trabajadores con 'NETO A PAGAR' > 0.
+2. Formato de Montos: Todo monto debe enviarse sin punto decimal, multiplicado por 100, alineado a la derecha con ceros hasta 17 posiciones (ej. 1200.50 -> "0000000000120050").
+3. Cálculo del Checksum BCP: 
+   - Sumatoria numérica de las cuentas. 
+   - Si la cuenta de abono es BCP (longitud 13 o 14), toma los primeros 11 dígitos.
+   - Si es CCI (longitud 20), toma los primeros 10 dígitos.
+   - Suma también los primeros 11 dígitos de la `cuenta_cargo_bcp`.
+   - El resultado debe tener 15 posiciones rellenado con ceros a la izquierda `zfill(15)`.
+4. REGISTRO DE CABECERA (1 sola línea):
+   - [Pos 1]: Tipo de registro -> "1"
+   - [Pos 2-7]: Cantidad de abonos -> len(trabajadores) en `zfill(6)`
+   - [Pos 8-15]: Fecha proceso -> `fecha_pago` en formato "YYYYMMDD"
+   - [Pos 16]: Subtipo planilla -> " " (espacio en blanco)
+   - [Pos 17]: Tipo cuenta cargo -> "C" (Corriente)
+   - [Pos 18-21]: Moneda cargo -> "0001" (Soles)
+   - [Pos 22-41]: Cuenta cargo -> `cuenta_cargo_bcp` alineado a la izquierda con espacios `ljust(20)`
+   - [Pos 42-58]: Monto total -> Suma de los netos formateado a 17 posiciones `zfill(17)` sin punto.
+   - [Pos 59-98]: Referencia -> "PAGO PLANILLA".ljust(40)
+   - [Pos 99-113]: Checksum -> Calculado en el paso 3 `zfill(15)`
+5. REGISTROS DE DETALLE (Bucle por trabajador):
+   - [Pos 1]: Tipo de registro -> "2"
+   - [Pos 2]: Tipo cuenta abono -> "A" (Ahorros BCP), "C" (Corriente BCP), o "I" (Interbancaria si longitud es 20).
+   - [Pos 3-22]: Cuenta abono -> Limpiar guiones de la cuenta y aplicar `ljust(20)`
+   - [Pos 23]: Tipo de documento -> "1" (DNI) o "3" (CE) dependiendo de la longitud o tipo.
+   - [Pos 24-38]: Número de documento -> `dni` en `ljust(15)`
+   - [Pos 39-41]: Correlativo -> "   " (3 espacios)
+   - [Pos 42-116]: Nombre trabajador -> `nombre` truncado a 75 caracteres máximo y `ljust(75)`. Quitar tildes y eñes.
+   - [Pos 117-156]: Ref Beneficiario -> "HABERES".ljust(40)
+   - [Pos 157-175]: Ref Empresa -> "PLANILLA".ljust(20)
+   - [Pos 176-179]: Moneda abono -> "0001"
+   - [Pos 180-196]: Monto abono -> `neto` sin punto en `zfill(17)`
+   - [Pos 197]: Validación IDC -> "S"
+
+Devuelve el contenido como un `io.BytesIO()`.
+
+FASE 2: Interfaz Visual
+En el archivo `presentation/views/reporteria.py`, dentro de la pestaña `tab_tesoreria`:
+Agrega un bloque que pida un `st.text_input` para la "Cuenta de Cargo BCP (13 o 14 dígitos)" y un `st.date_input` para la "Fecha de Pago".
+Añade un botón de descarga `st.download_button` llamado "📥 Generar TXT Telecrédito BCP" que ejecute la función `generar_txt_bcp` y descargue el archivo con el nombre `BCP_HABERES_YYYYMMDD.txt`.
+
+Asegúrate de importar dependencias, manejar strings sin tildes (usando `unicodedata`) y evitar errores si la cuenta bancaria del trabajador viene nula o vacía (saltar a ese trabajador o poner ceros).
