@@ -2,6 +2,7 @@ from infrastructure.database.connection import engine, Base
 
 # Importar TODOS los modelos para que SQLAlchemy los registre en Base.metadata
 from infrastructure.database.models import (
+    Usuario, UsuarioEmpresa,
     Empresa, Trabajador, Concepto, ParametroLegal,
     VariablesMes, PlanillaMensual
 )

@@ -93,7 +93,16 @@ def render():
 
     with col_lista:
         st.subheader("Empresas Registradas")
-        empresas_db = db.query(Empresa).all()
+        
+        # Filtro de seguridad: Si no es admin/acceso_total, filtrar por asignación
+        usuario_actual = db.query(Usuario).filter_by(username=st.session_state.get('usuario_logueado')).first()
+        
+        if usuario_actual and usuario_actual.acceso_total:
+            empresas_db = db.query(Empresa).all()
+        elif usuario_actual:
+            empresas_db = usuario_actual.empresas_asignadas
+        else:
+            empresas_db = []
 
         if not empresas_db:
             st.info("No hay empresas registradas. Utilice el panel derecho para crear la primera.")
