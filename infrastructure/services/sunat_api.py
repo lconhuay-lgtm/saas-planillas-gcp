@@ -13,8 +13,8 @@ def consultar_dni_sunat(dni: str) -> dict:
 
     # --- INTENTO 1: API PRINCIPAL (APIsPERU) ---
     try:
-        # ⚠️ IMPORTANTE: Coloca aquí tu token real de APIsPERU
-        TOKEN_APISPERU = "TU_TOKEN_AQUI_REEMPLAZAME" 
+        # Token proporcionado por el usuario
+        TOKEN_APISPERU = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6Imxjb25odWF5QGxja2Fkdmlzb3JzLmNvbSJ9.JEjY8CA4Zba_3csTVz_DlilMjXMzNVY9fvr_ZDOJ5bU" 
         tipo = "ruc" if len(dni) == 11 else "dni"
         url_principal = f"https://dniruc.apisperu.com/api/v1/{tipo}/{dni}?token={TOKEN_APISPERU}"
         
@@ -22,9 +22,15 @@ def consultar_dni_sunat(dni: str) -> dict:
         
         if response.status_code == 200:
             datos = response.json()
-            if datos.get("success") is not False: # APIsPERU devuelve success=False si el token falla
-                 nombres_completos = f"{datos.get('nombres', '')} {datos.get('apellidoPaterno', '')} {datos.get('apellidoMaterno', '')}".strip()
-                 return {"success": True, "nombres": nombres_completos, "mensaje": "Obtenido desde API Principal"}
+            if datos.get("success") is not False: 
+                 # Si es RUC, APIsPERU devuelve 'razonSocial'. Si es DNI, la concatenación.
+                 if len(dni) == 11:
+                     nombres_completos = datos.get('razonSocial', datos.get('nombre', '')).strip()
+                 else:
+                     nombres_completos = f"{datos.get('nombres', '')} {datos.get('apellidoPaterno', '')} {datos.get('apellidoMaterno', '')}".strip()
+                 
+                 if nombres_completos:
+                    return {"success": True, "nombres": nombres_completos, "mensaje": "Obtenido desde API Principal"}
     except Exception as e:
         pass # Silenciamos el error para intentar con el respaldo
 
