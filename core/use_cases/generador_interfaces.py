@@ -22,10 +22,13 @@ def _tipo_doc_sunat(tipo_doc_str: str) -> str:
     return "01"
 
 
-def _tipo_doc_afpnet(tipo_doc_str: str) -> str:
-    """AFPnet usa 0=DNI, 1=CE."""
+def _tipo_doc_afpnet(tipo_doc_str: str) -> int:
+    """AFPnet usa 0=DNI, 1=CE, 4=Pasaporte, 6=PTP."""
     t = str(tipo_doc_str).upper()
-    return "1" if t in ("CE", "04") else "0"
+    if t in ("CE", "04"): return 1
+    if t in ("PASAPORTE", "07"): return 4
+    if t in ("PTP", "06"): return 6
+    return 0  # DNI por defecto
 
 
 def _mes_str(mes: int) -> str:
@@ -232,34 +235,42 @@ def generar_excel_afpnet(
             fecha_inicio_str = ""
 
         # Inicio_Lab (S si ingresó en este mes)
-        inicio_lab = "S"
+        inicio_lab = "N"
         try:
             fi_date = pd.to_datetime(fi)
             inicio_lab = "S" if (fi_date.year == anio and fi_date.month == mes) else "N"
         except Exception:
             inicio_lab = "N"
 
+        # Lógica de Excepción de Aportar (Columna K del CSV)
+        # L = Licencia sin goce, U = Subsidio, etc.
+        excepcion = ""
+        suspensiones = aud.get("suspensiones", {})
+        if "07" in suspensiones or "16" in suspensiones: # Faltas o Licencia s/Haber
+            excepcion = "L"
+        elif "21" in suspensiones: # Subsidios
+            excepcion = "U"
+
         base_afp = float(aud.get("base_afp", 0.0))
 
         rows.append({
-            "Secuencia":              seq,
+            "Número de secuencia":    seq,
             "CUSPP":                  cuspp,
-            "Tipo Documento":         tipo_doc_afpnet,
-            "Numero Documento":       dni,
-            "Apellido Paterno":       ap_pat,
-            "Apellido Materno":       ap_mat,
+            "Tipo  de documento de identidad": tipo_doc_afpnet,
+            "Número de documento de indentidad": dni,
+            "Apellido paterno":       ap_pat,
+            "Apellido materno":       ap_mat,
             "Nombres":                nombres,
-            "Relacion Laboral":       "S",
-            "Inicio Laboral (S/N)":   inicio_lab,
-            "Fecha Inicio":           fecha_inicio_str,
-            "Cese (S/N)":             "N",
-            "Fecha Cese":             "",
-            "Excepcion":              "N",
-            "Remuneracion Asegurable": round(base_afp, 2),
-            "Aporte Vol Emp":         "0.00",
-            "Aporte Vol Trab Fin":    "0.00",
-            "Aporte Vol Trab Sin Fin":"0.00",
-            "Tipo Trabajo":           "N",
+            "Relación Laboral ":      "S",
+            "Inicio de RL":           inicio_lab,
+            "Cese de RL":             "N",
+            "Excepcion de Aportar":   excepcion,
+            "Remuneración asegurable": round(base_afp, 2),
+            "Aporte voluntario del afiliado con fin previsional": 0.00,
+            "Aporte voluntario del afiliado sin fin previsional": 0.00,
+            "Aporte voluntario del empleador": 0.00,
+            "Tipo de trabajo o Rubro": "N",
+            "AFP":                    "" # Se deja en blanco según sugerencia del CSV
         })
         seq += 1
 
