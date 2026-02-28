@@ -34,16 +34,16 @@ def render():
         return
 
     # ── Cargar todas las planillas de la empresa ──────────────────────────────
+    from sqlalchemy.orm import joinedload
     try:
         db = SessionLocal()
         planillas = (
             db.query(PlanillaMensual)
+            .options(joinedload(PlanillaMensual.empresa))
             .filter_by(empresa_id=empresa_id)
             .order_by(PlanillaMensual.fecha_calculo.desc())
             .all()
         )
-        db.close()
-    except Exception as e:
         st.error(f"Error al conectar con la base de datos: {e}")
         return
 
@@ -590,6 +590,7 @@ def render():
                 except Exception as e:
                     st.error(f"Error: {e}")
 
+    db.close()
     # ── TAB: REPORTE PERSONALIZADO ────────────────────────────────────────────
     with tab_personalizado:
         st.markdown("### 🛠️ Reporte Personalizado")

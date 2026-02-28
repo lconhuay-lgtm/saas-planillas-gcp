@@ -52,7 +52,11 @@ def _cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
     trabajadores = (
         db.query(Trabajador)
         .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
-        .filter(or_(Trabajador.tipo_contrato == 'PLANILLA', Trabajador.tipo_contrato == None))
+        .filter(or_(
+            Trabajador.tipo_contrato == 'PLANILLA', 
+            Trabajador.tipo_contrato == None,
+            Trabajador.tipo_contrato == ''
+        ))
         .all()
     )
     rows = []
