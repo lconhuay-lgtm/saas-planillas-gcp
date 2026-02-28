@@ -1854,6 +1854,27 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 retencion_quinta = int(round(max(0.0, (impuesto_anual - retencion_previa_historica) / divisor)))
                 if retencion_quinta > 0: desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
 
+            # --- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---
+            conceptos_manuales = json.loads(row.get('conceptos_json', '{}') or '{}')
+            aj_afp    = float(conceptos_manuales.get('_ajuste_afp', 0.0))
+            aj_quinta = float(conceptos_manuales.get('_ajuste_quinta', 0.0))
+            aj_otros  = float(conceptos_manuales.get('_ajuste_otros', 0.0))
+
+            if aj_afp != 0:
+                desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
+                descuentos_manuales += aj_afp
+                obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
+            
+            if aj_quinta != 0:
+                desglose_descuentos['Ajuste 5ta Cat (Audit)'] = round(aj_quinta, 2)
+                descuentos_manuales += aj_quinta
+                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+
+            if aj_otros != 0:
+                desglose_descuentos['Ajuste Varios (Audit)'] = round(aj_otros, 2)
+                descuentos_manuales += aj_otros
+                obs_trab.append(f"Ajuste Manual: S/ {aj_otros:,.2f}")
+
             # --- SEGURO SOCIAL (ESSALUD o SIS) Y NETO ---
             # Regla: EsSalud mínimo sobre RMV siempre que el trabajador tenga al
             # menos 1 día remunerado (trabajado o pagado).  Si el mes completo fue
