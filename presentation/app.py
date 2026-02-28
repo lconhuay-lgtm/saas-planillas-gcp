@@ -66,6 +66,9 @@ if not st.session_state.get('_tablas_verificadas'):
             # Préstamos y Descuentos Programados
             "CREATE TABLE IF NOT EXISTS prestamos (id SERIAL PRIMARY KEY, empresa_id INTEGER NOT NULL REFERENCES empresas(id), trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id), concepto VARCHAR(100) DEFAULT 'Préstamo Personal', monto_total FLOAT NOT NULL, numero_cuotas INTEGER NOT NULL, fecha_otorgamiento DATE, estado VARCHAR(20) DEFAULT 'ACTIVO')",
             "CREATE TABLE IF NOT EXISTS cuotas_prestamo (id SERIAL PRIMARY KEY, prestamo_id INTEGER NOT NULL REFERENCES prestamos(id) ON DELETE CASCADE, numero_cuota INTEGER NOT NULL, periodo_key VARCHAR(10) NOT NULL, monto FLOAT NOT NULL, estado VARCHAR(20) DEFAULT 'PENDIENTE')",
+            # Forzar actualización de campos críticos en todas las empresas
+            "ALTER TABLE trabajadores ALTER COLUMN tipo_contrato SET DEFAULT 'PLANILLA'",
+            "UPDATE trabajadores SET tipo_contrato = 'PLANILLA' WHERE tipo_contrato IS NULL",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

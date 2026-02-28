@@ -1565,11 +1565,16 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             # --- OBSERVACIONES DEL PERIODO ---
             obs_trab = []
             if ingreso_este_mes:
-                obs_trab.append(f"Ingresó a laborar el {fecha_ingreso.strftime('%d/%m/%Y')}")
+                obs_trab.append(f"Ingresó el {fecha_ingreso.strftime('%d/%m/%Y')}")
+            
+            # Detalle de descuentos por ausencias para Tesorería
+            monto_dscto_ausencias = round(sueldo_base_nominal - sueldo_computable, 2)
             if total_ausencias > 0:
-                obs_trab.append(f"Faltó {int(total_ausencias)} día(s)")
+                obs_trab.append(f"Días no laborados: {int(total_ausencias)} (Desc: S/ {monto_dscto_ausencias:,.2f})")
 
             dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
+            if dscto_tardanzas > 0:
+                obs_trab.append(f"Tardanzas: {int(row['Min. Tardanza'])} min (Desc: S/ {dscto_tardanzas:,.2f})")
 
             # Asig. familiar: se paga solo si hay sueldo computable > 0 y al menos 1 día remunerado.
             # Códigos remunerados (no descuentan asig.fam): 20=Desc.Médico, 23=Vacaciones, 25=Lic.c/Goce
@@ -1895,36 +1900,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
 
-        # ── REPORTE DE TESORERÍA ─────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown("#### 🏦 Reporte de Tesorería")
-        if not _honorarios_calculados and _n_loc_activos > 0:
-            st.warning(
-                "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
-                "Calcule primero los **Honorarios** en la pestaña "
-                "**'🧾 2. Honorarios (4ta Categoría)'** para generar el Reporte de Tesorería completo."
-            )
-        elif _puede_descargar:
-            empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
-            try:
-                buf_teso = generar_pdf_tesoreria(
-                    df_planilla=df_resultados,
-                    df_loc=df_loc_teso if _honorarios_calculados else None,
-                    empresa_nombre=empresa_nombre,
-                    periodo_key=periodo_key,
-                    auditoria_data=auditoria_data,
-                    empresa_ruc=empresa_ruc_s,
-                )
-                st.download_button(
-                    "🏦 Descargar Reporte de Tesorería (PDF)",
-                    data=buf_teso,
-                    file_name=f"TESORERIA_{periodo_key}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                )
-            except Exception as _e_teso:
-                st.warning(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
 
         st.markdown("---")
         st.markdown("### 🔍 Panel de Auditoría Tributaria y Liquidaciones")
@@ -2006,8 +1981,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             fecha_cierre = getattr(planilla_db_cierre, 'fecha_cierre', None)
             fecha_str    = fecha_cierre.strftime("%d/%m/%Y %H:%M") if fecha_cierre else ''
             st.error(f"**PLANILLA CERRADA** — Responsable: {cerrada_por}  |  Fecha: {fecha_str}")
-            if rol_usuario == "supervisor":
-                st.info("Como supervisor puede reabrir esta planilla para modificarla.")
+            if rol_usuario in ["supervisor", "admin"]:
+                st.info("Como Administrador/Supervisor puede reabrir esta planilla para modificarla.")
                 if st.button("🔓 Reabrir Planilla", use_container_width=False):
                     try:
                         db_up = SessionLocal()
@@ -2183,6 +2158,11 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             
             if obs_p:
                 resultado['observaciones'] = f"{resultado['observaciones']} | {obs_p}" if resultado['observaciones'] else obs_p
+            
+            # Agregar monto de descuento por días no prestados para Tesorería
+            if resultado['dias_no_prestados'] > 0:
+                desc_dias = f"Días no prestados: {resultado['dias_no_prestados']} (Desc: S/ {resultado['monto_descuento']:,.2f})"
+                resultado['observaciones'] = f"{resultado['observaciones']} | {desc_dias}" if resultado['observaciones'] else desc_dias
 
             resultados_loc.append({
                 "DNI":                 dni,
@@ -2264,6 +2244,46 @@ def render():
 
     with tab_hon:
         _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key)
+
+    # ── SECCIÓN GLOBAL DE REPORTES Y TESORERÍA ───────────────────────────────
+    st.markdown("---")
+    
+    # Datos para reportes globales
+    df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
+    df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+    aud_glob     = st.session_state.get('auditoria_data', {})
+    
+    try:
+        _db_glob = SessionLocal()
+        _n_loc_glob = _db_glob.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+        _db_glob.close()
+    except: _n_loc_glob = 0
+
+    _plan_listo = not df_plan_glob.empty
+    _loc_listo  = not df_loc_glob.empty or _n_loc_glob == 0
+
+    if _plan_listo or not df_loc_glob.empty:
+        st.subheader("🏦 Gestión de Tesorería y Reportes Consolidados")
+        
+        if _n_loc_glob > 0 and not df_loc_glob.empty and df_plan_glob.empty:
+            st.warning("⚠️ Planilla de empleados (5ta Cat) aún no calculada. El reporte solo incluirá locadores.")
+        elif _n_loc_glob > 0 and df_loc_glob.empty and not df_plan_glob.empty:
+            st.warning("⚠️ Honorarios de locadores (4ta Cat) aún no calculados. El reporte solo incluirá planilla.")
+
+        c_teso1, c_teso2 = st.columns(2)
+        with c_teso1:
+            if st.button("🏦 Generar Reporte de Tesorería (PDF)", type="primary", use_container_width=True):
+                try:
+                    buf_t = generar_pdf_tesoreria(
+                        df_planilla=df_plan_glob if _plan_listo else None,
+                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                        empresa_nombre=empresa_nombre,
+                        periodo_key=periodo_key,
+                        auditoria_data=aud_glob,
+                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                    )
+                    st.download_button("⬇️ Descargar Reporte de Tesorería", data=buf_t, file_name=f"TESORERIA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e: st.error(f"Error: {e}")
 
     # ── REPORTE COMBINADO (Planilla + Locadores) ───────────────────────────────
     df_plan_comb = st.session_state.get('res_planilla', pd.DataFrame())
