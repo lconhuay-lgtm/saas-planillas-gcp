@@ -52,6 +52,7 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS fecha_cierre TIMESTAMP",
             # PLAME / AFPnet (lote actual)
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS horas_jornada_diaria FLOAT DEFAULT 8.0",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS cuenta_cargo_bcp VARCHAR(20)",
             "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS codigo_sunat VARCHAR(4)",
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS apellido_paterno VARCHAR(100)",
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS apellido_materno VARCHAR(100)",
