@@ -1541,6 +1541,10 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         except: pass
 
         for index, row in df_planilla.iterrows():
+            # Definir variables de cálculo para filtros y lógica proporcional
+            mes_calc  = int(mes_seleccionado[:2])
+            anio_calc = int(anio_seleccionado)
+
             # Filtro de fecha de ingreso para personal en planilla
             try:
                 fi_p = pd.to_datetime(row['Fecha Ingreso'])
@@ -1555,8 +1559,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             # --- TIEMPOS Y BASES FIJAS (Proporcionalidad Segura) ---
             try:
                 fecha_ingreso = pd.to_datetime(row['Fecha Ingreso'])
-                mes_calc  = int(mes_seleccionado[:2])
-                anio_calc = int(anio_seleccionado)
 
                 dias_del_mes = calendar.monthrange(anio_calc, mes_calc)[1]
                 ingreso_este_mes = (fecha_ingreso.year == anio_calc and fecha_ingreso.month == mes_calc)
