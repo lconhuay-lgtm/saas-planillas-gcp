@@ -4,6 +4,12 @@ from datetime import datetime
 from infrastructure.database.connection import Base
 
 
+# TABLA INTERMEDIA PARA PERMISOS DE USUARIOS POR EMPRESA
+class UsuarioEmpresa(Base):
+    __tablename__ = "usuario_empresa"
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), primary_key=True)
+
 # 0. TABLA DE USUARIOS DEL SISTEMA
 class Usuario(Base):
     __tablename__ = "usuarios"
@@ -11,10 +17,14 @@ class Usuario(Base):
     id               = Column(Integer, primary_key=True, index=True)
     username         = Column(String(50), unique=True, nullable=False, index=True)
     password_hash    = Column(String(64), nullable=False)   # SHA-256 hex
-    rol              = Column(String(20), nullable=False)   # analista | supervisor
+    rol              = Column(String(20), nullable=False)   # admin | analista | supervisor
     nombre_completo  = Column(String(100), nullable=True)
     activo           = Column(Boolean, default=True)
+    acceso_total     = Column(Boolean, default=False)       # True: Ve todas las empresas
     fecha_registro   = Column(DateTime, default=datetime.now)
+
+    # Relación con empresas autorizadas
+    empresas_asignadas = relationship("Empresa", secondary="usuario_empresa", backref="usuarios_autorizados")
 
 
 # 1. TABLA MAESTRA DE EMPRESAS
