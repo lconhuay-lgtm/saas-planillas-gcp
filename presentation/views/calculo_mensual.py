@@ -1109,9 +1109,27 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         tot_hon = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
 
         for i, (_, row) in enumerate(df_loc.iterrows()):
-            # Ajuste visual solo para Tesorería: días calendario - días no prestados
-            d_no_p_teso = int(row.get("Días no Prestados", 0) or 0)
-            dias_lab = max(0, dias_mes - d_no_p_teso)
+            # Ajuste visual para Tesorería: días efectivamente laborados
+            # 1. Días según fecha de ingreso vs calendario real
+            dni_l = str(row.get("DNI", ""))
+            dias_vinc = dias_mes
+            try:
+                db_v = SessionLocal()
+                l_obj = db_v.query(Trabajador).filter_by(num_doc=dni_l).first()
+                if l_obj and l_obj.fecha_ingreso and l_obj.fecha_ingreso.year == anio_num and l_obj.fecha_ingreso.month == mes_num:
+                    dias_vinc = dias_mes - l_obj.fecha_ingreso.day + 1
+                
+                # 2. Descontar suspensiones Tabla 21
+                v_obj = db_v.query(VariablesMes).filter_by(trabajador_id=l_obj.id, periodo_key=periodo_key).first()
+                db_v.close()
+                
+                susp_t21 = json.loads(v_obj.suspensiones_json or '{}') if v_obj else {}
+                cods_desc = ["01", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35"]
+                total_susp = sum(int(v or 0) for k, v in susp_t21.items() if k in cods_desc)
+            except:
+                total_susp = int(row.get("Días no Prestados", 0) or 0)
+
+            dias_lab = max(0, dias_vinc - total_susp)
             
             hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
             bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
@@ -1923,6 +1941,22 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         st.dataframe(df_resultados.iloc[:-1], use_container_width=True, hide_index=True)
 
         st.markdown("---")
+        st.markdown("#### 📥 Exportación Corporativa (Planilla)")
+        empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
+        empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            try:
+                excel_file = generar_excel_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
+                st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="dl_plan_xl")
+            except Exception: pass
+        with col_btn2:
+            try:
+                pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
+                st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True, key="dl_plan_pdf")
+            except Exception: pass
+
+        st.markdown("---")
         st.markdown("### 🔒 Cierre de Planilla")
 
         rol_usuario = st.session_state.get('usuario_rol', 'analista')
@@ -2236,7 +2270,7 @@ def render():
         _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key)
 
 
-    # ── SECCIÓN GLOBAL DE EXPORTACIÓN Y TESORERÍA ───────────────────────────────
+    # ── SECCIÓN GLOBAL DE TESORERÍA ──────────────────────────────────────────
     df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
     df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
     aud_glob     = st.session_state.get('auditoria_data', {})
@@ -2248,25 +2282,6 @@ def render():
     except: _n_loc_glob = 0
 
     if not df_plan_glob.empty or not df_loc_glob.empty:
-        st.markdown("---")
-        st.markdown("#### 📥 Exportación Corporativa")
-        
-        empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
-        empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
-        
-        col_btn1, col_btn2 = st.columns(2)
-        if not df_plan_glob.empty:
-            with col_btn1:
-                try:
-                    excel_file = generar_excel_sabana(df_plan_glob, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
-                    st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                except Exception: pass
-            with col_btn2:
-                try:
-                    pdf_buffer = generar_pdf_sabana(df_plan_glob, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
-                    st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
-                except Exception: pass
-
         st.markdown("---")
         st.subheader("🏦 Gestión de Tesorería")
         
