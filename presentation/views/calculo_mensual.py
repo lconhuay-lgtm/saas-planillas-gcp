@@ -1541,6 +1541,13 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         except: pass
 
         for index, row in df_planilla.iterrows():
+            # Filtro de fecha de ingreso para personal en planilla
+            try:
+                fi_p = pd.to_datetime(row['Fecha Ingreso'])
+                if fi_p.year > anio_calc or (fi_p.year == anio_calc and fi_p.month > mes_calc):
+                    continue
+            except: pass
+
             dni_trabajador = row['Num. Doc.']
             nombres = row['Nombres y Apellidos_x']
             sistema = str(row.get('Sistema Pensión', 'NO AFECTO')).upper()
@@ -2002,11 +2009,21 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
         tope_4ta = p.get('tope_4ta', 1500.0)
 
         # 2. Locadores activos
-        locadores = (
+        mes_int  = int(periodo_key[:2])
+        anio_int = int(periodo_key[3:])
+
+        locadores_db = (
             db.query(Trabajador)
             .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
             .all()
         )
+
+        # Filtrar locadores que ya iniciaron labores en o antes del periodo de cálculo
+        locadores = [
+            l for l in locadores_db
+            if not (l.fecha_ingreso and (l.fecha_ingreso.year > anio_int or (l.fecha_ingreso.year == anio_int and l.fecha_ingreso.month > mes_int)))
+        ]
+
         if not locadores:
             st.info("ℹ️ No hay Locadores de Servicio activos registrados en el Maestro de Personal.")
             return
@@ -2028,8 +2045,6 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             }
 
         # 4. Días del mes
-        mes_int  = int(periodo_key[:2])
-        anio_int = int(periodo_key[3:])
         dias_del_mes = calendar.monthrange(anio_int, mes_int)[1]
 
     finally:
