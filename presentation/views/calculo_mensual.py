@@ -1879,28 +1879,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             _db_glob.close()
         except: _n_loc_glob = 0
 
-        st.subheader("🏦 Gestión de Tesorería")
-        if _n_loc_glob > 0 and df_loc_glob.empty:
-            st.warning("⚠️ Esta empresa tiene **Locadores de Servicio activos**. Calcule los Honorarios en la pestaña '🧾 2. Honorarios' para un reporte completo.")
-        
-        c_teso1, c_teso2 = st.columns([1, 1])
-        with c_teso1:
-            if st.button("🏦 Generar Reporte de Tesorería (PDF)", type="primary", use_container_width=True, key="btn_teso_global"):
-                try:
-                    # Priorizar datos de la sesión actual para reflejar cambios no cerrados
-                    df_p_report = st.session_state.get('res_planilla', df_resultados)
-                    aud_report  = st.session_state.get('auditoria_data', auditoria_data)
-                    
-                    buf_t = generar_pdf_tesoreria(
-                        df_planilla=df_p_report,
-                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
-                        empresa_nombre=empresa_nombre,
-                        periodo_key=periodo_key,
-                        auditoria_data=aud_report,
-                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-                    )
-                    st.download_button("⬇️ Descargar Reporte de Tesorería", data=buf_t, file_name=f"TESORERIA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e: st.error(f"Error: {e}")
 
         st.markdown("---")
         st.markdown("### 📊 Matriz de Nómina")
@@ -1950,12 +1928,48 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
 
+        # ── SECCIÓN GLOBAL DE TESORERÍA (DEBAJO DE EXPORTACIÓN) ──────────────────
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
+        
+        df_p_report = st.session_state.get('res_planilla', df_resultados)
+        aud_report  = st.session_state.get('auditoria_data', auditoria_data)
+        df_loc_glob = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+        
+        try:
+            _db_glob = SessionLocal()
+            _n_loc_glob = _db_glob.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+            _db_glob.close()
+        except: _n_loc_glob = 0
+
+        if _n_loc_glob > 0 and df_loc_glob.empty:
+            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para reporte completo.")
+
+        try:
+            buf_t = generar_pdf_tesoreria(
+                df_planilla=df_p_report,
+                df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=periodo_key,
+                auditoria_data=aud_report,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+            )
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF Directo)",
+                data=buf_t,
+                file_name=f"TESORERIA_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="btn_teso_directo"
+            )
+        except Exception as e:
+            st.error(f"Error al preparar reporte de tesorería: {e}")
 
         st.markdown("---")
-        st.markdown("### 🔍 Panel de Auditoría Tributaria y Liquidaciones")
-        
-        opciones_trab = [f"{dni} - {info['nombres']}" for dni, info in auditoria_data.items()]
-        trabajador_sel = st.selectbox("Seleccione un trabajador para ver su detalle legal:", opciones_trab, label_visibility="collapsed")
+        with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
+            opciones_trab = [f"{dni} - {info['nombres']}" for dni, info in aud_report.items()]
+            trabajador_sel = st.selectbox("Seleccione un trabajador para ver su detalle legal:", opciones_trab, label_visibility="collapsed")
 
         if trabajador_sel:
             dni_sel = trabajador_sel.split(" - ")[0]
