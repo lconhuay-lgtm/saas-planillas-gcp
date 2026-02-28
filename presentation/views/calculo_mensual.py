@@ -1665,7 +1665,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 susp_dict = {}
             total_ausencias   = sum(susp_dict.values()) if susp_dict else float(row.get('Días Faltados', 0))
             dias_laborados    = max(0, int(dias_computables) - int(total_ausencias))
-            factor_asistencia = dias_laborados / dias_computables if dias_computables > 0 else 0.0
             horas_ordinarias  = int(dias_laborados * horas_jornada)
 
             sueldo_base_nominal = float(row['Sueldo Base'])
@@ -1676,8 +1675,10 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             # (incluye el caso de ingreso día 1: dias_computables == dias_del_mes → mes completo)
             if total_ausencias == 0 and (not ingreso_este_mes or dias_computables >= dias_del_mes):
                 sueldo_computable = sueldo_base_nominal
+                factor_asistencia = 1.0
             else:
                 sueldo_computable = max(0.0, valor_dia * dias_laborados)
+                factor_asistencia = dias_laborados / 30.0
 
             # --- OBSERVACIONES DEL PERIODO ---
             obs_trab = []
