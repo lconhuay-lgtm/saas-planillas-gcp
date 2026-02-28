@@ -519,11 +519,15 @@ def generar_pdf_quinta(data_q, empresa_nombre, periodo, nombre_trabajador):
     buffer.seek(0)
     return buffer
 def generar_excel_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc=""):
-    """Genera Excel corporativo para valorización de locadores (misma clase que sábana planilla)."""
+    """Genera Excel corporativo para valorización de locadores."""
     periodo_texto = _periodo_legible_calc(periodo_key)
+    # Limpiar columnas no deseadas para el reporte corporativo
+    cols_excluir = ["Banco", "N° Cuenta", "CCI", "Observaciones"]
+    df_export = df_loc[[c for c in df_loc.columns if c not in cols_excluir]].copy()
+    
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_loc.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False, startrow=5)
+        df_export.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False, startrow=5)
         ws = writer.sheets[f'Honorarios_{periodo_key[:2]}']
         ws['A1'] = empresa_nombre
         ws['A1'].font = Font(size=16, bold=True, color="0F2744")
@@ -588,13 +592,17 @@ def generar_pdf_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc="", 
     elements.append(Paragraph(f"Fecha de cálculo: {fecha_calc}", st_sub))
     elements.append(Spacer(1, 8))
 
-    cols = list(df_loc.columns)
+    # Limpiar columnas para PDF corporativo
+    cols_excluir = ["Banco", "N° Cuenta", "CCI", "Observaciones"]
+    cols = [c for c in df_loc.columns if c not in cols_excluir]
+    
     col_widths_map = {
         "DNI": 55, "Locador": 130,
         "Honorario Base": 70, "Días no Prestados": 60,
-        "Descuento Días": 65, "Otros Pagos": 65,
-        "Pago Bruto": 65, "Retención 4ta (8%)": 72,
-        "Otros Descuentos": 70, "NETO A PAGAR": 70,
+        "Días Laborados": 60, "Descuento Días": 65, 
+        "Otros Pagos": 65, "Pago Bruto": 65, 
+        "Retención 4ta (8%)": 72, "Otros Descuentos": 70, 
+        "NETO A PAGAR": 70,
     }
     col_w = [col_widths_map.get(c, 60) for c in cols]
     total_w = sum(col_w)
@@ -607,11 +615,40 @@ def generar_pdf_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc="", 
     nom_idx = cols.index("Locador") if "Locador" in cols else -1
     data_rows = [[Paragraph(c, hdr_style) for c in cols]]
 
-    for _, row in df_loc.iterrows():
+    # Variables de fecha para el cálculo de días reales
+    mes_num  = int(periodo_key[:2])
+    anio_num = int(periodo_key[3:])
+    dias_mes = calendar.monthrange(anio_num, mes_num)[1]
+
+    for _, row in df_loc[cols].iterrows():
         fila = []
-        for i, val in enumerate(row):
-            if i == nom_idx:
+        dni_l = str(row.get("DNI", ""))
+        
+        # Lógica de días laborados reales igual que tesorería
+        d_vinc = dias_mes
+        try:
+            db_v = SessionLocal()
+            l_obj = db_v.query(Trabajador).filter_by(num_doc=dni_l).first()
+            if l_obj and l_obj.fecha_ingreso and l_obj.fecha_ingreso.year == anio_num and l_obj.fecha_ingreso.month == mes_num:
+                d_vinc = dias_mes - l_obj.fecha_ingreso.day + 1
+            
+            v_obj = db_v.query(VariablesMes).filter_by(trabajador_id=l_obj.id, periodo_key=periodo_key).first()
+            db_v.close()
+            
+            susp_t21 = json.loads(v_obj.suspensiones_json or '{}') if v_obj else {}
+            cods_desc = ["01", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35"]
+            t_susp = sum(int(v or 0) for k, v in susp_t21.items() if k in cods_desc)
+        except:
+            t_susp = int(row.get("Días no Prestados", 0) or 0)
+
+        d_lab_real = max(0, d_vinc - t_susp)
+
+        for i, c_name in enumerate(cols):
+            val = row[c_name]
+            if c_name == "Locador":
                 fila.append(Paragraph(str(val) if str(val) != "nan" else "", nom_style))
+            elif c_name == "Días Laborados":
+                fila.append(str(d_lab_real))
             elif isinstance(val, float):
                 fila.append(f"{val:,.2f}")
             else:
@@ -2219,7 +2256,7 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
         c3.metric("Total Neto a Pagar",    f"S/ {df_loc['NETO A PAGAR'].sum():,.2f}")
 
         st.markdown("---")
-        st.markdown("#### 📥 Exportación Corporativa")
+        st.markdown("#### 📥 Exportación Corporativa (Locadores)")
         col_h1, col_h2 = st.columns(2)
         empresa_ruc_h = st.session_state.get('empresa_activa_ruc', '')
         empresa_reg_h = st.session_state.get('empresa_activa_regimen', '')
