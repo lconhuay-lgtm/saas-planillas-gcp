@@ -204,7 +204,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             ["TRABAJADOR",     Paragraph(nombre, st_val_wrap), "DOC. IDENTIDAD", dni],
             ["CARGO",          cargo,            "FECHA INGRESO",  fecha_ingreso],
             ["SIST. PENSIÓN",  sistema_pension,  "CUSPP",          cuspp],
-            ["SEGURO SOCIAL",  seg_label,        "APORTE EMP.",    f"S/ {aporte_seg:,.2f}"],
+            ["SEGURO SOCIAL",  seg_label,        "REM. DIARIA",    f"S/ {data_aud.get('rem_diaria', 0.0):,.2f}"],
             ["DÍAS LABORADOS", str(int(dias_lab)),"HORAS EXTRAS",  f"{hrs_ext:.1f} h"],
         ]
         WL, WV, WL2, WV2 = 82, 170, 82, 189
