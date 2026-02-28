@@ -16,6 +16,8 @@ def calcular_recibo_honorarios(
     dias_del_mes: int,
     tasa_4ta: float = 8.0,
     tope_4ta: float = 1500.0,
+    anio_calc: int = 0,
+    mes_calc: int = 0,
 ) -> dict:
     """
     Calcula el recibo por honorarios de un locador (4ta categoría).
@@ -29,22 +31,45 @@ def calcular_recibo_honorarios(
         dias_del_mes: número real de días del mes de cálculo (28, 30 ó 31).
         tasa_4ta: porcentaje de retención (por defecto 8 %).
         tope_4ta: monto mínimo de pago bruto para aplicar retención (por defecto S/ 1 500).
+        anio_calc: año del periodo de cálculo (para aplicar Base 30 con fecha_ingreso).
+        mes_calc: mes del periodo de cálculo (para aplicar Base 30 con fecha_ingreso).
 
     Returns:
         dict con el desglose completo del recibo:
-            honorario_base, dias_no_prestados, monto_descuento,
-            otros_pagos, pago_bruto, retencion_4ta, otros_descuentos, neto_a_pagar.
+            honorario_base, dias_no_prestados, dias_laborados, monto_descuento,
+            otros_pagos, pago_bruto, retencion_4ta, otros_descuentos, neto_a_pagar,
+            observaciones.
     """
     honorario_base    = float(getattr(locador, 'sueldo_base', 0.0) or 0.0)
     dias_no_prestados = int(variables.get('dias_no_prestados', 0) or 0)
     otros_pagos       = float(variables.get('otros_pagos', 0.0) or 0.0)
     otros_descuentos  = float(variables.get('otros_descuentos', 0.0) or 0.0)
 
-    # Descuento proporcional por días no prestados — Base 30 (Mes Comercial Mixto)
+    # ── Mes Comercial Mixto (Base 30) con fecha_ingreso ─────────────────────
+    fecha_ingreso_loc = getattr(locador, 'fecha_ingreso', None)
+    ingreso_este_mes  = False
+    dias_vinculados   = 30  # base 30: mes completo por defecto
+
+    if fecha_ingreso_loc and anio_calc and mes_calc:
+        try:
+            fi = fecha_ingreso_loc  # datetime.date desde SQLAlchemy
+            ingreso_este_mes = (fi.year == anio_calc and fi.month == mes_calc)
+            if ingreso_este_mes:
+                # Días desde la fecha de ingreso hasta fin del mes (sobre el calendario real)
+                dias_vinculados = dias_del_mes - fi.day + 1
+        except Exception:
+            pass
+
+    dias_efectivos = max(0, dias_vinculados - dias_no_prestados)
+
+    # Descuento proporcional — Base 30 (Mes Comercial Mixto)
     monto_descuento = 0.0
-    if dias_no_prestados > 0:
+    if not ingreso_este_mes and dias_no_prestados == 0:
+        # Mes completo sin novedades → honorario íntegro
+        pass
+    else:
         valor_dia = honorario_base / 30.0
-        monto_descuento = valor_dia * dias_no_prestados
+        monto_descuento = max(0.0, honorario_base - (valor_dia * dias_efectivos))
 
     pago_bruto = max(0.0, honorario_base - monto_descuento + otros_pagos)
 
@@ -59,6 +84,11 @@ def calcular_recibo_honorarios(
     neto_a_pagar = pago_bruto - retencion_4ta - otros_descuentos
 
     obs_loc = []
+    if ingreso_este_mes and fecha_ingreso_loc:
+        try:
+            obs_loc.append(f"Ingresó a laborar el {fecha_ingreso_loc.strftime('%d/%m/%Y')}")
+        except Exception:
+            pass
     if dias_no_prestados > 0:
         obs_loc.append(f"No prestó servicios {dias_no_prestados} día(s)")
     if tiene_suspension:
@@ -67,6 +97,7 @@ def calcular_recibo_honorarios(
     return {
         'honorario_base':       round(honorario_base, 2),
         'dias_no_prestados':    dias_no_prestados,
+        'dias_laborados':       dias_efectivos,
         'monto_descuento':      round(monto_descuento, 2),
         'otros_pagos':          round(otros_pagos, 2),
         'pago_bruto':           round(pago_bruto, 2),
