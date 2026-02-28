@@ -945,23 +945,25 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         df_plan_data = df_planilla[df_planilla.get('Apellidos y Nombres', pd.Series(dtype=str)) != 'TOTALES'] \
             if 'Apellidos y Nombres' in df_planilla.columns else df_planilla.iloc[:-1]
 
-        # Detectar columnas de ingreso dinámicas (solo si suma > 0)
-        dynamic_income = []  # lista de (col_en_df, display_name)
+        # Detectar CUALQUIER ingreso que perciba el trabajador de planilla (dinámico total)
+        dynamic_income = []
+        # 1. Ingresos fijos del DF
         for src, dsp in [("Sueldo Base", "Sueldo Básico"), ("Asig. Fam.", "Asig. Fam.")]:
-            if src in df_plan_data.columns and df_plan_data[src].sum() > 0:
+            if src in df_plan_data.columns and pd.to_numeric(df_plan_data[src], errors='coerce').sum() > 0:
                 dynamic_income.append((src, dsp))
-
-        # Detectar ingresos extra desde auditoria_data
-        known_extra = ["Horas Extra 25%", "Horas Extra 35%", "Gratificación", "Bono Ext. 9%"]
-        extra_sums = {k: 0.0 for k in known_extra}
+        
+        # 2. Todos los conceptos dinámicos desde auditoria_data que tengan monto > 0
+        all_audit_incomes = set()
         if auditoria_data:
-            for _dni, _info in auditoria_data.items():
-                for k, v in _info.get('ingresos', {}).items():
-                    if k in extra_sums:
-                        extra_sums[k] += float(v or 0.0)
-        for k in known_extra:
-            if extra_sums.get(k, 0.0) > 0:
-                dynamic_income.append((k, k))
+            for dni, info in auditoria_data.items():
+                for concepto_nombre, monto in info.get('ingresos', {}).items():
+                    if float(monto or 0) > 0 and not concepto_nombre.startswith("Sueldo Base"):
+                        all_audit_incomes.add(concepto_nombre)
+        
+        for inc_name in sorted(list(all_audit_incomes)):
+            # Evitar duplicar Asig. Fam si ya se incluyó arriba
+            if inc_name != "Asignación Familiar":
+                dynamic_income.append((inc_name, inc_name))
 
         has_5ta   = "Ret. 5ta Cat."  in df_plan_data.columns and df_plan_data["Ret. 5ta Cat."].sum() > 0
         has_dscto = "Dsctos/Faltas"  in df_plan_data.columns and df_plan_data["Dsctos/Faltas"].sum() > 0
@@ -1884,11 +1886,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         if not es_cerrada:
             st.success("✅ Planilla generada con éxito.")
 
-        st.markdown("### 📊 Matriz de Nómina")
-        # Mostramos la tabla en pantalla
-        st.dataframe(df_resultados.iloc[:-1], use_container_width=True, hide_index=True)
-
-        # ── CIERRE DE PLANILLA ────────────────────────────────────────────────
+        # Se elimina la duplicidad: La Matriz de Nómina y Exportación Corporativa 
+        # ahora se renderizan una sola vez en la sección global al final del render()
         st.markdown("---")
         st.markdown("### 🔒 Cierre de Planilla")
 
