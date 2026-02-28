@@ -104,10 +104,11 @@ def render():
         else:
             st.success(f"Nueva hoja de variables para **{periodo_key}**.")
 
-        # ── Dos pestañas principales ──────────────────────────────────────────
-        tab_plan, tab_loc = st.tabs([
-            "📋 1. Planilla de Empleados (5ta Categoría)",
-            "🧾 2. Valorización de Locadores (4ta Categoría)",
+        # ── Tres pestañas principales ──────────────────────────────────────────
+        tab_plan, tab_loc, tab_notas = st.tabs([
+            "📋 1. Planilla (5ta Cat.)",
+            "🧾 2. Locadores (4ta Cat.)",
+            "📝 3. Notas de Gestión"
         ])
 
         # ══════════════════════════════════════════════════════════════════════
@@ -381,6 +382,58 @@ def render():
                     except Exception as e:
                         db.rollback()
                         st.error(f"Error al guardar: {e}")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 3 — NOTAS DE GESTIÓN (SAP/ORACLE STYLE)
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_notas:
+            st.subheader("📝 Anotaciones Ejecutivas para Tesorería")
+            st.info("Estas notas aparecerán estrictamente en el Reporte de Tesorería y Boletas de Pago como información oficial de gestión.")
+            
+            todos = planilleros + locadores
+            if not todos:
+                st.info("No hay personal activo para registrar notas.")
+            else:
+                df_notas_data = []
+                for t in todos:
+                    v = variables_exist.get(t.id)
+                    df_notas_data.append({
+                        "ID": t.id,
+                        "Personal": f"{t.nombres} ({'Planilla' if t.tipo_contrato != 'LOCADOR' else 'Locador'})",
+                        "Notas de Gestión / Observación Manual": getattr(v, 'notas_gestion', '') or ''
+                    })
+                
+                df_n = pd.DataFrame(df_notas_data)
+                df_n_edit = st.data_editor(
+                    df_n,
+                    column_config={
+                        "ID": None,
+                        "Personal": st.column_config.TextColumn(disabled=True, width="medium"),
+                        "Notas de Gestión / Observación Manual": st.column_config.TextColumn(width="large")
+                    },
+                    hide_index=True, use_container_width=True, key="ed_notas_gestion",
+                    disabled=True if es_cerrada else False
+                )
+
+                if not es_cerrada and st.button("💾 Guardar Notas de Gestión", type="primary", use_container_width=True):
+                    try:
+                        for _, fila in df_n_edit.iterrows():
+                            tid = fila["ID"]
+                            txt = fila["Notas de Gestión / Observación Manual"]
+                            v_ex = variables_exist.get(tid)
+                            if v_ex:
+                                v_ex.notas_gestion = txt
+                            else:
+                                db.add(VariablesMes(
+                                    empresa_id=empresa_id, trabajador_id=tid, 
+                                    periodo_key=periodo_key, notas_gestion=txt
+                                ))
+                        db.commit()
+                        st.success("✅ Notas de gestión actualizadas.")
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Error: {e}")
 
     finally:
         db.close()

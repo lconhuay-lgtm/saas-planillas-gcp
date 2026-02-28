@@ -1517,6 +1517,16 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         except Exception:
             cuotas_del_mes = {}
 
+        # Precargar notas de gestión manuales
+        notas_gestion_map = {}
+        try:
+            db_n = SessionLocal()
+            _v_notas = db_n.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).all()
+            for _vn in _v_notas:
+                notas_gestion_map[_vn.trabajador.num_doc] = getattr(_vn, 'notas_gestion', '') or ''
+            db_n.close()
+        except: pass
+
         for index, row in df_planilla.iterrows():
             dni_trabajador = row['Num. Doc.']
             nombres = row['Nombres y Apellidos_x']
@@ -1578,6 +1588,11 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
             if dscto_tardanzas > 0:
                 obs_trab.append(f"Tardanzas: {int(row['Min. Tardanza'])} min (Desc: S/ {dscto_tardanzas:,.2f})")
+            
+            # Integrar Nota de Gestión Manual
+            nota_manual = notas_gestion_map.get(str(dni_trabajador), "")
+            if nota_manual:
+                obs_trab.append(f"NOTA: {nota_manual}")
 
             # Asig. familiar: se paga solo si hay sueldo computable > 0 y al menos 1 día remunerado.
             # Códigos remunerados (no descuentan asig.fam): 20=Desc.Médico, 23=Vacaciones, 25=Lic.c/Goce
@@ -2168,6 +2183,16 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
         except Exception:
             pass
 
+        # Precargar notas para locadores
+        notas_loc_map = {}
+        try:
+            db_nl = SessionLocal()
+            _v_nl = db_nl.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).all()
+            for _vnl in _v_nl:
+                notas_loc_map[_vnl.trabajador.num_doc] = getattr(_vnl, 'notas_gestion', '') or ''
+            db_nl.close()
+        except: pass
+
         for loc in locadores:
             dni = loc.num_doc
             vars_loc = vars_por_doc.get(dni, {})
@@ -2189,6 +2214,11 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             
             if obs_p:
                 resultado['observaciones'] = f"{resultado['observaciones']} | {obs_p}" if resultado['observaciones'] else obs_p
+            
+            # Integrar Nota de Gestión Manual para locadores
+            nota_m_loc = notas_loc_map.get(dni, "")
+            if nota_m_loc:
+                resultado['observaciones'] = f"{resultado['observaciones']} | NOTA: {nota_m_loc}" if resultado['observaciones'] else f"NOTA: {nota_m_loc}"
             
             # Agregar monto de descuento por días no prestados para Tesorería
             if resultado['dias_no_prestados'] > 0:

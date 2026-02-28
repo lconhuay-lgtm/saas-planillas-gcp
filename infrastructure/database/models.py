@@ -183,6 +183,9 @@ class VariablesMes(Base):
     # Días sin prestar servicios para locadores (4ta categoría)
     dias_descuento_locador = Column(Integer, default=0)
 
+    # Notas manuales de gestión (SAP/Oracle style)
+    notas_gestion = Column(Text, default='')
+
     fecha_registro = Column(DateTime, default=datetime.now)
 
     # Relaciones
