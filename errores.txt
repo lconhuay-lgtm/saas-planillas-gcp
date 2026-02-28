@@ -1,59 +1,22 @@
-Actúa como un Desarrollador Senior de Backend y Arquitecto de Software experto en motores de nómina (Payroll) y bases de datos SQLAlchemy.
+Actúa como un Desarrollador Senior. Hemos detectado un bug lógico en el prorrateo de conceptos dinámicos para los trabajadores que ingresan a mitad de mes (mid-month hires).
 
-Tu objetivo es implementar la funcionalidad de "Conceptos Prorrateables por Asistencia" en nuestro ERP de planillas, asegurando 100% de retrocompatibilidad con las planillas cerradas históricas y SIN alterar la lógica existente de "Ajustes de Auditoría".
+Actualmente, el `factor_asistencia` divide `dias_laborados / dias_computables`. Esto causa que si un trabajador ingresa el 15 del mes y trabaja esos 15 días, el factor sea 15/15 = 1.0, pagándole el 100% de la movilidad, lo cual es incorrecto según el estándar laboral de Base 30.
 
-Para lograr esto, ciertos conceptos dinámicos ingresados por su valor nominal (ej. Movilidad) deben multiplicarse por un factor de asistencia si el usuario los marca como prorrateables en el Maestro de Conceptos. Adicionalmente, el monto descontado por la inasistencia debe sumarse exclusivamente a la proyección anual de la Renta de 5ta Categoría para evitar distorsiones tributarias.
+DEBES MODIFICAR EL ARCHIVO `presentation/views/calculo_mensual.py`:
 
-DEBES MODIFICAR ESTRICTAMENTE LOS SIGUIENTES 4 ARCHIVOS, no debes alterar ninguna función adicional de la aplicación y debes respetar las instrucciones paso a paso:
+Busca dentro del bucle principal `for index, row in df_planilla.iterrows():` (aproximadamente en la sección de "TIEMPOS Y BASES FIJAS").
 
-1. Modificar `infrastructure/database/models.py`:
-- En la clase `Concepto`, añade el siguiente campo:
-  `prorrateable_por_asistencia = Column(Boolean, default=False)`
+1. ELIMINA esta línea que calcula el factor de asistencia prematuramente:
+`factor_asistencia = dias_laborados / dias_computables if dias_computables > 0 else 0.0`
 
-2. Modificar `presentation/app.py`:
-- En la lista `_migraciones` (dentro del bloque "AUTO-CREAR TABLAS EN NEON"), añade la sentencia SQL para actualizar la BD de forma segura:
-  `"ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS prorrateable_por_asistencia BOOLEAN DEFAULT false",`
+2. Reubica la declaración de la variable `factor_asistencia` para que herede la misma lógica del "Mes Comercial Mixto" que utiliza el Sueldo Computable.
 
-3. Modificar `presentation/views/maestro_conceptos.py`:
-- En la Sección A (generación de la lista `rows` para el DataFrame de edición rápida), agrega:
-  `"Prorrateable (Asist.)": getattr(c, 'prorrateable_por_asistencia', False),`
-- En el `st.data_editor`, dentro de `column_config`, añade:
-  `"Prorrateable (Asist.)": st.column_config.CheckboxColumn(),`
-- En la lógica de guardado de esa misma tabla (`if st.button("💾 Guardar Cambios de Afectaciones"...`), actualiza el objeto:
-  `c.prorrateable_por_asistencia = bool(row.get("Prorrateable (Asist.)", False))`
-- En la Sección B ("Editar Concepto", col_der), añade el checkbox debajo del de gratificación:
-  `prorrateable_edit = st.checkbox("Prorrateable por asistencia", value=bool(getattr(obj_editar, 'prorrateable_por_asistencia', False)), key="e_cb_pror")`
-  Y asegúrate de guardarlo en el objeto `obj_editar` cuando se presione el botón de actualizar.
-- En la Pestaña 2 ("Nuevo Concepto", col2), añade el checkbox:
-  `comp_pror = st.checkbox("Prorrateable por asistencia", value=False, key="cb_pror")`
-  Y asegúrate de incluir `prorrateable_por_asistencia=comp_pror` en la instanciación de `Concepto(...)` en el `db.add()`.
+Modifica el bloque if/else existente para que quede exactamente así:
 
-4. Modificar `presentation/views/calculo_mensual.py` (¡MOTOR CRÍTICO!):
-- En la función `_cargar_conceptos_df(db, empresa_id)`, añade al diccionario que se appendea a `rows`:
-  `"Prorrateable": getattr(c, 'prorrateable_por_asistencia', False),`
-- En la función `_render_planilla_tab()`, justo antes de la línea `elif st.button(f"🚀 Ejecutar Motor de Planilla...`, añade un banner informativo para el usuario:
-  `st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")`
-- Dentro del bucle principal del motor (`for index, row in df_planilla.iterrows():`):
-  A) Inmediatamente después de definir `dias_laborados` y `dias_computables`, calcula el factor de asistencia:
-     `factor_asistencia = dias_laborados / dias_computables if dias_computables > 0 else 0.0`
-  B) Antes del bucle `for _, concepto in conceptos_empresa.iterrows():`, inicializa la variable acumuladora:
-     `conceptos_recuperados_5ta = 0.0`
-  C) Dentro de ese bucle `for _, concepto in conceptos_empresa.iterrows():`, reemplaza la línea `monto_concepto = float(row[nombre_c])` por la siguiente lógica de prorrateo:
-     ```python
-     monto_ingresado_nominal = float(row[nombre_c])
-     if concepto.get('Prorrateable', False):
-         monto_concepto = monto_ingresado_nominal * factor_asistencia
-         # Si es un ingreso afecto a 5ta, guardamos el diferencial que se perdió por faltar
-         if concepto['Tipo'] == "INGRESO" and concepto.get('Afecto 5ta Cat.', False):
-             conceptos_recuperados_5ta += (monto_ingresado_nominal - monto_concepto)
-     else:
-         monto_concepto = monto_ingresado_nominal
-     ```
-     (Asegúrate de que las líneas que siguen dentro de este bloque `if` utilicen `monto_concepto` y no modifiques NADA de la sección posterior de "Ajustes de Auditoría" ni de las variables `_ajuste_afp`, etc. Esas deben quedar intactas).
-  D) En la sección "RENTA 5TA CATEGORÍA", donde se define `base_quinta_proyeccion`:
-     Cambia la línea:
-     `base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable), 2)`
-     Por:
-     `base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable) + conceptos_recuperados_5ta, 2)`
-
-Revisa cuidadosamente la indentación en `calculo_mensual.py` ya que es un script extenso. No uses métodos destructivos, utiliza `getattr` y `.get()` para proteger diccionarios antiguos. Realiza los cambios y haz commit.
+```python
+            if total_ausencias == 0 and (not ingreso_este_mes or dias_computables >= dias_del_mes):
+                sueldo_computable = sueldo_base_nominal
+                factor_asistencia = 1.0
+            else:
+                sueldo_computable = max(0.0, valor_dia * dias_laborados)
+                factor_asistencia = dias_laborados / 30.0
