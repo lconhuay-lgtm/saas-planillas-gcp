@@ -169,7 +169,7 @@ def render():
     else:
         empresas_db = []
 
-    if usuario_actual and usuario_actual.rol == "admin":
+    if usuario_actual and usuario_actual.rol in ("admin", "supervisor"):
         col_t, col_b = st.columns([3, 1])
         col_b.button("➕ Crear Nueva Empresa", type="primary", use_container_width=True, 
                      on_click=lambda: st.session_state.update({"_creando_nueva_empresa": True}))
