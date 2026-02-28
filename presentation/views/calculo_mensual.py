@@ -1899,8 +1899,9 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         if not es_cerrada:
             st.success("✅ Planilla generada con éxito.")
 
-        # Se elimina la duplicidad: La Matriz de Nómina y Exportación Corporativa 
-        # ahora se renderizan una sola vez en la sección global al final del render()
+        st.markdown("### 📊 Matriz de Nómina")
+        st.dataframe(df_resultados.iloc[:-1], use_container_width=True, hide_index=True)
+
         st.markdown("---")
         st.markdown("### 🔒 Cierre de Planilla")
 
