@@ -208,3 +208,34 @@ class PlanillaMensual(Base):
     fecha_cierre = Column(DateTime, nullable=True)
 
     empresa = relationship("Empresa", backref="planillas")
+
+
+# 7. TABLA DE PRÉSTAMOS / DESCUENTOS PROGRAMADOS
+class Prestamo(Base):
+    __tablename__ = "prestamos"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    empresa_id      = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    trabajador_id   = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    concepto        = Column(String(100), default="Préstamo Personal")
+    monto_total     = Column(Float, nullable=False)
+    numero_cuotas   = Column(Integer, nullable=False)
+    fecha_otorgamiento = Column(Date, default=datetime.now)
+    estado          = Column(String(20), default="ACTIVO")   # ACTIVO | CANCELADO
+
+    trabajador = relationship("Trabajador", backref="prestamos")
+    cuotas     = relationship("CuotaPrestamo", back_populates="prestamo",
+                              cascade="all, delete-orphan")
+
+
+class CuotaPrestamo(Base):
+    __tablename__ = "cuotas_prestamo"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    prestamo_id  = Column(Integer, ForeignKey("prestamos.id"), nullable=False)
+    numero_cuota = Column(Integer, nullable=False)
+    periodo_key  = Column(String(10), nullable=False)   # Formato MM-YYYY
+    monto        = Column(Float, nullable=False)
+    estado       = Column(String(20), default="PENDIENTE")  # PENDIENTE | PAGADA
+
+    prestamo = relationship("Prestamo", back_populates="cuotas")

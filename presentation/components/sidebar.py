@@ -67,6 +67,7 @@ def render_sidebar():
             "Maestro de Conceptos",
             "Ingreso de Asistencias",
             "Cálculo de Planilla",
+            "Préstamos y Descuentos",
             "Emisión de Boletas",
             "Reportería",
         ]

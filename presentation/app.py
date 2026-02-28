@@ -29,6 +29,7 @@ from presentation.views import maestro_conceptos
 from presentation.views import emision_boletas
 from presentation.views import reporteria
 from presentation.views import login
+from presentation.views import prestamos
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 if not st.session_state.get('_tablas_verificadas'):
@@ -58,6 +59,9 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE parametros_legales ADD COLUMN IF NOT EXISTS tope_4ta FLOAT DEFAULT 1500.0",
             # Suspensión de retenciones 4ta Cat. para locadores con constancia SUNAT
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS tiene_suspension_4ta BOOLEAN DEFAULT false",
+            # Préstamos y Descuentos Programados
+            "CREATE TABLE IF NOT EXISTS prestamos (id SERIAL PRIMARY KEY, empresa_id INTEGER NOT NULL REFERENCES empresas(id), trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id), concepto VARCHAR(100) DEFAULT 'Préstamo Personal', monto_total FLOAT NOT NULL, numero_cuotas INTEGER NOT NULL, fecha_otorgamiento DATE, estado VARCHAR(20) DEFAULT 'ACTIVO')",
+            "CREATE TABLE IF NOT EXISTS cuotas_prestamo (id SERIAL PRIMARY KEY, prestamo_id INTEGER NOT NULL REFERENCES prestamos(id) ON DELETE CASCADE, numero_cuota INTEGER NOT NULL, periodo_key VARCHAR(10) NOT NULL, monto FLOAT NOT NULL, estado VARCHAR(20) DEFAULT 'PENDIENTE')",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -128,3 +132,6 @@ elif vista_actual == "Emisión de Boletas":
 
 elif vista_actual == "Reportería":
     reporteria.render()
+
+elif vista_actual == "Préstamos y Descuentos":
+    prestamos.render()

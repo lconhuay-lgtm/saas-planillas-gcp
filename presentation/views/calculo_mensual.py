@@ -18,7 +18,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 # Base de Datos Neon
 from sqlalchemy import or_
 from infrastructure.database.connection import SessionLocal
-from infrastructure.database.models import Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual
+from infrastructure.database.models import Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual, Prestamo, CuotaPrestamo
 
 
 # ─── HELPERS DE BASE DE DATOS ───────────────────────────────────────────────
@@ -1064,16 +1064,16 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         mes_num  = int(periodo_key[:2])
         anio_num = int(periodo_key[3:])
         dias_mes = _cal_teso.monthrange(anio_num, mes_num)[1]
-        has_dnp  = "Días no Prestados" in df_loc.columns
+        has_dias_lab = "Días Laborados" in df_loc.columns
 
         headers_l = ["N°", "DNI", "Nombres y Apellidos"]
-        if has_dnp:
-            headers_l += ["Días Laborados", "Días no Prest."]
+        if has_dias_lab:
+            headers_l.append("Días Laborados")
         headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco", "N° Cuenta", "CCI"]
 
         col_w_lmap = {
             "N°": 20, "DNI": 48, "Nombres y Apellidos": 120,
-            "Días Laborados": 52, "Días no Prest.": 52,
+            "Días Laborados": 52,
             "Pago Bruto": 62, "Retención 4ta": 62, "Otros Dsctos": 55, "NETO A PAGAR": 62,
             "Banco": 55, "N° Cuenta": 72, "CCI": 82,
         }
@@ -1086,14 +1086,14 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
 
         for i, (_, row) in enumerate(df_loc.iterrows()):
-            dnp    = int(row.get("Días no Prestados", 0) or 0)
+            dias_lab = int(row.get("Días Laborados", 0) or 0)
             bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
             ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
             dscto  = float(row.get("Otros Descuentos", 0.0) or 0.0)
             neto   = float(row.get("NETO A PAGAR", 0.0) or 0.0)
             fila   = [str(i + 1), str(row.get("DNI", "") or ""), Paragraph(str(row.get(loc_col, "") or ""), nom_s)]
-            if has_dnp:
-                fila += [str(dias_mes - dnp), str(dnp)]
+            if has_dias_lab:
+                fila.append(str(dias_lab))
             fila += [
                 f"{bruto:,.2f}", f"{ret:,.2f}", f"{dscto:,.2f}", f"{neto:,.2f}",
                 str(row.get("Banco", "") or ""), str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or ""),
@@ -1103,8 +1103,8 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
 
         # Fila de totales locadores: "TOTALES" en columna de nombres (índice 2)
         tot_l_fila = ["", "", Paragraph("TOTALES", tot_s)]
-        if has_dnp:
-            tot_l_fila += ["", ""]
+        if has_dias_lab:
+            tot_l_fila.append("")
         tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", "", "", ""]
         rows_l.append(tot_l_fila)
 
@@ -1416,6 +1416,33 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         except Exception:
             pass
 
+        # Precargar cuotas de préstamos pendientes del periodo (una sola consulta)
+        cuotas_del_mes: dict = {}
+        try:
+            db_cuotas = SessionLocal()
+            _cuotas = (
+                db_cuotas.query(CuotaPrestamo)
+                .join(Prestamo)
+                .filter(
+                    Prestamo.empresa_id == empresa_id,
+                    CuotaPrestamo.periodo_key == periodo_key,
+                    CuotaPrestamo.estado == 'PENDIENTE',
+                )
+                .all()
+            )
+            for _c in _cuotas:
+                _dni_c = _c.prestamo.trabajador.num_doc
+                cuotas_del_mes.setdefault(_dni_c, []).append({
+                    'id':            _c.id,
+                    'numero_cuota':  _c.numero_cuota,
+                    'numero_cuotas': _c.prestamo.numero_cuotas,
+                    'concepto':      _c.prestamo.concepto,
+                    'monto':         float(_c.monto),
+                })
+            db_cuotas.close()
+        except Exception:
+            cuotas_del_mes = {}
+
         for index, row in df_planilla.iterrows():
             dni_trabajador = row['Num. Doc.']
             nombres = row['Nombres y Apellidos_x']
@@ -1487,6 +1514,27 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             ingresos_totales    = sueldo_computable + monto_asig_fam + pago_he_25 + pago_he_35
             # Solo tardanzas como descuento manual; las faltas ya reducen sueldo_computable
             descuentos_manuales = dscto_tardanzas
+
+            # ── CUOTAS DE PRÉSTAMOS/DESCUENTOS PROGRAMADOS ──────────────────
+            for _cuota in cuotas_del_mes.get(str(dni_trabajador), []):
+                _monto_c = _cuota['monto']
+                descuentos_manuales += _monto_c
+                _concepto_c = _cuota['concepto']
+                desglose_descuentos[_concepto_c] = desglose_descuentos.get(_concepto_c, 0.0) + _monto_c
+                obs_trab.append(
+                    f"{_concepto_c}: Cuota {_cuota['numero_cuota']}/{_cuota['numero_cuotas']}"
+                    f" (S/ {_monto_c:,.2f})"
+                )
+
+            # ── OBSERVACIONES ADICIONALES ────────────────────────────────────
+            # Verificación bancaria
+            if not str(row.get('Banco', '') or '').strip() or not str(row.get('Cuenta Bancaria', '') or '').strip():
+                obs_trab.append("⚠️ Sin cuenta bancaria (Pago manual)")
+            # Descanso médico (código 20) o accidente de trabajo (código 16)
+            for _cod, _desc in [("20", "Descanso médico"), ("16", "Accidente de trabajo")]:
+                if int(susp_dict.get(_cod, 0)) > 0:
+                    obs_trab.append(f"{_desc}: {int(susp_dict[_cod])} día(s)")
+
             base_afp_onp        = ingresos_totales
             base_essalud        = ingresos_totales
             base_quinta_mes     = ingresos_totales
@@ -1756,26 +1804,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
 
-            # Reporte de Tesorería — incluye locadores si ya fueron calculados
-            try:
-                buf_teso = generar_pdf_tesoreria(
-                    df_planilla=df_resultados,
-                    df_loc=df_loc_teso if _honorarios_calculados else None,
-                    empresa_nombre=empresa_nombre,
-                    periodo_key=periodo_key,
-                    auditoria_data=auditoria_data,
-                    empresa_ruc=empresa_ruc_s,
-                )
-                st.download_button(
-                    "🏦 Descargar Reporte de Tesorería (PDF)",
-                    data=buf_teso,
-                    file_name=f"TESORERIA_{periodo_key}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
-            except Exception as _e_teso:
-                st.warning(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
-
         st.markdown("---")
         st.markdown("### 🔍 Panel de Auditoría Tributaria y Liquidaciones")
         
@@ -1867,6 +1895,19 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                         p.estado = "ABIERTA"
                         p.cerrada_por = None
                         p.fecha_cierre = None
+                        # Revertir cuotas de préstamos a PENDIENTE
+                        _cuotas_rev = (
+                            db_up.query(CuotaPrestamo)
+                            .join(Prestamo)
+                            .filter(
+                                Prestamo.empresa_id == empresa_id,
+                                CuotaPrestamo.periodo_key == periodo_key,
+                                CuotaPrestamo.estado == 'PAGADA',
+                            )
+                            .all()
+                        )
+                        for _cr in _cuotas_rev:
+                            _cr.estado = 'PENDIENTE'
                         db_up.commit()
                         db_up.close()
                         st.success("Planilla reabierta correctamente.")
@@ -1889,6 +1930,19 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                             p.estado = "CERRADA"
                             p.cerrada_por = nombre_usuario
                             p.fecha_cierre = datetime.now()
+                            # Marcar cuotas del periodo como PAGADAS
+                            _cuotas_pag = (
+                                db_up.query(CuotaPrestamo)
+                                .join(Prestamo)
+                                .filter(
+                                    Prestamo.empresa_id == empresa_id,
+                                    CuotaPrestamo.periodo_key == periodo_key,
+                                    CuotaPrestamo.estado == 'PENDIENTE',
+                                )
+                                .all()
+                            )
+                            for _cp in _cuotas_pag:
+                                _cp.estado = 'PAGADA'
                             db_up.commit()
                             db_up.close()
                             st.success(f"Planilla {periodo_key} cerrada por {nombre_usuario}.")
@@ -1975,12 +2029,14 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             vars_loc = vars_por_doc.get(dni, {})
             resultado = calcular_recibo_honorarios(
                 loc, vars_loc, dias_del_mes,
-                tasa_4ta=tasa_4ta, tope_4ta=tope_4ta
+                tasa_4ta=tasa_4ta, tope_4ta=tope_4ta,
+                anio_calc=anio_int, mes_calc=mes_int,
             )
             resultados_loc.append({
                 "DNI":                 dni,
                 "Locador":             loc.nombres,
                 "Honorario Base":      resultado['honorario_base'],
+                "Días Laborados":      resultado['dias_laborados'],
                 "Días no Prestados":   resultado['dias_no_prestados'],
                 "Descuento Días":      resultado['monto_descuento'],
                 "Otros Pagos":         resultado['otros_pagos'],
@@ -2121,3 +2177,54 @@ def render():
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                     )
+
+    # ── REPORTE DE TESORERÍA ──────────────────────────────────────────────────
+    # Se muestra fuera de los módulos de cálculo; requiere AMBAS planillas calculadas
+    # (o que no haya locadores activos).
+    df_plan_teso = st.session_state.get('res_planilla', pd.DataFrame())
+    df_loc_teso  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+    aud_teso     = st.session_state.get('auditoria_data', {})
+
+    if not df_plan_teso.empty:
+        try:
+            _db_teso = SessionLocal()
+            _n_loc_teso = _db_teso.query(Trabajador).filter_by(
+                empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR'
+            ).count()
+            _db_teso.close()
+        except Exception:
+            _n_loc_teso = 0
+
+        _loc_calc_teso = isinstance(df_loc_teso, pd.DataFrame) and not df_loc_teso.empty
+        _gate_teso = (_n_loc_teso == 0) or _loc_calc_teso
+
+        st.markdown("---")
+        st.markdown("### 🏦 Reporte de Tesorería")
+
+        if not _gate_teso:
+            st.warning(
+                "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
+                "Calcule primero los **Honorarios** en la pestaña "
+                "**'🧾 2. Honorarios (4ta Categoría)'** para generar el Reporte de Tesorería completo."
+            )
+        else:
+            empresa_ruc_t  = st.session_state.get('empresa_activa_ruc', '')
+            try:
+                buf_teso = generar_pdf_tesoreria(
+                    df_planilla=df_plan_teso,
+                    df_loc=df_loc_teso if _loc_calc_teso else None,
+                    empresa_nombre=empresa_nombre,
+                    periodo_key=periodo_key,
+                    auditoria_data=aud_teso,
+                    empresa_ruc=empresa_ruc_t,
+                )
+                st.download_button(
+                    "🏦 Descargar Reporte de Tesorería (PDF)",
+                    data=buf_teso,
+                    file_name=f"TESORERIA_{periodo_key}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                )
+            except Exception as _e_teso:
+                st.error(f"No se pudo generar el Reporte de Tesorería: {_e_teso}")
