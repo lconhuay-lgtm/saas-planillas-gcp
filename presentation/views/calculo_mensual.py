@@ -971,6 +971,10 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
 
         has_5ta   = "Ret. 5ta Cat."  in df_plan_data.columns and df_plan_data["Ret. 5ta Cat."].sum() > 0
         has_dscto = "Dsctos/Faltas"  in df_plan_data.columns and df_plan_data["Dsctos/Faltas"].sum() > 0
+        
+        # Verificar si hay datos bancarios en planilla
+        has_bank_p = df_plan_data["N° Cuenta"].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA).dropna().any() or \
+                     df_plan_data["CCI"].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA).dropna().any()
 
         headers_p = ["N°", "DNI", "Nombres y Apellidos"]
         for _, dsp in dynamic_income:
@@ -980,7 +984,9 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             headers_p.append("Ret. 5ta Cat.")
         if has_dscto:
             headers_p.append("Otros Dsctos")
-        headers_p += ["NETO A PAGAR", "Banco", "N° Cuenta", "CCI"]
+        headers_p += ["NETO A PAGAR", "Banco"]
+        if has_bank_p:
+            headers_p += ["N° Cuenta", "CCI"]
 
         col_w_map = {
             "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
@@ -1024,7 +1030,9 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
                 vd = float(row.get("Dsctos/Faltas", 0.0) or 0.0)
                 fila.append(f"{vd:,.2f}")
                 tot_p["Otros Dsctos"] = tot_p.get("Otros Dsctos", 0.0) + vd
-            fila += [f"{neto:,.2f}", str(row.get("Banco", "") or ""), str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
+            fila += [f"{neto:,.2f}", str(row.get("Banco", "") or "")]
+            if has_bank_p:
+                fila += [str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
             tot_p["NETO A PAGAR"] = tot_p.get("NETO A PAGAR", 0.0) + neto
             rows_p.append(fila)
 
@@ -1037,7 +1045,9 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             tot_fila.append(f"{tot_p.get('Ret. 5ta Cat.', 0.0):,.2f}")
         if has_dscto:
             tot_fila.append(f"{tot_p.get('Otros Dsctos', 0.0):,.2f}")
-        tot_fila += [f"{tot_p.get('NETO A PAGAR', 0.0):,.2f}", "", "", ""]
+        tot_fila += [f"{tot_p.get('NETO A PAGAR', 0.0):,.2f}", ""]
+        if has_bank_p:
+            tot_fila += ["", ""]
         rows_p.append(tot_fila)
 
         t1 = Table(rows_p, colWidths=col_w_p, repeatRows=1)
@@ -1072,11 +1082,17 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         anio_num = int(periodo_key[3:])
         dias_mes = _cal_teso.monthrange(anio_num, mes_num)[1]
         has_dias_lab = "Días Laborados" in df_loc.columns
+        
+        # Verificar si hay datos bancarios en locadores
+        has_bank_l = df_loc["N° Cuenta"].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA).dropna().any() or \
+                     df_loc["CCI"].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA).dropna().any()
 
         headers_l = ["N°", "DNI", "Nombres y Apellidos", "Honorario Base"]
         if has_dias_lab:
             headers_l.append("Días Laborados")
-        headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco", "N° Cuenta", "CCI"]
+        headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco"]
+        if has_bank_l:
+            headers_l += ["N° Cuenta", "CCI"]
 
         col_w_lmap = {
             "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
@@ -1109,8 +1125,10 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
                 fila.append(str(dias_lab))
             fila += [
                 f"{bruto:,.2f}", f"{ret:,.2f}", f"{dscto:,.2f}", f"{neto:,.2f}",
-                str(row.get("Banco", "") or ""), str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or ""),
+                str(row.get("Banco", "") or ""),
             ]
+            if has_bank_l:
+                fila += [str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
             rows_l.append(fila)
             tot_hon += hon_b; tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
 
@@ -1118,7 +1136,9 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         tot_l_fila = ["", "", Paragraph("TOTALES", tot_s), f"{tot_hon:,.2f}"]
         if has_dias_lab:
             tot_l_fila.append("")
-        tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", "", "", ""]
+        tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", ""]
+        if has_bank_l:
+            tot_l_fila += ["", ""]
         rows_l.append(tot_l_fila)
 
         t2 = Table(rows_l, colWidths=col_w_l, repeatRows=1)
