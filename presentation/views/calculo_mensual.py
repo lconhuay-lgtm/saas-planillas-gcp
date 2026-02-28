@@ -1551,7 +1551,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             f"Vaya al módulo **'Ingreso de Asistencias'** → pestaña **'🧾 2. Valorización de Locadores'** "
             f"y guarde antes de ejecutar el motor de planilla."
         )
-    elif st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
+    st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")
+    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
         st.session_state['ultima_planilla_calculada'] = True
         resultados = []
         auditoria_data = {}

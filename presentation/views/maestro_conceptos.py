@@ -291,6 +291,7 @@ def render():
                             tipo=tipo_val, codigo_sunat=cod_sel,
                             afecto_afp=afp_val, afecto_5ta=q_val, afecto_essalud=ess_val,
                             computable_cts=comp_cts, computable_grati=comp_grati,
+                            prorrateable_por_asistencia=comp_pror
                         ))
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (
