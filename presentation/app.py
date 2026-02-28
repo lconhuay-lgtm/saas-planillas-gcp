@@ -41,6 +41,8 @@ if not st.session_state.get('_tablas_verificadas'):
         Base.metadata.create_all(bind=engine)
         # Migraciones incrementales: añaden columnas nuevas sin borrar datos
         _migraciones = [
+            # Usuarios y Accesos
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acceso_total BOOLEAN DEFAULT false",
             # Seguro social (lote anterior)
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
             # Cierre de planilla (lote anterior)
