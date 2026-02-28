@@ -44,6 +44,7 @@ def render():
             .order_by(PlanillaMensual.fecha_calculo.desc())
             .all()
         )
+    except Exception as e:
         st.error(f"Error al conectar con la base de datos: {e}")
         return
 
