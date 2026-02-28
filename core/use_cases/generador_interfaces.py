@@ -203,18 +203,18 @@ def generar_excel_afpnet(
         trab = trab_map.get(dni, pd.Series(dtype=object))
         aud  = auditoria_data.get(dni, {})
 
-        # Apellidos y nombres separados
-        ap_pat  = str(trab.get("Apellido Paterno", trab.get("apellido_paterno", "")) or "").upper().strip()
-        ap_mat  = str(trab.get("Apellido Materno", trab.get("apellido_materno", "")) or "").upper().strip()
-        nombres = str(trab.get("Nombres y Apellidos", trab.get("nombres", "")) or "").upper().strip()
-
-        # Si los apellidos están vacíos, intentamos parsear el nombre completo
-        if not ap_pat and nombres:
-            partes = nombres.split()
-            if len(partes) >= 2:
-                ap_pat  = partes[0]
-                ap_mat  = partes[1] if len(partes) > 2 else ""
-                nombres = " ".join(partes[2:]) if len(partes) > 2 else partes[-1]
+        # Apellidos y nombres separados - Limpieza de duplicidad
+        ap_pat  = str(trab.get("Apellido Paterno", "") or "").upper().strip()
+        ap_mat  = str(trab.get("Apellido Materno", "") or "").upper().strip()
+        
+        # Extraemos solo el nombre de pila para evitar la duplicidad de apellidos en el campo nombres
+        nombres_full = str(trab.get("Nombres y Apellidos", trab.get("nombres", "")) or "").upper().strip()
+        prefix_apellidos = f"{ap_pat} {ap_mat}".strip()
+        
+        if ap_pat and nombres_full.startswith(prefix_apellidos):
+            nombres = nombres_full[len(prefix_apellidos):].strip()
+        else:
+            nombres = nombres_full
 
         cuspp = str(trab.get("CUSPP", "") or "").strip().ljust(12)[:12]
         if not cuspp.strip():
@@ -243,13 +243,21 @@ def generar_excel_afpnet(
             inicio_lab = "N"
 
         # Lógica de Excepción de Aportar (Columna K del CSV)
-        # L = Licencia sin goce, U = Subsidio, etc.
+        # Solo si el total de días de suspensión iguala a los días del mes
         excepcion = ""
         suspensiones = aud.get("suspensiones", {})
-        if "07" in suspensiones or "16" in suspensiones: # Faltas o Licencia s/Haber
-            excepcion = "L"
-        elif "21" in suspensiones: # Subsidios
-            excepcion = "U"
+        dias_mes_total = int(aud.get("dias_computables", 30))
+        
+        # Códigos que exoneran aportes si cubren el mes completo
+        codigos_exencion = ["06", "07", "16", "20", "21"]
+        total_dias_susp = sum(int(suspensiones.get(c, 0)) for c in codigos_exencion)
+
+        if total_dias_susp >= dias_mes_total:
+            # L = Licencia/Faltas/PTP, U = Subsidio
+            if "21" in suspensiones:
+                excepcion = "U"
+            else:
+                excepcion = "L"
 
         base_afp = float(aud.get("base_afp", 0.0))
 
@@ -280,7 +288,8 @@ def generar_excel_afpnet(
     df_out = pd.DataFrame(rows)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_out.to_excel(writer, index=False, sheet_name="AFPnet")
+        # header=False elimina la cabecera de la primera fila
+        df_out.to_excel(writer, index=False, header=False, sheet_name="AFPnet")
         ws = writer.sheets["AFPnet"]
         # Ajustar anchos
         for col in ws.columns:
