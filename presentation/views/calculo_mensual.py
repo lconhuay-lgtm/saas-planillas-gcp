@@ -1887,12 +1887,16 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         with c_teso1:
             if st.button("🏦 Generar Reporte de Tesorería (PDF)", type="primary", use_container_width=True, key="btn_teso_global"):
                 try:
+                    # Priorizar datos de la sesión actual para reflejar cambios no cerrados
+                    df_p_report = st.session_state.get('res_planilla', df_resultados)
+                    aud_report  = st.session_state.get('auditoria_data', auditoria_data)
+                    
                     buf_t = generar_pdf_tesoreria(
-                        df_planilla=df_resultados,
+                        df_planilla=df_p_report,
                         df_loc=df_loc_glob if not df_loc_glob.empty else None,
                         empresa_nombre=empresa_nombre,
                         periodo_key=periodo_key,
-                        auditoria_data=auditoria_data,
+                        auditoria_data=aud_report,
                         empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
                     )
                     st.download_button("⬇️ Descargar Reporte de Tesorería", data=buf_t, file_name=f"TESORERIA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)

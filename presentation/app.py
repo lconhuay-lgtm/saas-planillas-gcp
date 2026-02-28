@@ -69,6 +69,7 @@ if not st.session_state.get('_tablas_verificadas'):
             # Forzar actualización de campos críticos en todas las empresas
             "ALTER TABLE trabajadores ALTER COLUMN tipo_contrato SET DEFAULT 'PLANILLA'",
             "UPDATE trabajadores SET tipo_contrato = 'PLANILLA' WHERE tipo_contrato IS NULL",
+            "ALTER TABLE variables_mes ADD COLUMN IF NOT EXISTS notas_gestion TEXT DEFAULT ''",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
