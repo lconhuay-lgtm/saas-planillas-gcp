@@ -1928,6 +1928,45 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
 
+        # ── SECCIÓN GLOBAL DE TESORERÍA (UBICACIÓN SOLICITADA) ──────────────────
+        df_p_glob = st.session_state.get('res_planilla', df_resultados)
+        df_l_glob = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+        aud_glob  = st.session_state.get('auditoria_data', auditoria_data)
+
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
+        
+        try:
+            _db_chk = SessionLocal()
+            _n_loc_v = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+            _db_chk.close()
+        except: _n_loc_v = 0
+
+        if _n_loc_v > 0 and df_l_glob.empty:
+            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un Reporte de Tesorería integral.")
+        elif df_p_glob.empty:
+            st.warning("⚠️ Planilla de empleados no calculada. El reporte solo incluirá locadores.")
+
+        try:
+            buf_teso_f = generar_pdf_tesoreria(
+                df_planilla=df_p_glob if not df_p_glob.empty else None,
+                df_loc=df_l_glob if not df_l_glob.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=periodo_key,
+                auditoria_data=aud_glob,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+            )
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF)",
+                data=buf_teso_f,
+                file_name=f"TESORERIA_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="btn_teso_global_v2"
+            )
+        except Exception as e_teso:
+            st.error(f"Error al consolidar tesorería: {e_teso}")
 
         st.markdown("---")
         with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
@@ -2287,46 +2326,6 @@ def render():
     with tab_hon:
         _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key)
 
-    # ── SECCIÓN GLOBAL DE TESORERÍA (INDEPENDIENTE Y SIEMPRE VISIBLE TRAS CÁLCULO) ──
-    df_p_glob = st.session_state.get('res_planilla', pd.DataFrame())
-    df_l_glob = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-    aud_glob  = st.session_state.get('auditoria_data', {})
-
-    if not df_p_glob.empty or not df_l_glob.empty:
-        st.markdown("---")
-        st.subheader("🏦 Gestión de Tesorería")
-        
-        try:
-            _db_chk = SessionLocal()
-            _n_loc_v = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-            _db_chk.close()
-        except: _n_loc_v = 0
-
-        if _n_loc_v > 0 and df_l_glob.empty:
-            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un Reporte de Tesorería integral.")
-        elif df_p_glob.empty:
-            st.warning("⚠️ Planilla de empleados no calculada. El reporte solo incluirá locadores.")
-
-        try:
-            buf_teso_f = generar_pdf_tesoreria(
-                df_planilla=df_p_glob if not df_p_glob.empty else None,
-                df_loc=df_l_glob if not df_l_glob.empty else None,
-                empresa_nombre=empresa_nombre,
-                periodo_key=periodo_key,
-                auditoria_data=aud_glob,
-                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-            )
-            st.download_button(
-                "🏦 Descargar Reporte de Tesorería (PDF)",
-                data=buf_teso_f,
-                file_name=f"TESORERIA_{periodo_key}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary",
-                key="btn_teso_global_v2"
-            )
-        except Exception as e_teso:
-            st.error(f"Error al consolidar tesorería: {e_teso}")
 
     # ── SECCIÓN GLOBAL DE REPORTES Y TESORERÍA ───────────────────────────────
     st.markdown("---")
