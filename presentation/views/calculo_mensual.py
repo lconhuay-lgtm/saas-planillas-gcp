@@ -1877,55 +1877,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         # Mostramos la tabla en pantalla
         st.dataframe(df_resultados.iloc[:-1], use_container_width=True, hide_index=True)
 
-        if trabajador_sel:
-            dni_sel = trabajador_sel.split(" - ")[0]
-            data = auditoria_data[dni_sel]
-            q = data['quinta']
-
-            t1, t2 = st.tabs(["💰 Boleta Mensual", "🏛️ Certificado de 5ta Categoría"])
-
-            with t1:
-                c1, c2 = st.columns(2)
-                with c1:
-                    for k, v in data['ingresos'].items(): st.markdown(f"- **{k}:** S/ {v:,.2f}")
-                    st.success(f"**Total Ingresos: S/ {data['totales']['ingreso']:,.2f}**")
-                with c2:
-                    for k, v in data['descuentos'].items(): st.markdown(f"- **{k}:** S/ {v:,.2f}")
-                    st.error(f"**Total Descuentos: S/ {data['totales']['descuento']:,.2f}**")
-
-            with t2:
-                if q['neta_anual'] <= 0:
-                    st.success("Este trabajador **NO supera las 7 UIT** anuales. Retención: S/ 0.00.")
-                else:
-                    st.markdown("##### Paso a Paso - Proyección Oficial SUNAT")
-                    st.markdown(f"**1. Remuneraciones Previas Históricas:** S/ {int(q['rem_previa']):,}")
-                    st.markdown(f"**2. Remuneración Base del Mes:** S/ {q['base_mes']:,.2f}")
-                    st.markdown(f"**3. Proyección Sueldos Restantes ({q['meses_restantes']} meses):** S/ {q['proy_sueldo']:,.2f}")
-                    st.markdown(f"**4. Proyección Gratificaciones + Bono 9%:** S/ {q['proy_grati']:,.2f}")
-                    st.markdown(f"**5. Renta Bruta Anual:** S/ {int(q['bruta_anual']):,}")
-                    st.markdown(f"**6. Deducción de Ley (7 UIT):** - S/ {int(q['uit_7']):,}")
-                    st.markdown(f"**7. Renta Neta Imponible:** S/ {int(q['neta_anual']):,}")
-                    
-                    st.markdown("---")
-                    st.markdown("**Aplicación de Tramos (Escalas):**")
-                    for t in q['detalle_tramos']:
-                        st.write(f"- Tramo {t['rango']} al {t['tasa']}: **S/ {int(t['impuesto']):,}**")
-                    
-                    st.markdown("---")
-                    st.markdown(f"**Impuesto Anual Calculado:** S/ {int(q['imp_anual']):,}")
-                    st.markdown(f"**Retenciones Previas Efectuadas:** - S/ {int(q['ret_previa']):,}")
-                    st.markdown(f"**Factor de División:** Entre {q['divisor']}")
-                    st.error(f"**RETENCIÓN EXACTA A EFECTUAR (Entero):** S/ {int(q['retencion']):,}")
-
-                    pdf_5ta = generar_pdf_quinta(q, empresa_nombre, periodo_key, data['nombres'])
-                    st.download_button(
-                        label="📄 Descargar Certificado de 5ta Categoría (PDF)",
-                        data=pdf_5ta,
-                        file_name=f"QUINTA_CAT_{dni_sel}_{periodo_key}.pdf",
-                        mime="application/pdf",
-                        type="primary"
-                    )
-
         # ── CIERRE DE PLANILLA ────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("### 🔒 Cierre de Planilla")
