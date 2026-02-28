@@ -729,7 +729,8 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
 
     # ── SECCIÓN 1: PLANILLA ───────────────────────────────────────────────────
     elements.append(Paragraph("▶  1. PLANILLA DE REMUNERACIONES (5ta Categoría)", st_sec))
-    cols_plan = [c for c in df_planilla.columns if c not in _COLS_OCULTAS_SABANA]
+    _BANCO_COLS_COMB = _COLS_OCULTAS_SABANA | {"Banco", "N° Cuenta", "CCI", "Observaciones"}
+    cols_plan = [c for c in df_planilla.columns if c not in _BANCO_COLS_COMB]
     df_p = df_planilla[cols_plan]
     col_widths_plan = {
         "N°": 18, "DNI": 52, "Apellidos y Nombres": 105,
@@ -1165,6 +1166,8 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
     Genera un PDF corporativo para el Reporte Personalizado con cualquier combinación
     de columnas seleccionadas por el usuario.
     Paleta corporativa C_NAVY / C_STEEL / C_GOLD. Landscape Legal.
+    Encabezado corporativo repetido en canvas (topMargin=95).
+    Si "Observaciones" está en las columnas, se imprime como sección al final (no en la tabla).
     """
     periodo_texto = _periodo_legible_calc(periodo_key)
     W_PAGE = 1008 - 24  # 984 pt disponibles en landscape legal con márgenes 12
@@ -1172,7 +1175,7 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(legal),
-        rightMargin=12, leftMargin=12, topMargin=15, bottomMargin=15
+        rightMargin=12, leftMargin=12, topMargin=95, bottomMargin=15
     )
     elements = []
 
@@ -1181,31 +1184,72 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
     C_GOLD  = colors.HexColor("#C9A84C")
     C_LIGHT = colors.HexColor("#F0F4F9")
 
-    st_title = ParagraphStyle('RPT',  fontName="Helvetica-Bold", fontSize=14, textColor=C_NAVY,  spaceAfter=4)
-    st_sub   = ParagraphStyle('RPS',  fontName="Helvetica",      fontSize=9,  textColor=colors.HexColor("#64748B"), spaceAfter=2)
-    st_sec   = ParagraphStyle('RPSC', fontName="Helvetica-Bold", fontSize=9,  textColor=C_STEEL, spaceBefore=4, spaceAfter=4)
+    st_sec   = ParagraphStyle('RPSC', fontName="Helvetica-Bold", fontSize=9,  textColor=C_STEEL, spaceBefore=8, spaceAfter=4)
     hdr_s    = ParagraphStyle('RPH',  fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,
                                alignment=TA_CENTER, wordWrap='CJK', leading=8)
     nom_s    = ParagraphStyle('RPN',  fontName="Helvetica",      fontSize=6.5, textColor=colors.black,
                                wordWrap='CJK', leading=8)
     tot_s    = ParagraphStyle('RPTOT',fontName="Helvetica-Bold", fontSize=6.5, textColor=colors.white,
                                alignment=TA_CENTER)
+    st_obs   = ParagraphStyle('OBS',  fontName="Helvetica",      fontSize=7.5, textColor=C_NAVY,
+                               leading=11, leftIndent=10, spaceAfter=2)
 
-    # Encabezado corporativo
-    elements.append(Paragraph(empresa_nombre.upper(), st_title))
-    if empresa_ruc:
-        elements.append(Paragraph(f"RUC: {empresa_ruc}", st_sub))
-    elements.append(Paragraph(f"{titulo}  |  Periodo: {periodo_texto}", st_sec))
-    elements.append(Paragraph(f"Emitido el {datetime.now().strftime('%d/%m/%Y %H:%M')}", st_sub))
-    elements.append(Spacer(1, 6))
+    _fecha_emision = datetime.now().strftime('%d/%m/%Y %H:%M')
+
+    def draw_header(canvas_obj, doc_obj):
+        """Membrete fijo en canvas — se repite en cada página."""
+        canvas_obj.saveState()
+        page_w, page_h = landscape(legal)
+        x0, x1 = 12, page_w - 12
+        offset_ruc = 14 if empresa_ruc else 0
+
+        # Empresa nombre
+        canvas_obj.setFont("Helvetica-Bold", 13)
+        canvas_obj.setFillColor(C_NAVY)
+        canvas_obj.drawString(x0, page_h - 22, empresa_nombre.upper())
+
+        # Página (derecha)
+        canvas_obj.setFont("Helvetica", 7)
+        canvas_obj.setFillColor(colors.HexColor("#64748B"))
+        canvas_obj.drawRightString(x1, page_h - 22, f"Pág. {doc_obj.page}")
+
+        # RUC
+        if empresa_ruc:
+            canvas_obj.setFont("Helvetica", 9)
+            canvas_obj.setFillColor(colors.HexColor("#64748B"))
+            canvas_obj.drawString(x0, page_h - 36, f"RUC: {empresa_ruc}")
+
+        # Título del reporte
+        canvas_obj.setFont("Helvetica-Bold", 9)
+        canvas_obj.setFillColor(C_STEEL)
+        canvas_obj.drawString(x0, page_h - 36 - offset_ruc,
+                              f"{titulo.upper()}  |  Periodo: {periodo_texto}")
+
+        # Fecha de emisión
+        canvas_obj.setFont("Helvetica", 8)
+        canvas_obj.setFillColor(colors.HexColor("#64748B"))
+        canvas_obj.drawString(x0, page_h - 50 - offset_ruc, f"Emitido el {_fecha_emision}")
+
+        # Líneas separadoras corporativas
+        canvas_obj.setStrokeColor(C_NAVY)
+        canvas_obj.setLineWidth(1.2)
+        canvas_obj.line(x0, page_h - 63 - offset_ruc, x1, page_h - 63 - offset_ruc)
+        canvas_obj.setStrokeColor(C_GOLD)
+        canvas_obj.setLineWidth(0.5)
+        canvas_obj.line(x0, page_h - 67 - offset_ruc, x1, page_h - 67 - offset_ruc)
+
+        canvas_obj.restoreState()
 
     if df is None or df.empty:
-        elements.append(Paragraph("(Sin datos disponibles para el reporte)", st_sub))
-        doc.build(elements)
+        doc.build(elements, onFirstPage=draw_header, onLaterPages=draw_header)
         buffer.seek(0)
         return buffer
 
     cols = list(df.columns)
+
+    # "Observaciones" se excluye de la tabla y se renderiza al final como sección
+    tiene_obs = "Observaciones" in cols
+    cols_tabla = [c for c in cols if c != "Observaciones"]
 
     # Anchos base por columna (se escalan proporcionalmente a W_PAGE)
     _DEFAULT_W = {
@@ -1222,9 +1266,12 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
         "Otros Descuentos": 56,
         "Banco": 55, "N° Cuenta": 72, "CCI": 82,
     }
-    col_w = [_DEFAULT_W.get(c, 58) for c in cols]
+    col_w = [_DEFAULT_W.get(c, 58) for c in cols_tabla]
     total_w = sum(col_w)
     col_w = [w * W_PAGE / total_w for w in col_w]
+
+    # Columnas bancarias — se renderizan con Paragraph para word-wrap
+    _BANCO_COLS = {"Banco", "N° Cuenta", "CCI"}
 
     # Columnas de texto (no se suman en la fila de totales)
     _TEXTO = {
@@ -1234,19 +1281,19 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
     }
     # Índice de la columna principal de nombres (para word-wrap y alineación izquierda)
     nom_idx = next(
-        (i for i, c in enumerate(cols) if c in {"Apellidos y Nombres", "Locador", "Nombres y Apellidos"}),
+        (i for i, c in enumerate(cols_tabla) if c in {"Apellidos y Nombres", "Locador", "Nombres y Apellidos"}),
         -1
     )
 
     # ── Construir filas de la tabla ──────────────────────────────────────────────
-    rows_pdf = [[Paragraph(c, hdr_s) for c in cols]]
+    rows_pdf = [[Paragraph(c, hdr_s) for c in cols_tabla]]
 
     for _, row in df.iterrows():
         fila = []
-        for j, c in enumerate(cols):
+        for j, c in enumerate(cols_tabla):
             val = row.get(c, "")
             val_str = str(val) if str(val) not in ("nan", "None", "NaN") else ""
-            if j == nom_idx:
+            if j == nom_idx or c in _BANCO_COLS:
                 fila.append(Paragraph(val_str, nom_s))
             elif isinstance(val, float) and str(val) not in ("nan", "NaN"):
                 fila.append(f"{val:,.2f}")
@@ -1256,7 +1303,7 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
 
     # ── Fila de totales ──────────────────────────────────────────────────────────
     tot_row = []
-    for j, c in enumerate(cols):
+    for j, c in enumerate(cols_tabla):
         if c in _TEXTO:
             # "TOTALES" va en la columna de nombres; las demás texto quedan vacías
             tot_row.append(Paragraph("TOTALES", tot_s) if j == nom_idx else "")
@@ -1267,8 +1314,8 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
             except Exception:
                 tot_row.append("")
     # Si no hay columna de nombres, poner TOTALES en índice 2 (o 0 si hay menos columnas)
-    if nom_idx < 0 and len(cols) > 0:
-        tot_row[min(2, len(cols) - 1)] = Paragraph("TOTALES", tot_s)
+    if nom_idx < 0 and len(cols_tabla) > 0:
+        tot_row[min(2, len(cols_tabla) - 1)] = Paragraph("TOTALES", tot_s)
     rows_pdf.append(tot_row)
 
     # ── Estilos de la tabla ──────────────────────────────────────────────────────
@@ -1291,12 +1338,33 @@ def generar_pdf_personalizado(df, empresa_nombre, periodo_key, titulo, empresa_r
     ]
     if nom_idx >= 0:
         style_cmds.append(('ALIGN', (nom_idx, 1), (nom_idx, -2), 'LEFT'))
+    for j, c in enumerate(cols_tabla):
+        if c in _BANCO_COLS:
+            style_cmds.append(('ALIGN', (j, 1), (j, -2), 'LEFT'))
 
     t = Table(rows_pdf, colWidths=col_w, repeatRows=1)
     t.setStyle(TableStyle(style_cmds))
     elements.append(t)
 
-    doc.build(elements)
+    # ── SECCIÓN: OBSERVACIONES DEL PERIODO ──────────────────────────────────────
+    if tiene_obs and 'Observaciones' in df.columns:
+        _nom_col = next((c for c in ["Apellidos y Nombres", "Locador", "Nombres y Apellidos"] if c in df.columns), None)
+        _dni_col = "DNI" if "DNI" in df.columns else None
+        obs_all = []
+        for _, row_o in df.iterrows():
+            obs_str = str(row_o.get('Observaciones', '') or '').strip()
+            if obs_str:
+                nombre_o = str(row_o.get(_nom_col, '')) if _nom_col else ''
+                dni_o    = str(row_o.get(_dni_col, '')) if _dni_col else ''
+                label    = f"{nombre_o} ({dni_o})" if dni_o else nombre_o
+                obs_all.append(f"{label}: {obs_str}")
+        if obs_all:
+            elements.append(Spacer(1, 14))
+            elements.append(Paragraph("▶  OBSERVACIONES DEL PERIODO", st_sec))
+            for obs_line in obs_all:
+                elements.append(Paragraph(f"• {obs_line}", st_obs))
+
+    doc.build(elements, onFirstPage=draw_header, onLaterPages=draw_header)
     buffer.seek(0)
     return buffer
 
@@ -1623,10 +1691,14 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             hist_q = historico_quinta.get(str(dni_trabajador), {})
             rem_previa_historica = hist_q.get('rem_previa', 0.0)
             retencion_previa_historica = hist_q.get('ret_previa', 0.0)
+            # Proyección usa sueldo nominal completo: las ausencias son excepcionales
+            base_quinta_proyeccion = base_quinta_mes
+            if total_ausencias > 0 or ingreso_este_mes:
+                base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable), 2)
             proyeccion_gratis = 0.0
-            if mes_idx <= 6: proyeccion_gratis = base_quinta_mes * 2 * 1.09 
-            elif mes_idx <= 11: proyeccion_gratis = base_quinta_mes * 1 * 1.09 
-            proyeccion_sueldos_restantes = base_quinta_mes * meses_restantes
+            if mes_idx <= 6: proyeccion_gratis = base_quinta_proyeccion * 2 * 1.09
+            elif mes_idx <= 11: proyeccion_gratis = base_quinta_proyeccion * 1 * 1.09
+            proyeccion_sueldos_restantes = base_quinta_proyeccion * meses_restantes
             
             renta_bruta_anual = int(round(rem_previa_historica + base_quinta_mes + proyeccion_sueldos_restantes + proyeccion_gratis))
             renta_neta_anual = int(round(renta_bruta_anual - (7 * uit)))
@@ -1712,6 +1784,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "dias": dias_laborados,               # días efectivamente laborados
                 "dias_computables": dias_computables,  # base de proporcionalidad
                 "observaciones": " | ".join(obs_trab),
+                "rem_diaria": round(sueldo_base_nominal / 30.0, 2),
                 "horas_ordinarias": horas_ordinarias,  # para .JOR de PLAME
                 "suspensiones": susp_dict,             # para .SNL de PLAME
                 "base_afp": round(base_afp_onp, 2),   # para AFPnet
