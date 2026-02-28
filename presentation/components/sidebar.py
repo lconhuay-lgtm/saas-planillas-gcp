@@ -41,7 +41,7 @@ def render_sidebar():
         # Si no hay empresa activa, mostramos Selector y Gestión de Usuarios si aplica
         if not empresa_id:
             opciones_inicio = ["Selector de Empresa"]
-            if usuario_rol in ['admin', 'supervisor']:
+            if usuario_rol == 'admin':
                 opciones_inicio.append("Gestión de Usuarios")
             
             st.warning("⚠️ Seleccione una empresa para habilitar los módulos operativos.")
@@ -76,8 +76,8 @@ def render_sidebar():
             "Reportería",
         ]
 
-        # Solo admin y supervisor pueden gestionar usuarios
-        if usuario_rol in ['admin', 'supervisor']:
+        # Solo el rol 'admin' puede gestionar usuarios y permisos
+        if usuario_rol == 'admin':
             opciones.append("Gestión de Usuarios")
 
         menu = st.radio(

@@ -7,8 +7,8 @@ def _hash(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def render():
-    if st.session_state.get('usuario_rol') != 'admin' and not st.session_state.get('usuario_rol') == 'supervisor':
-        st.error("🚫 Acceso restringido. Solo administradores pueden gestionar usuarios.")
+    if st.session_state.get('usuario_rol') != 'admin':
+        st.error("🚫 Acceso restringido. Solo el Administrador del Sistema puede gestionar usuarios y permisos.")
         return
 
     st.title("👥 Gestión de Usuarios y Permisos")
