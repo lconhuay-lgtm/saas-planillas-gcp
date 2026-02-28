@@ -778,8 +778,8 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
     if df_loc is not None and not df_loc.empty:
         elements.append(Spacer(1, 10))
         elements.append(Paragraph("▶  2. VALORIZACIÓN DE LOCADORES DE SERVICIO (4ta Categoría)", st_sec))
-        # Excluir columnas bancarias — solo pertenecen al Reporte de Tesorería
-        _BANCO_COMB = {"Banco", "N° Cuenta", "CCI"}
+        # Excluir columnas bancarias y observaciones del reporte combinado
+        _BANCO_COMB = {"Banco", "N° Cuenta", "CCI", "Observaciones"}
         cols_loc = [c for c in df_loc.columns if c not in _BANCO_COMB]
         col_widths_loc = {
             "DNI": 52, "Locador": 120,
@@ -1860,7 +1860,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 st.session_state['res_planilla'] = df_rec
                 st.session_state['auditoria_data'] = aud_rec
                 st.session_state['ultima_planilla_calculada'] = True
-                st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
+                if not es_cerrada:
+                    st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
         except Exception:
             pass
 
@@ -1869,109 +1870,12 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         df_resultados = st.session_state['res_planilla']
         auditoria_data = st.session_state.get('auditoria_data', {})
 
-        st.success("✅ Planilla generada con éxito.")
+        if not es_cerrada:
+            st.success("✅ Planilla generada con éxito.")
 
-        # ── SECCIÓN GLOBAL DE TESORERÍA (REUBICADA AL INICIO) ──────────────────
-        df_loc_glob = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-        try:
-            _db_glob = SessionLocal()
-            _n_loc_glob = _db_glob.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-            _db_glob.close()
-        except: _n_loc_glob = 0
-
-
-        st.markdown("---")
         st.markdown("### 📊 Matriz de Nómina")
-        # Mostramos la tabla en pantalla (Ocultando el DNI visualmente solo aquí si lo deseas, o dejándolo)
+        # Mostramos la tabla en pantalla
         st.dataframe(df_resultados.iloc[:-1], use_container_width=True, hide_index=True)
-
-        st.markdown("---")
-        st.markdown("#### 📥 Exportación Corporativa")
-
-        # ── Gate de descarga: si hay locadores activos, ambos cálculos deben estar listos ──
-        try:
-            _db_gate = SessionLocal()
-            _n_loc_activos = _db_gate.query(Trabajador).filter_by(
-                empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR'
-            ).count()
-            _db_gate.close()
-        except Exception:
-            _n_loc_activos = 0
-
-        df_loc_teso = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-        _honorarios_calculados = isinstance(df_loc_teso, pd.DataFrame) and not df_loc_teso.empty
-        _puede_descargar = (_n_loc_activos == 0) or _honorarios_calculados
-
-        if not _puede_descargar:
-            st.warning(
-                "⚠️ Esta empresa tiene **Locadores de Servicio activos**. "
-                "Para garantizar reportes completos y sin información faltante, "
-                "primero calcule los **Honorarios de Locadores** en la pestaña "
-                "**'🧾 2. Honorarios (4ta Categoría)'** y luego regrese aquí."
-            )
-            if st.button("👉 Continuar de todas formas (solo planilla)", key="btn_forzar_descarga"):
-                _puede_descargar = True
-
-        if _puede_descargar:
-            empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
-            empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
-
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                try:
-                    excel_file = generar_excel_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
-                    st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                except Exception:
-                    csv = df_resultados.to_csv(index=False).encode('utf-8')
-                    st.download_button("📊 Descargar Sábana (CSV)", data=csv, file_name=f"PLANILLA_{periodo_key}.csv", mime="text/csv", use_container_width=True)
-            with col_btn2:
-                pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
-                st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
-
-        # ── SECCIÓN GLOBAL DE TESORERÍA (UBICACIÓN SOLICITADA) ──────────────────
-        df_p_glob = st.session_state.get('res_planilla', df_resultados)
-        df_l_glob = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-        aud_glob  = st.session_state.get('auditoria_data', auditoria_data)
-
-        st.markdown("---")
-        st.subheader("🏦 Gestión de Tesorería")
-        
-        try:
-            _db_chk = SessionLocal()
-            _n_loc_v = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-            _db_chk.close()
-        except: _n_loc_v = 0
-
-        if _n_loc_v > 0 and df_l_glob.empty:
-            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un Reporte de Tesorería integral.")
-        elif df_p_glob.empty:
-            st.warning("⚠️ Planilla de empleados no calculada. El reporte solo incluirá locadores.")
-
-        try:
-            buf_teso_f = generar_pdf_tesoreria(
-                df_planilla=df_p_glob if not df_p_glob.empty else None,
-                df_loc=df_l_glob if not df_l_glob.empty else None,
-                empresa_nombre=empresa_nombre,
-                periodo_key=periodo_key,
-                auditoria_data=aud_glob,
-                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-            )
-            st.download_button(
-                "🏦 Descargar Reporte de Tesorería (PDF)",
-                data=buf_teso_f,
-                file_name=f"TESORERIA_{periodo_key}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary",
-                key="btn_teso_global_v2"
-            )
-        except Exception as e_teso:
-            st.error(f"Error al consolidar tesorería: {e_teso}")
-
-        st.markdown("---")
-        with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
-            opciones_trab = [f"{dni} - {info['nombres']}" for dni, info in auditoria_data.items()]
-            trabajador_sel = st.selectbox("Seleccione un trabajador para ver su detalle legal:", opciones_trab, label_visibility="collapsed")
 
         if trabajador_sel:
             dni_sel = trabajador_sel.split(" - ")[0]
@@ -2327,10 +2231,7 @@ def render():
         _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key)
 
 
-    # ── SECCIÓN GLOBAL DE REPORTES Y TESORERÍA ───────────────────────────────
-    st.markdown("---")
-    
-    # Datos para reportes globales
+    # ── SECCIÓN GLOBAL DE EXPORTACIÓN Y TESORERÍA ───────────────────────────────
     df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
     df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
     aud_glob     = st.session_state.get('auditoria_data', {})
@@ -2341,9 +2242,78 @@ def render():
         _db_glob.close()
     except: _n_loc_glob = 0
 
-    _plan_listo = not df_plan_glob.empty
-    _loc_listo  = not df_loc_glob.empty or _n_loc_glob == 0
+    if not df_plan_glob.empty or not df_loc_glob.empty:
+        st.markdown("---")
+        st.markdown("#### 📥 Exportación Corporativa")
+        
+        empresa_ruc_s = st.session_state.get('empresa_activa_ruc', '')
+        empresa_reg_s = st.session_state.get('empresa_activa_regimen', '')
+        
+        col_btn1, col_btn2 = st.columns(2)
+        if not df_plan_glob.empty:
+            with col_btn1:
+                try:
+                    excel_file = generar_excel_sabana(df_plan_glob, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s)
+                    st.download_button("📊 Descargar Sábana (.xlsx)", data=excel_file, file_name=f"PLANILLA_{periodo_key}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                except Exception: pass
+            with col_btn2:
+                try:
+                    pdf_buffer = generar_pdf_sabana(df_plan_glob, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
+                    st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception: pass
 
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
+        
+        if _n_loc_glob > 0 and df_loc_glob.empty:
+            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
+        
+        try:
+            buf_teso_f = generar_pdf_tesoreria(
+                df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=periodo_key,
+                auditoria_data=aud_glob,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+            )
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF)",
+                data=buf_teso_f,
+                file_name=f"TESORERIA_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="btn_teso_global_v_final"
+            )
+        except Exception: pass
+
+        st.markdown("---")
+        with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
+            if not aud_glob:
+                st.info("No hay datos de auditoría calculados.")
+            else:
+                opciones_trab = [f"{dni} - {info['nombres']}" for dni, info in aud_glob.items()]
+                trabajador_sel = st.selectbox("Seleccione un trabajador para ver su detalle legal:", opciones_trab, label_visibility="collapsed")
+                
+                if trabajador_sel:
+                    dni_sel = trabajador_sel.split(" - ")[0]
+                    data = aud_glob[dni_sel]
+                    q = data['quinta']
+                    t_audit1, t_audit2 = st.tabs(["💰 Boleta Mensual", "🏛️ Certificado de 5ta Categoría"])
+                    with t_audit1:
+                        c_a1, c_a2 = st.columns(2)
+                        with c_a1:
+                            for k, v in data['ingresos'].items(): st.markdown(f"- **{k}:** S/ {v:,.2f}")
+                            st.success(f"**Total Ingresos: S/ {data['totales']['ingreso']:,.2f}**")
+                        with c_a2:
+                            for k, v in data['descuentos'].items(): st.markdown(f"- **{k}:** S/ {v:,.2f}")
+                            st.error(f"**Total Descuentos: S/ {data['totales']['descuento']:,.2f}**")
+                    with t_audit2:
+                        if q['neta_anual'] <= 0: st.success("Este trabajador NO supera las 7 UIT anuales.")
+                        else:
+                            pdf_5ta = generar_pdf_quinta(q, empresa_nombre, periodo_key, data['nombres'])
+                            st.download_button("📄 Descargar Certificado de 5ta Categoría (PDF)", data=pdf_5ta, file_name=f"QUINTA_{dni_sel}_{periodo_key}.pdf", mime="application/pdf")
 
     # ── REPORTE COMBINADO (Planilla + Locadores) ───────────────────────────────
     df_plan_comb = st.session_state.get('res_planilla', pd.DataFrame())
@@ -2400,7 +2370,9 @@ def render():
                     with pd.ExcelWriter(buf_comb_xl, engine='openpyxl') as writer:
                         df_plan_comb.to_excel(writer, sheet_name=f'Planilla_{periodo_key[:2]}', index=False)
                         if not df_loc_comb.empty:
-                            df_loc_comb.to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False)
+                            # Excluir observaciones y datos bancarios de la hoja de locadores en Excel combinado
+                            cols_xl_loc = [c for c in df_loc_comb.columns if c not in ["Observaciones", "Banco", "N° Cuenta", "CCI"]]
+                            df_loc_comb[cols_xl_loc].to_excel(writer, sheet_name=f'Honorarios_{periodo_key[:2]}', index=False)
                     buf_comb_xl.seek(0)
                     st.download_button(
                         "📊 Descargar Reporte Combinado (.xlsx)",
