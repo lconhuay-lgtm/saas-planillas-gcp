@@ -72,6 +72,10 @@ def render_sidebar():
             "Reportería",
         ]
 
+        # Solo admin y supervisor pueden gestionar usuarios
+        if usuario_rol in ['admin', 'supervisor']:
+            opciones.append("Gestión de Usuarios")
+
         menu = st.radio(
             "Navegación",
             opciones,
