@@ -51,19 +51,46 @@ def render():
 
         with tab_lista:
             users = db.query(Usuario).all()
+            todas_empresas = db.query(Empresa).all()
+            emp_options = {e.razon_social: e.id for e in todas_empresas}
+
             for u in users:
                 with st.container(border=True):
-                    col1, col2 = st.columns([3, 1])
-                    col1.markdown(f"**{u.nombre_completo or u.username}** ({u.rol})")
-                    if u.acceso_total:
-                        col1.caption("✅ Acceso Global")
-                    else:
-                        nombres_emp = [e.razon_social for e in u.empresas_asignadas]
-                        col1.caption(f"Empresas: {', '.join(nombres_emp) if nombres_emp else 'Ninguna'}")
+                    col_info, col_btn = st.columns([3, 1])
+                    col_info.markdown(f"**{u.nombre_completo or u.username}** (`{u.username}`)")
                     
-                    if col2.button("🗑️", key=f"del_u_{u.id}"):
-                        db.delete(u)
-                        db.commit()
-                        st.rerun()
+                    # Formulario de edición por cada usuario
+                    with st.expander(f"⚙️ Editar Permisos: {u.username}"):
+                        edit_rol = st.selectbox("Rol", ["analista", "supervisor", "admin"], 
+                                               index=["analista", "supervisor", "admin"].index(u.rol),
+                                               key=f"edit_rol_{u.id}")
+                        edit_total = st.checkbox("Acceso Total", value=u.acceso_total, key=f"edit_tot_{u.id}")
+                        
+                        asignadas_nombres = [e.razon_social for e in u.empresas_asignadas]
+                        edit_emp = st.multiselect("Empresas Asignadas", list(emp_options.keys()),
+                                                 default=asignadas_nombres if not edit_total else [],
+                                                 disabled=edit_total,
+                                                 key=f"edit_emp_{u.id}")
+                        
+                        if st.button("Actualizar Usuario", key=f"btn_upd_{u.id}"):
+                            u.rol = edit_rol
+                            u.acceso_total = edit_total
+                            # Limpiar y reasignar empresas
+                            u.empresas_asignadas = []
+                            if not edit_total:
+                                for emp_nom in edit_emp:
+                                    emp_obj = db.query(Empresa).get(emp_options[emp_nom])
+                                    u.empresas_asignadas.append(emp_obj)
+                            db.commit()
+                            st.success(f"Usuario {u.username} actualizado.")
+                            st.rerun()
+
+                    if col_btn.button("🗑️ Eliminar", key=f"del_u_{u.id}", use_container_width=True):
+                        if u.username == st.session_state.get('usuario_logueado'):
+                            st.error("No puedes eliminarte a ti mismo.")
+                        else:
+                            db.delete(u)
+                            db.commit()
+                            st.rerun()
     finally:
         db.close()

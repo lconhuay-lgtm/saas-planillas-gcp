@@ -38,12 +38,16 @@ def render_sidebar():
         empresa_id     = st.session_state.get('empresa_activa_id')
         empresa_nombre = st.session_state.get('empresa_activa_nombre')
 
-        # Si no hay empresa activa, solo mostramos el Selector
+        # Si no hay empresa activa, mostramos Selector y Gestión de Usuarios si aplica
         if not empresa_id:
-            st.warning("⚠️ Seleccione una empresa para habilitar los módulos.")
+            opciones_inicio = ["Selector de Empresa"]
+            if usuario_rol in ['admin', 'supervisor']:
+                opciones_inicio.append("Gestión de Usuarios")
+            
+            st.warning("⚠️ Seleccione una empresa para habilitar los módulos operativos.")
             menu = st.radio(
                 "Navegación",
-                ["Selector de Empresa"],
+                opciones_inicio,
                 label_visibility="collapsed"
             )
             return menu
