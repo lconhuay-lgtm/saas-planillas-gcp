@@ -6,10 +6,69 @@ Las cuotas se aplican automáticamente en el motor de cálculo de planilla.
 """
 
 import streamlit as st
+import pandas as pd
+import io
 from datetime import date, datetime
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import portrait, letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Prestamo, CuotaPrestamo
 
+
+# ─── HELPERS DE REPORTES ───────────────────────────────────────────────────────
+
+def generar_excel_cronograma(dp, empresa_nombre):
+    buffer = io.BytesIO()
+    df = pd.DataFrame(dp['cuotas'])
+    df = df[['numero_cuota', 'periodo_key', 'monto', 'estado']]
+    df.columns = ['N° Cuota', 'Periodo', 'Monto (S/)', 'Estado']
+    
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, startrow=6)
+        ws = writer.sheets['Sheet1']
+        ws['A1'] = empresa_nombre.upper()
+        ws['A1'].font = Font(size=14, bold=True)
+        ws['A2'] = f"CRONOGRAMA DE PAGOS - {dp['concepto'].upper()}"
+        ws['A3'] = f"TRABAJADOR: {dp['trabajador']} ({dp['dni']})"
+        ws['A4'] = f"MONTO TOTAL: S/ {dp['monto_total']:,.2f}"
+    buffer.seek(0)
+    return buffer
+
+def generar_pdf_cronograma(dp, empresa_nombre):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=portrait(letter))
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    C_NAVY = colors.HexColor("#0F2744")
+    st_h = ParagraphStyle('H', fontName="Helvetica-Bold", fontSize=12, textColor=C_NAVY)
+    
+    elements.append(Paragraph(empresa_nombre.upper(), st_h))
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"<b>Cronograma de:</b> {dp['concepto']}", styles['Normal']))
+    elements.append(Paragraph(f"<b>Trabajador:</b> {dp['trabajador']} ({dp['dni']})", styles['Normal']))
+    elements.append(Paragraph(f"<b>Monto Total:</b> S/ {dp['monto_total']:,.2f}", styles['Normal']))
+    elements.append(Spacer(1, 15))
+    
+    data = [["N° CUOTA", "PERIODO", "MONTO (S/)", "ESTADO"]]
+    for c in dp['cuotas']:
+        data.append([c['numero_cuota'], c['periodo_key'], f"{c['monto']:,.2f}", c['estado']])
+        
+    t = Table(data, colWidths=[80, 120, 120, 120])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), C_NAVY),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+    ]))
+    elements.append(t)
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
 # ─── HELPER ────────────────────────────────────────────────────────────────────
 
@@ -209,9 +268,16 @@ def render():
                     f"**Saldo Pendiente:** S/ {dp['pendiente']:,.2f}"
                 )
 
+                # Botones de descarga
+                buf_xl = generar_excel_cronograma(dp, empresa_nombre)
+                col_c.download_button("📊 Excel", data=buf_xl, file_name=f"Cronograma_{dp['dni']}.xlsx", use_container_width=True)
+                
+                buf_pdf = generar_pdf_cronograma(dp, empresa_nombre)
+                col_c.download_button("📄 PDF", data=buf_pdf, file_name=f"Cronograma_{dp['dni']}.pdf", use_container_width=True)
+
                 # Botón para cancelar el préstamo completo (solo supervisores)
                 if rol_usuario == "supervisor" and col_c.button(
-                    "🗑️ Cancelar Préstamo",
+                    "🗑️ Cancelar",
                     key=f"cancel_prest_{dp['id']}",
                     use_container_width=True
                 ):

@@ -46,8 +46,11 @@ def render():
                                 db.add(UsuarioEmpresa(usuario_id=user_obj.id, empresa_id=emp_options[emp_nom]))
                         
                         db.commit()
-                        st.success("Usuario creado exitosamente.")
+                        st.session_state['_msg_usuario'] = f"✅ Usuario **{new_user}** creado exitosamente."
                         st.rerun()
+
+        if st.session_state.get('_msg_usuario'):
+            st.success(st.session_state.pop('_msg_usuario'))
 
         with tab_lista:
             users = db.query(Usuario).all()

@@ -113,8 +113,7 @@ if vista_actual == "Selector de Empresa" or vista_actual is None:
     selector_empresa.render()
 
 elif vista_actual == "Dashboard Principal":
-    st.title("📊 Dashboard Analítico")
-    st.info("Aquí construiremos el panel de gráficos estadísticos de la empresa en la próxima fase.")
+    dashboard.render()
 
 elif vista_actual == "Maestro de Personal":
     maestro_trabajadores.render()
