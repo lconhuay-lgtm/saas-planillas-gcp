@@ -12,10 +12,14 @@ def _seed_usuarios(db):
     """Crea los usuarios por defecto si la tabla está vacía."""
     if db.query(Usuario).count() == 0:
         db.add_all([
+            Usuario(username="admin",   password_hash=_hash("admin123"),
+                    rol="admin",   nombre_completo="Administrador del Sistema", 
+                    activo=True, acceso_total=True),
             Usuario(username="analista",   password_hash=_hash("analista123"),
                     rol="analista",   nombre_completo="Analista de Planillas", activo=True),
             Usuario(username="supervisor", password_hash=_hash("supervisor123"),
-                    rol="supervisor", nombre_completo="Supervisor de Planillas", activo=True),
+                    rol="supervisor", nombre_completo="Supervisor de Planillas", 
+                    activo=True, acceso_total=True),
         ])
         db.commit()
 
