@@ -1591,6 +1591,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
             # ── CUOTAS DE PRÉSTAMOS/DESCUENTOS PROGRAMADOS ──────────────────
+            # IMPORTANTE: Estos montos NO afectan bases de AFP, 5ta o EsSalud. 
+            # Solo se restan al final para llegar al NETO A PAGAR.
             for _cuota in cuotas_del_mes.get(str(dni_trabajador), []):
                 _monto_c = _cuota['monto']
                 descuentos_manuales += _monto_c
@@ -1610,6 +1612,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 if int(susp_dict.get(_cod, 0)) > 0:
                     obs_trab.append(f"{_desc}: {int(susp_dict[_cod])} día(s)")
 
+            # Las bases imponibles se calculan ANTES de aplicar descuentos de préstamos
             base_afp_onp        = ingresos_totales
             base_essalud        = ingresos_totales
             base_quinta_mes     = ingresos_totales
