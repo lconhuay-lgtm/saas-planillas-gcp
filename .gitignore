@@ -9,3 +9,4 @@ __pycache__/
 
 # Archivo de variables de entorno (AQUÍ IRÁ TU CONTRASEÑA DE NEON, ¡NUNCA SE SUBE!)
 .env
+.aider*

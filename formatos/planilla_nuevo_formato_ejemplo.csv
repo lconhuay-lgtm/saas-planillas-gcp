@@ -1,0 +1,83 @@
+﻿"  Modelo de archivo para DECLARAR APORTES en AFPnet.
+
+  Antes de usar elimine las filas 1, 2 y 3, guarde y cierre el archivo.",,,,,,,,,,,,,,,,
+Número de secuencia,CUSPP,Tipo  de documento de identidad,Número de documento de indentidad,Apellido paterno,Apellido materno,Nombres,Relación Laboral ,Inicio de RL,Cese de RL,Excepcion de Aportar,Remuneración asegurable,Aporte voluntario del afiliado con fin previsional,Aporte voluntario del afiliado sin fin previsional,Aporte voluntario del empleador,"Tipo de trabajo
+o Rubro","AFP
+(Conviene dejar en blanco)"
+"Dato Obligatorio.
+Es un número de referencia para ubicar los posibles problemas en los mensajes de validación",Dato referencial para verificación.,"Dato Obligatorio.
+Junto con el número de documento de identidad son los datos con los que se identifica al trabajador.
+
+0: DNI
+1: Carnet de Extranjería
+2: Carnet Militar y Policial
+3: Libreta Adolecentes Trabajador
+4: Pasaporte
+5: Inexistente/Afilia
+6: Permiso Temporal de Permamencia
+7: Carné de Relaciones Exteriores
+8: Cedula Identidad de Extranjero
+9: Carné Solicitante de Refugio
+10: Carné de Permiso Temporal de Permanencia","Dato Obligatorio.
+Junto con el Tipo  de documento de identidad este dato identifica al trabajador.
+
+Las celdas deben tener formato de texto para mantener los ceros a la izquierda
+
+NO declarar más de una vez el mismo trabajador a menos que tenga distintos ""Tipos de Trabajo""  en el mismo mes. (ver columna P) ",Dato referencial para verificación.,Dato referencial para verificación.,Dato referencial para verificación.,"Dato Obligatorio
+Indica que existe la relación laboral en el mes de devengue
+
+S: Sí
+N: No - usado para pagos posteriores al cese de la Relación Laboral.","Dato Obligatorio
+Indica si la relación laboral se inició en el mes de devengue
+
+S: Sí
+N: No
+","Dato Obligatorio
+Indica si la relación laboral terminó en el mes de devengue
+
+S: Sí
+N: No
+","Indica que no corresponde aportar en el mes de devengue por alguno de los motivos de excepción previstos en las normas.
+Si no existe la excepción, este dato se debe dejar en blanco.
+
+IMPORTANTE: Para declarar una excepción, el empleador debe estar en capacidad de sustentarla.
+
+Vacío = Existe obligación de aportar.
+L  =  Licencia sin goce de haber.
+U  =  Subsidio pagado directamente por ESSALUD
+        al trabajador.
+J  =  Afiliado pensionado por jubilación.
+I   =  Afiliado pensionado por invalidez.
+P =  Aporte postergado por inicio de la Relación
+         Laboral posterior al cierre de planillas.
+O  =  Otro motivo por el cual el trabajador no percibió 
+          remuneración por el mes.","Dato Obligatorio.
+Es el monto de remuneración sobre el cual el sistema calculará los aportes siguientes aportes:
+- Aporte obligatorio
+- Prima de seguro
+- Comisión AFP
+
+(Si es trabajo de riesgo)
+- Aporte obligatorio complementario
+   del trabajador.
+- Aporte obligatorio complementario 
+   del empleador.
+
+Si no hay remuneración, debe informarse cero (0).","Si no hay aporte  voluntario con fin previsional del afiliado, informarse cero (0).","Si no hay aporte  voluntario sin fin previsional del afiliado, informarse cero (0).","Si no hay aporte voluntario del empleador, debe informarse cero (0).","Dato Obligatorio.
+N = Dependiente Normal
+C = Dependiente Contrucción
+M = Dependiente Minería
+P = Pesquero
+
+Si tiene al menos un trabajador pesquero recuerde que debe cargar un archivo adicional con las semanas contributivas","Dato referencial.
+El sistema determina la AFP a la que pertence el trabajador.
+
+Conviene dejar en blanco.
+
+El sistema dará un mensaje de advertencia, indicando que la AFP informada no se encuentra registrada y que se reemplaza por la que se encuentra en base de datos"
+1,123456ABCDE6,0,01234567,GARCIA,ALVAREZ,LUISA,S,N,N,,1000,0,0,0,N, 
+2,234567ABCDE5,0,12345678,HUAMAN,RODRIGUEZ,EMILIO,S,S,N,,1000,0,0,0,N, 
+3,345678ABCDE4,1,23456789,SALAZAR,GONZALEZ,MONICA,S,S,N,P,0,0,0,0,N, 
+4,456789ABCDE3,1,34567891,PAUCAR,CALDERON,JOSE CARLOS,S,N,N,L,0,0,0,0,N,
+5,567891ABCDE2,4,45678912,ZARATE,BALCAZAR,ROLANDO,S,N,S,,1000,0,0,0,N, 
+6,678910ABCDE1,4,56789123,RAMIREZ,MENDOZA,CARLOS GONZALO,N,N,N,,1000,0,0,0,N, 
