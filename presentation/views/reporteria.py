@@ -521,8 +521,11 @@ def render():
                 kp2.metric("Total Neto Planilla",   f"S/ {df_plan_sin_tot['NETO A PAGAR'].sum():,.2f}")
 
             st.markdown("---")
+            # En reportería el DF ya incluye la fila de totales, debemos limpiarla antes de enviarla al PDF
+            df_p_clean = df_planilla[df_planilla['Apellidos y Nombres'] != 'TOTALES'].copy()
+            
             buf_teso = generar_pdf_tesoreria(
-                df_planilla=df_planilla,
+                df_planilla=df_p_clean,
                 df_loc=df_loc_t if not df_loc_t.empty else None,
                 empresa_nombre=empresa_nombre,
                 periodo_key=sel_key,

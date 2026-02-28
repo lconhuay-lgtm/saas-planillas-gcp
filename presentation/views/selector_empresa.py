@@ -202,6 +202,13 @@ def render():
                                 st.rerun()
 
                         if st.button("🚀 Seleccionar", key=f"sel_{emp.id}", use_container_width=True):
+                            # Limpieza profunda de estados de cálculo de la empresa anterior
+                            for key in ['res_planilla', 'auditoria_data', 'ultima_planilla_calculada']:
+                                st.session_state.pop(key, None)
+                            # Limpiar cache de locadores por periodo
+                            keys_to_del = [k for k in st.session_state.keys() if k.startswith('res_honorarios_')]
+                            for k in keys_to_del: st.session_state.pop(k, None)
+
                             st.session_state['empresa_activa_id'] = emp.id
                             st.session_state['empresa_activa_nombre'] = emp.razon_social
                             st.session_state['empresa_activa_ruc'] = emp.ruc
