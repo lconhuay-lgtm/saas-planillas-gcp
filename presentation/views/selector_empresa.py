@@ -1,7 +1,7 @@
 import streamlit as st
 import datetime
 from infrastructure.database.connection import get_db
-from infrastructure.database.models import Empresa
+from infrastructure.database.models import Empresa, Usuario
 
 
 def render():
