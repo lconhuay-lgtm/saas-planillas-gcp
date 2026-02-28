@@ -70,6 +70,7 @@ if not st.session_state.get('_tablas_verificadas'):
             for _sql in _migraciones:
                 _conn.execute(text(_sql))
             _conn.commit()
+            _conn.execute(text("COMMIT")) # Asegurar persistencia física en Neon
         st.session_state['_tablas_verificadas'] = True
     except Exception as _err_tablas:
         st.error(f"❌ No se pudo conectar a la base de datos: {_err_tablas}")
