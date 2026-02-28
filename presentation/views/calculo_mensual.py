@@ -2143,14 +2143,44 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
         st.error(f"🔒 Los honorarios del periodo **{periodo_key}** ya fueron CERRADOS.")
     elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True):
         resultados_loc = []
+        
+        # Precargar cuotas de préstamos para locadores
+        cuotas_loc = {}
+        try:
+            db_cl = SessionLocal()
+            _c_loc = db_cl.query(CuotaPrestamo).join(Prestamo).filter(
+                Prestamo.empresa_id == empresa_id,
+                CuotaPrestamo.periodo_key == periodo_key,
+                CuotaPrestamo.estado == 'PENDIENTE'
+            ).all()
+            for _cloc in _c_loc:
+                cuotas_loc.setdefault(_cloc.prestamo.trabajador.num_doc, []).append(_cloc)
+            db_cl.close()
+        except Exception:
+            pass
+
         for loc in locadores:
             dni = loc.num_doc
             vars_loc = vars_por_doc.get(dni, {})
+            
+            # Sumar cuotas de préstamos a otros descuentos del locador
+            monto_cuotas_loc = sum(float(c.monto) for c in cuotas_loc.get(dni, []))
+            if monto_cuotas_loc > 0:
+                vars_loc['otros_descuentos'] = vars_loc.get('otros_descuentos', 0.0) + monto_cuotas_loc
+                cuotas_desc = [f"{c.prestamo.concepto} (Cuota {c.numero_cuota})" for c in cuotas_loc.get(dni, [])]
+                obs_p = f"Dscto. Préstamos: {', '.join(cuotas_desc)}"
+            else:
+                obs_p = ""
+
             resultado = calcular_recibo_honorarios(
                 loc, vars_loc, dias_del_mes,
                 tasa_4ta=tasa_4ta, tope_4ta=tope_4ta,
                 anio_calc=anio_int, mes_calc=mes_int,
             )
+            
+            if obs_p:
+                resultado['observaciones'] = f"{resultado['observaciones']} | {obs_p}" if resultado['observaciones'] else obs_p
+
             resultados_loc.append({
                 "DNI":                 dni,
                 "Locador":             loc.nombres,

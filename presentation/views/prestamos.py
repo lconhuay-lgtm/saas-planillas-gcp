@@ -103,9 +103,10 @@ def render():
 
         db = SessionLocal()
         try:
+            # Incluir tanto planilla como locadores activos
             trabajadores = (
                 db.query(Trabajador)
-                .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="PLANILLA")
+                .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
                 .order_by(Trabajador.nombres)
                 .all()
             )
@@ -113,10 +114,10 @@ def render():
             db.close()
 
         if not trabajadores:
-            st.info("No hay trabajadores activos en planilla para esta empresa.")
+            st.info("No hay personal activo registrado para esta empresa.")
             return
 
-        opciones_trab = {f"{t.nombres} — DNI {t.num_doc}": t.id for t in trabajadores}
+        opciones_trab = {f"{t.nombres} — DNI {t.num_doc} ({'Planilla' if t.tipo_contrato == 'PLANILLA' else 'Locador'})": t.id for t in trabajadores}
 
         with st.form("form_prestamo", clear_on_submit=True):
             trab_sel = st.selectbox("Trabajador", list(opciones_trab.keys()))
