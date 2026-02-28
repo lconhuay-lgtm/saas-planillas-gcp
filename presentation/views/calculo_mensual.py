@@ -1586,6 +1586,9 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             ingresos_totales    = sueldo_computable + monto_asig_fam + pago_he_25 + pago_he_35
             # Solo tardanzas como descuento manual; las faltas ya reducen sueldo_computable
             descuentos_manuales = dscto_tardanzas
+            desglose_descuentos = {}
+            if dscto_tardanzas > 0:
+                desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
             # ── CUOTAS DE PRÉSTAMOS/DESCUENTOS PROGRAMADOS ──────────────────
             for _cuota in cuotas_del_mes.get(str(dni_trabajador), []):
@@ -1619,9 +1622,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 desglose_ingresos["Horas Extras 25%"] = round(pago_he_25, 2)
             if pago_he_35 > 0:
                 desglose_ingresos["Horas Extras 35%"] = round(pago_he_35, 2)
-            desglose_descuentos = {}
-            if dscto_tardanzas > 0:
-                desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
             # --- CONCEPTOS DINÁMICOS Y GRATIFICACIONES ---
             monto_grati = float(row.get('GRATIFICACION (JUL/DIC)', 0.0))
