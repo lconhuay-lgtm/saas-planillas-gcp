@@ -1931,7 +1931,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
         st.markdown("---")
         with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
-            opciones_trab = [f"{dni} - {info['nombres']}" for dni, info in aud_report.items()]
+            opciones_trab = [f"{dni} - {info['nombres']}" for dni, info in auditoria_data.items()]
             trabajador_sel = st.selectbox("Seleccione un trabajador para ver su detalle legal:", opciones_trab, label_visibility="collapsed")
 
         if trabajador_sel:
