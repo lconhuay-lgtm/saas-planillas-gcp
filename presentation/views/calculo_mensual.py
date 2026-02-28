@@ -1436,19 +1436,30 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
     locadores_pendientes = False
     try:
         db_lv = SessionLocal()
-        n_loc = db_lv.query(Trabajador).filter_by(
+        # Solo locadores que ya deberían haber ingresado según su fecha de ingreso
+        _mes_c = int(periodo_key[:2])
+        _ani_c = int(periodo_key[3:])
+        
+        locs_activos = db_lv.query(Trabajador).filter_by(
             empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
-        ).count()
-        if n_loc > 0:
-            n_vars_loc = db_lv.query(VariablesMes).filter_by(
-                empresa_id=empresa_id, periodo_key=periodo_key
-            ).join(Trabajador, VariablesMes.trabajador_id == Trabajador.id).filter(
-                Trabajador.tipo_contrato == "LOCADOR"
+        ).all()
+        
+        locs_que_corresponden = [
+            l for l in locs_activos 
+            if not (l.fecha_ingreso and (l.fecha_ingreso.year > _ani_c or (l.fecha_ingreso.year == _ani_c and l.fecha_ingreso.month > _mes_c)))
+        ]
+        
+        if locs_que_corresponden:
+            ids_locs = [l.id for l in locs_que_corresponden]
+            n_vars_loc = db_lv.query(VariablesMes).filter(
+                VariablesMes.empresa_id == empresa_id,
+                VariablesMes.periodo_key == periodo_key,
+                VariablesMes.trabajador_id.in_(ids_locs)
             ).count()
-            locadores_pendientes = (n_vars_loc < n_loc)
+            locadores_pendientes = (n_vars_loc < len(locs_que_corresponden))
         db_lv.close()
     except Exception:
-        pass
+        locadores_pendientes = False
 
     if es_cerrada:
         st.error(f"🔒 La planilla del periodo **{periodo_key}** ya fue CERRADA y contabilizada. Vaya al final de la página para reabrirla si tiene permisos de Supervisor.")
