@@ -30,6 +30,7 @@ from presentation.views import emision_boletas
 from presentation.views import reporteria
 from presentation.views import login
 from presentation.views import prestamos
+from presentation.views import gestion_usuarios
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 if not st.session_state.get('_tablas_verificadas'):
@@ -135,3 +136,6 @@ elif vista_actual == "Reportería":
 
 elif vista_actual == "Préstamos y Descuentos":
     prestamos.render()
+
+elif vista_actual == "Gestión de Usuarios":
+    gestion_usuarios.render()
