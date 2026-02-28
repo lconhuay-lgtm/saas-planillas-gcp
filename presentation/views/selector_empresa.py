@@ -28,6 +28,13 @@ def render():
             with st.container(border=True):
                 c_ruc, c_bus = st.columns([3, 1])
                 ruc_nuevo = c_ruc.text_input("RUC (11 dígitos)*", max_chars=11, key="n_ruc")
+                st.markdown(
+                    f'<div style="margin-top:-15px; margin-bottom:10px;">'
+                    f'<a href="https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/FrameCriterioBusquedaWeb.jsp" '
+                    f'target="_blank" style="font-size:0.75rem; color:#64748B; text-decoration:none; font-style:italic;">'
+                    f'🔗 Consulta RUC oficial SUNAT</a></div>', 
+                    unsafe_allow_html=True
+                )
                 
                 # Estado para autocompletar
                 if c_bus.button("🔍 Buscar SUNAT", use_container_width=True):
