@@ -97,6 +97,7 @@ def render():
                     "Afecto EsSalud": c.afecto_essalud,
                     "Computable CTS": c.computable_cts,
                     "Computable Grati": c.computable_grati,
+                    "Prorrateable (Asist.)": getattr(c, 'prorrateable_por_asistencia', False),
                 })
             df_c = pd.DataFrame(rows)
             df_v = df_c.drop(columns=["_id"])
@@ -110,6 +111,7 @@ def render():
                     "Afecto EsSalud":   st.column_config.CheckboxColumn(),
                     "Computable CTS":   st.column_config.CheckboxColumn(),
                     "Computable Grati": st.column_config.CheckboxColumn(),
+                    "Prorrateable (Asist.)": st.column_config.CheckboxColumn(),
                 },
                 key="editor_conceptos",
             )
@@ -125,6 +127,7 @@ def render():
                             c.afecto_essalud = bool(row["Afecto EsSalud"])
                             c.computable_cts   = bool(row["Computable CTS"])
                             c.computable_grati = bool(row["Computable Grati"])
+                            c.prorrateable_por_asistencia = bool(row.get("Prorrateable (Asist.)", False))
                     db.commit()
                     st.session_state['msg_exito_concepto'] = "✅ Reglas tributarias actualizadas correctamente."
                     st.rerun()
@@ -200,6 +203,11 @@ def render():
                         value=bool(obj_editar.computable_grati),
                         key="e_cb_gra",
                     )
+                    prorrateable_edit = st.checkbox(
+                        "Prorrateable por asistencia", 
+                        value=bool(getattr(obj_editar, 'prorrateable_por_asistencia', False)), 
+                        key="e_cb_pror"
+                    )
 
                 if st.button("🔄 Actualizar Concepto", type="primary", use_container_width=True):
                     try:
@@ -222,6 +230,7 @@ def render():
                         obj_editar.afecto_essalud   = info_nuevo["essalud"]
                         obj_editar.computable_cts   = comp_cts_edit
                         obj_editar.computable_grati = comp_grati_edit
+                        obj_editar.prorrateable_por_asistencia = prorrateable_edit
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (
                             f"✅ Concepto **{nombre_final}** actualizado — "
@@ -262,6 +271,7 @@ def render():
                 st.markdown("**Beneficios Sociales**")
                 comp_cts   = st.checkbox("Computable para CTS",         value=False, key="cb_cts")
                 comp_grati = st.checkbox("Computable para Gratificación", value=False, key="cb_gra")
+                comp_pror = st.checkbox("Prorrateable por asistencia", value=False, key="cb_pror")
                 nombre_custom = st.text_input(
                     "Nombre personalizado (opcional)",
                     value=info_sel["desc"].upper(),

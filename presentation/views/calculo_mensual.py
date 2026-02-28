@@ -123,6 +123,7 @@ def _cargar_conceptos_df(db, empresa_id) -> pd.DataFrame:
             "Afecto EsSalud": c.afecto_essalud,
             "Computable CTS": c.computable_cts,
             "Computable Grati": c.computable_grati,
+            "Prorrateable": getattr(c, 'prorrateable_por_asistencia', False),
         })
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
@@ -1663,6 +1664,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 susp_dict = {}
             total_ausencias   = sum(susp_dict.values()) if susp_dict else float(row.get('Días Faltados', 0))
             dias_laborados    = max(0, int(dias_computables) - int(total_ausencias))
+            factor_asistencia = dias_laborados / dias_computables if dias_computables > 0 else 0.0
             horas_ordinarias  = int(dias_laborados * horas_jornada)
 
             sueldo_base_nominal = float(row['Sueldo Base'])
@@ -1761,11 +1763,20 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
             conceptos_omitidos = ["SUELDO BASICO", "ASIGNACION FAMILIAR", "GRATIFICACION (JUL/DIC)", "BONIFICACION EXTRAORDINARIA LEY 29351 (9%)"]
             otros_ingresos = 0.0
+            conceptos_recuperados_5ta = 0.0
             for _, concepto in conceptos_empresa.iterrows():
                 nombre_c = concepto['Nombre del Concepto']
                 if nombre_c in conceptos_omitidos: continue
                 if nombre_c in row and float(row[nombre_c]) > 0:
-                    monto_concepto = float(row[nombre_c])
+                    monto_ingresado_nominal = float(row[nombre_c])
+                    if concepto.get('Prorrateable', False):
+                        monto_concepto = monto_ingresado_nominal * factor_asistencia
+                        # Si es un ingreso afecto a 5ta, guardamos el diferencial que se perdió por faltar
+                        if concepto['Tipo'] == "INGRESO" and concepto.get('Afecto 5ta Cat.', False):
+                            conceptos_recuperados_5ta += (monto_ingresado_nominal - monto_concepto)
+                    else:
+                        monto_concepto = monto_ingresado_nominal
+
                     if concepto['Tipo'] == "INGRESO":
                         desglose_ingresos[nombre_c] = round(monto_concepto, 2)
                         otros_ingresos += monto_concepto
@@ -1822,7 +1833,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             # Proyección usa sueldo nominal completo: las ausencias son excepcionales
             base_quinta_proyeccion = base_quinta_mes
             if total_ausencias > 0 or ingreso_este_mes:
-                base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable), 2)
+                base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable) + conceptos_recuperados_5ta, 2)
             proyeccion_gratis = 0.0
             if mes_idx <= 6: proyeccion_gratis = base_quinta_proyeccion * 2 * 1.09
             elif mes_idx <= 11: proyeccion_gratis = base_quinta_proyeccion * 1 * 1.09

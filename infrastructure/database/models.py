@@ -117,6 +117,7 @@ class Concepto(Base):
     afecto_essalud = Column(Boolean, default=False)
     computable_cts = Column(Boolean, default=False)
     computable_grati = Column(Boolean, default=False)
+    prorrateable_por_asistencia = Column(Boolean, default=False)
     
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="conceptos")
