@@ -1884,8 +1884,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                         impuesto_anual += imp_tramo
                         detalle_tramos.append({"rango": f"Hasta {limite/uit} UIT", "tasa": f"{int(tasa*100)}%", "base": monto_tramo, "impuesto": imp_tramo})
                         renta_restante -= monto_tramo
-                retencion_quinta = int(round(max(0.0, (impuesto_anual - retencion_previa_historica) / divisor)))
-                if retencion_quinta > 0: desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
+                retencion_quinta = float(int(round(max(0.0, (impuesto_anual - retencion_previa_historica) / divisor))))
 
             # --- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---
             conceptos_manuales = {}
