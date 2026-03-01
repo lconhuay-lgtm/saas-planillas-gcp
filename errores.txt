@@ -1,22 +1,69 @@
-Actúa como un Desarrollador Senior. Hemos detectado un bug lógico en el prorrateo de conceptos dinámicos para los trabajadores que ingresan a mitad de mes (mid-month hires).
+Actúa como un Arquitecto de Software Senior experto en Nóminas (Payroll) y bases de datos SQLAlchemy. 
 
-Actualmente, el `factor_asistencia` divide `dias_laborados / dias_computables`. Esto causa que si un trabajador ingresa el 15 del mes y trabaja esos 15 días, el factor sea 15/15 = 1.0, pagándole el 100% de la movilidad, lo cual es incorrecto según el estándar laboral de Base 30.
+Tu objetivo es implementar un "Override de Política de Gratificación" a nivel de Empresa. Actualmente, el cálculo de Renta de 5ta Categoría asume gratificaciones estrictamente por ley, pero necesitamos que la empresa pueda forzar voluntariamente la proyección (1 sueldo, 1/2 sueldo, o nada) sin perder la opción de cálculo automático.
 
-DEBES MODIFICAR EL ARCHIVO `presentation/views/calculo_mensual.py`:
+DEBES MODIFICAR ESTRICTAMENTE LOS SIGUIENTES 4 ARCHIVOS respetando las instrucciones paso a paso mediante programación defensiva:
 
-Busca dentro del bucle principal `for index, row in df_planilla.iterrows():` (aproximadamente en la sección de "TIEMPOS Y BASES FIJAS").
+1. Modificar `infrastructure/database/models.py`:
+- En la clase `Empresa`, añade un nuevo campo de tipo Float que permita nulos:
+  `factor_proyeccion_grati = Column(Float, nullable=True)`
 
-1. ELIMINA esta línea que calcula el factor de asistencia prematuramente:
-`factor_asistencia = dias_laborados / dias_computables if dias_computables > 0 else 0.0`
+2. Modificar `presentation/app.py`:
+- Busca la lista `_migraciones` (dentro del bloque "AUTO-CREAR TABLAS EN NEON") y añade la siguiente sentencia SQL al final de la lista para actualizar la base de datos de forma segura:
+  `"ALTER TABLE empresas ADD COLUMN IF NOT EXISTS factor_proyeccion_grati FLOAT",`
 
-2. Reubica la declaración de la variable `factor_asistencia` para que herede la misma lógica del "Mes Comercial Mixto" que utiliza el Sueldo Computable.
+3. Modificar `presentation/views/selector_empresa.py`:
+- Justo debajo de los imports iniciales, define los siguientes diccionarios de mapeo:
+  ```python
+  _MAP_GRATI = {
+      "Automático (Según Ley)": None, 
+      "Otorgar 1 Sueldo Completo": 1.0, 
+      "Otorgar 1/2 Sueldo": 0.5, 
+      "No otorgar (0)": 0.0
+  }
+  _MAP_GRATI_INV = {v: k for k, v in _MAP_GRATI.items()}
+En la sección "MODO CREACIÓN DE NUEVA EMPRESA", debajo del selector fecha_acogimiento_sel, añade el selector para la interfaz:
+pol_grati_sel = st.selectbox("Política de Gratificación (Proyección 5ta Cat.)", list(_MAP_GRATI.keys()))
 
-Modifica el bloque if/else existente para que quede exactamente así:
+En la creación de la instancia nueva = Empresa(...) dentro de ese mismo bloque, añade el nuevo campo:
+factor_proyeccion_grati=_MAP_GRATI[pol_grati_sel]
 
-```python
-            if total_ausencias == 0 and (not ingreso_este_mes or dias_computables >= dias_del_mes):
-                sueldo_computable = sueldo_base_nominal
-                factor_asistencia = 1.0
-            else:
-                sueldo_computable = max(0.0, valor_dia * dias_laborados)
-                factor_asistencia = dias_laborados / 30.0
+En la sección "MODO EDICIÓN DE EMPRESA", debajo del selector fecha_acogimiento_sel, añade:
+
+Python
+idx_pg = list(_MAP_GRATI.keys()).index(_MAP_GRATI_INV.get(emp.factor_proyeccion_grati, "Automático (Según Ley)"))
+pol_grati_sel = st.selectbox("Política de Gratificación (Proyección 5ta Cat.)", list(_MAP_GRATI.keys()), index=idx_pg)
+En el bloque de guardado (try: emp.razon_social = razon_social...), añade la actualización del campo:
+emp.factor_proyeccion_grati = _MAP_GRATI[pol_grati_sel]
+
+En la "VISTA NORMAL", busca el bloque donde se actualiza el session_state (dentro de if st.button("🚀 Seleccionar"...):
+Justo debajo de st.session_state['empresa_acogimiento'] = emp.fecha_acogimiento, añade:
+st.session_state['empresa_factor_grati'] = emp.factor_proyeccion_grati
+
+Modificar presentation/views/calculo_mensual.py (MOTOR CRÍTICO):
+
+Busca dentro de la función _render_planilla_tab(), justo antes de iniciar el bucle for index, row in df_planilla.iterrows():, e inyecta la siguiente lógica para calcular el factor maestro a aplicar:
+
+Python
+# --- Determinar factor de gratificación general para la empresa ---
+regimen_empresa_motor = st.session_state.get('empresa_activa_regimen', 'Régimen General')
+factor_g_manual = st.session_state.get('empresa_factor_grati', None)
+
+if factor_g_manual is not None:
+    factor_g = float(factor_g_manual)
+else:
+    if "Micro Empresa" in regimen_empresa_motor:
+        factor_g = 0.0
+    elif "Pequeña Empresa" in regimen_empresa_motor:
+        factor_g = 0.5
+    else:
+        factor_g = 1.0
+Más abajo, DENTRO DEL BUCLE principal, busca la sección --- RENTA 5TA CATEGORÍA ---. Reemplaza todo el bloque actual donde se define proyeccion_gratis por este código que utiliza el nuevo multiplicador:
+
+Python
+proyeccion_gratis = 0.0
+if mes_idx <= 6:
+    proyeccion_gratis = base_quinta_proyeccion * 2 * factor_g * 1.09
+elif mes_idx <= 11:
+    proyeccion_gratis = base_quinta_proyeccion * 1 * factor_g * 1.09
+Mantén estrictamente el resto del código inalterado, usa indentación de 4 espacios (estándar Python) y asegura el manejo de variables como está propuesto. Ejecuta los cambios.
