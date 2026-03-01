@@ -1,15 +1,25 @@
-Actúa como un Desarrollador Python Senior. El intento anterior falló porque las referencias de contexto no coincidieron exactamente con el código fuente. 
+Por favor, realiza un reemplazo estricto en los siguientes archivos. Usa exactamente este bloque SEARCH/REPLACE.
 
-Realiza los siguientes cambios utilizando estrictamente la herramienta de reemplazo. RESPETA LOS ESPACIOS DE INDENTACIÓN EXACTOS MOSTRADOS.
-
-1. Abre `presentation/views/calculo_mensual.py` y aplica este reemplazo:
+1. En `presentation/views/calculo_mensual.py`:
 
 *SEARCH*
+            if aj_afp != 0:
+                desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
+                descuentos_manuales += aj_afp
+                obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
+            
             if aj_quinta != 0:
                 desglose_descuentos['Ajuste 5ta Cat (Audit)'] = round(aj_quinta, 2)
                 descuentos_manuales += aj_quinta
                 obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+
+            if aj_otros != 0:
 *REPLACE*
+            if aj_afp != 0:
+                desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
+                descuentos_manuales += aj_afp
+                obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
+            
             if aj_quinta != 0:
                 retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
                 if retencion_quinta > 0:
@@ -18,8 +28,10 @@ Realiza los siguientes cambios utilizando estrictamente la herramienta de reempl
                     del desglose_descuentos['Retención 5ta Cat.']
                 obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
 
+            if aj_otros != 0:
 
-2. Abre `presentation/views/ingreso_asistencias.py` y aplica este reemplazo (Definición de Tabs):
+
+2. En `presentation/views/ingreso_asistencias.py`:
 
 *SEARCH*
         # Mostrar mensajes de éxito diferidos (tras rerun)
@@ -33,6 +45,8 @@ Realiza los siguientes cambios utilizando estrictamente la herramienta de reempl
             "📝 3. Notas de Gestión",
             "🔧 4. Ajustes de Auditoría"
         ])
+
+        # ══════════════════════════════════════════════════════════════════════
 *REPLACE*
         # Mostrar mensajes de éxito diferidos (tras rerun)
         if st.session_state.get('_msg_asistencia'):
@@ -55,8 +69,10 @@ Realiza los siguientes cambios utilizando estrictamente la herramienta de reempl
         tab_loc = tabs[1]
         tab_notas = tabs[2]
 
+        # ══════════════════════════════════════════════════════════════════════
 
-3. En el mismo archivo `presentation/views/ingreso_asistencias.py`, DEBES ENVOLVER todo el contenido de la pestaña 4 dentro del condicional de supervisor. Reemplaza el encabezado de la pestaña así:
+
+3. En `presentation/views/ingreso_asistencias.py`:
 
 *SEARCH*
         # ══════════════════════════════════════════════════════════════════════
@@ -64,6 +80,7 @@ Realiza los siguientes cambios utilizando estrictamente la herramienta de reempl
         # ══════════════════════════════════════════════════════════════════════
         with tab_ajustes:
             st.subheader("🔧 Ajustes y Regularizaciones de Nómina")
+            st.info("Utilice esta sección para ingresar montos manuales que regularicen errores de meses previos o sistemas externos. Estos montos afectan directamente al Neto a Pagar.")
 *REPLACE*
         # ══════════════════════════════════════════════════════════════════════
         # TAB 4 — AJUSTES DE AUDITORÍA (SAP/ORACLE STYLE)
@@ -72,5 +89,6 @@ Realiza los siguientes cambios utilizando estrictamente la herramienta de reempl
             tab_ajustes = tabs[3]
             with tab_ajustes:
                 st.subheader("🔧 Ajustes y Regularizaciones de Nómina")
+                st.info("Utilice esta sección para ingresar montos manuales que regularicen errores de meses previos o sistemas externos. Estos montos afectan directamente al Neto a Pagar.")
 
-IMPORTANTE PARA EL PASO 3: Como hemos añadido el bloque `if es_supervisor:`, todo el código que estaba debajo de `with tab_ajustes:` hasta el final de la función `render()` debe recibir 4 espacios extra de indentación para no romper la sintaxis de Python. Por favor, asegúrate de indentar correctamente todo ese bloque.
+IMPORTANTE: Re-indenta correctamente todo el código que se encuentra debajo de `with tab_ajustes:` (agregando 4 espacios) hasta el final del archivo para que coincida con la nueva condición `if es_supervisor:`.
