@@ -48,6 +48,9 @@ class Empresa(Base):
     # --- JORNADA LABORAL ---
     horas_jornada_diaria = Column(Float, default=8.0)
 
+    # --- POLÍTICAS DE PROYECCIÓN ---
+    factor_proyeccion_grati = Column(Float, nullable=True)
+
     fecha_registro = Column(DateTime, default=datetime.now)
 
     # Relaciones

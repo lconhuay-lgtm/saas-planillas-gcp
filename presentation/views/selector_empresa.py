@@ -1,5 +1,13 @@
 import streamlit as st
 import datetime
+
+_MAP_GRATI = {
+    "Automático (Según Ley)": None, 
+    "Otorgar 1 Sueldo Completo": 1.0, 
+    "Otorgar 1/2 Sueldo": 0.5, 
+    "No otorgar (0)": 0.0
+}
+_MAP_GRATI_INV = {v: k for k, v in _MAP_GRATI.items()}
 from infrastructure.database.connection import get_db
 from infrastructure.database.models import Empresa, Usuario
 from infrastructure.services.sunat_api import consultar_dni_sunat
@@ -55,6 +63,8 @@ def render():
                 regimenes = ["Régimen General", "Régimen Especial - Micro Empresa", "Régimen Especial - Pequeña Empresa"]
                 regimen_sel = st.selectbox("Régimen Laboral*", regimenes)
 
+                pol_grati_sel = st.selectbox("Política de Gratificación (Proyección 5ta Cat.)", list(_MAP_GRATI.keys()))
+
                 fecha_acogimiento_sel = None
                 if regimen_sel != "Régimen General":
                     fecha_acogimiento_sel = st.date_input("Fecha de Acogimiento al Régimen MYPE*", value=datetime.date.today())
@@ -74,7 +84,8 @@ def render():
                             ruc=ruc_nuevo, razon_social=razon_social,
                             regimen_laboral=regimen_sel, fecha_acogimiento=fecha_acogimiento_sel,
                             representante_legal=representante, correo_electronico=correo,
-                            domicilio=domicilio
+                            domicilio=domicilio,
+                            factor_proyeccion_grati=_MAP_GRATI[pol_grati_sel]
                         )
                         db.add(nueva)
                         db.commit()
@@ -116,6 +127,9 @@ def render():
             )
             st.markdown("<br/>", unsafe_allow_html=True)
 
+            idx_pg = list(_MAP_GRATI.keys()).index(_MAP_GRATI_INV.get(emp.factor_proyeccion_grati, "Automático (Según Ley)"))
+            pol_grati_sel = st.selectbox("Política de Gratificación (Proyección 5ta Cat.)", list(_MAP_GRATI.keys()), index=idx_pg)
+
             fecha_acogimiento_sel = emp.fecha_acogimiento
             if regimen_sel != "Régimen General":
                 fecha_acogimiento_sel = st.date_input(
@@ -147,6 +161,7 @@ def render():
                         emp.correo_electronico = correo
                         emp.domicilio = domicilio
                         emp.cuenta_cargo_bcp = st.session_state.get('_edit_cta_cargo', emp.cuenta_cargo_bcp)
+                        emp.factor_proyeccion_grati = _MAP_GRATI[pol_grati_sel]
                         db.commit()
                         # Actualizar session_state si es la empresa activa
                         if st.session_state.get('empresa_activa_id') == editando_id:
@@ -214,6 +229,7 @@ def render():
                             st.session_state['empresa_activa_ruc'] = emp.ruc
                             st.session_state['empresa_activa_regimen'] = emp.regimen_laboral
                             st.session_state['empresa_acogimiento'] = emp.fecha_acogimiento
+                            st.session_state['empresa_factor_grati'] = emp.factor_proyeccion_grati
                             st.session_state['empresa_activa_domicilio'] = emp.domicilio or ''
                             st.session_state['empresa_activa_representante'] = emp.representante_legal or ''
                             st.session_state['empresa_activa_correo'] = emp.correo_electronico or ''

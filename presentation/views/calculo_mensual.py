@@ -1611,6 +1611,20 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         except Exception:
             cuotas_del_mes = {}
 
+        # --- Determinar factor de gratificación general para la empresa ---
+        regimen_empresa_motor = st.session_state.get('empresa_activa_regimen', 'Régimen General')
+        factor_g_manual = st.session_state.get('empresa_factor_grati', None)
+
+        if factor_g_manual is not None:
+            factor_g = float(factor_g_manual)
+        else:
+            if "Micro Empresa" in regimen_empresa_motor:
+                factor_g = 0.0
+            elif "Pequeña Empresa" in regimen_empresa_motor:
+                factor_g = 0.5
+            else:
+                factor_g = 1.0
+
         # Precargar notas de gestión manuales
         notas_gestion_map = {}
         try:
@@ -1837,8 +1851,10 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             if total_ausencias > 0 or ingreso_este_mes:
                 base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable) + conceptos_recuperados_5ta, 2)
             proyeccion_gratis = 0.0
-            if mes_idx <= 6: proyeccion_gratis = base_quinta_proyeccion * 2 * 1.09
-            elif mes_idx <= 11: proyeccion_gratis = base_quinta_proyeccion * 1 * 1.09
+            if mes_idx <= 6:
+                proyeccion_gratis = base_quinta_proyeccion * 2 * factor_g * 1.09
+            elif mes_idx <= 11:
+                proyeccion_gratis = base_quinta_proyeccion * 1 * factor_g * 1.09
             proyeccion_sueldos_restantes = base_quinta_proyeccion * meses_restantes
             
             renta_bruta_anual = int(round(rem_previa_historica + base_quinta_mes + proyeccion_sueldos_restantes + proyeccion_gratis))
