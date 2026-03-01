@@ -1698,13 +1698,16 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             valor_dia           = sueldo_base_nominal / 30.0   # Base 30 — Mes Comercial Mixto
             valor_hora          = valor_dia / horas_jornada
 
-            # Mes Comercial Mixto: trabajó todos los días disponibles → sueldo íntegro; parcial → proporcional/30
-            # (incluye el caso de ingreso día 1: dias_computables == dias_del_mes → mes completo)
-            if total_ausencias == 0 and (not ingreso_este_mes or dias_computables >= dias_del_mes):
-                sueldo_computable = sueldo_base_nominal
-                factor_asistencia = 1.0
-            else:
+            # Corrección Mes Comercial (Base 30 estricta para cálculo financiero):
+            if ingreso_este_mes and dias_computables < dias_del_mes:
+                # Si el trabajador ingresó a mediados de mes: se le pagan los días calendario laborados
+                dias_laborados = max(0, int(dias_computables) - int(total_ausencias))
                 sueldo_computable = max(0.0, valor_dia * dias_laborados)
+                factor_asistencia = dias_laborados / 30.0
+            else:
+                # Trabajador regular (mes completo): Sueldo base nominal menos sus días exactos de inasistencia (Base 30)
+                dias_laborados = max(0, 30 - int(total_ausencias))
+                sueldo_computable = max(0.0, sueldo_base_nominal - (int(total_ausencias) * valor_dia))
                 factor_asistencia = dias_laborados / 30.0
 
             # --- OBSERVACIONES DEL PERIODO ---
