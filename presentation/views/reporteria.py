@@ -585,11 +585,15 @@ def render():
                         vl = {'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
                               'otros_pagos': float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
                               'otros_descuentos': float(cj.get('_otros_descuentos_loc', 0.0) or 0.0)}
-                        r = _chr_txt(l, vl, d_mes_i,
+                        r = _chr_txt(l, vl, d_mes_i, 
                                      tasa_4ta=getattr(p_txt, 'tasa_4ta', 8.0) if p_txt else 8.0,
                                      tope_4ta=getattr(p_txt, 'tope_4ta', 1500.0) if p_txt else 1500.0)
-                        res_l_txt.append({"DNI": l.num_doc, "Locador": l.nombres, "NETO A PAGAR": r['neto_a_pagar'], "CCI": l.cci, "Banco": l.banco})
-
+                        
+                        # Mapear correctamente la cuenta para el generador TXT
+                        cuenta_loc = l.cuenta_bancaria if l.banco == 'BCP' else l.cci
+                        
+                        res_l_txt.append({"DNI": l.num_doc, "Locador": l.nombres, "NETO A PAGAR": r['neto_a_pagar'], "CCI": l.cci, "N° Cuenta": cuenta_loc, "Banco": l.banco})
+                    
                     txt_bcp = generar_txt_bcp(df_planilla, cta_cargo, f_pago, df_loc=pd.DataFrame(res_l_txt), solo_bcp=solo_bcp_flag)
                     st.download_button(
                         f"⬇️ Descargar BCP_HABERES_{f_pago.strftime('%Y%m%d')}.txt",
