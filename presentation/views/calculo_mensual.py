@@ -142,7 +142,6 @@ def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data
     resultado_json = df_resultados.to_json(orient='records', date_format='iso')
     auditoria_json = json.dumps(auditoria_data, default=str)
     
-    # Extraer el JSON de locadores si existe
     hon_json = "[]"
     if df_locadores is not None and not df_locadores.empty:
         hon_json = df_locadores.to_json(orient='records', date_format='iso')
@@ -153,7 +152,9 @@ def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data
     if existente:
         existente.resultado_json = resultado_json
         existente.auditoria_json = auditoria_json
-        existente.honorarios_json = hon_json
+        # Solo sobreescribe si se envía un df válido, si no, respeta lo que ya estaba
+        if df_locadores is not None:
+            existente.honorarios_json = hon_json
         existente.fecha_calculo = datetime.now()
     else:
         nueva = PlanillaMensual(
