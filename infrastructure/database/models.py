@@ -153,6 +153,9 @@ class ParametroLegal(Base):
     tasa_4ta  = Column(Float, default=8.0)     # Porcentaje de retención (8 % por ley)
     tope_4ta  = Column(Float, default=1500.0)  # Monto mínimo para aplicar retención
 
+    # Límite de edad para cobro de Prima de Seguro AFP
+    edad_maxima_prima_afp = Column(Integer, default=65)
+
     fecha_registro = Column(DateTime, default=datetime.now)
 
 

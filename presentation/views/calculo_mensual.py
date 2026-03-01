@@ -44,6 +44,7 @@ def _cargar_parametros(db, empresa_id, periodo_key) -> dict | None:
         'afp_profuturo_flujo': p_db.pr_fl, 'afp_profuturo_mixta': p_db.pr_mx,
         'tasa_4ta': getattr(p_db, 'tasa_4ta', 8.0) or 8.0,
         'tope_4ta': getattr(p_db, 'tope_4ta', 1500.0) or 1500.0,
+        'edad_maxima_prima_afp': getattr(p_db, 'edad_maxima_prima_afp', 65) or 65,
     }
 
 
@@ -65,6 +66,7 @@ def _cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
             "Num. Doc.": t.num_doc,
             "Nombres y Apellidos": t.nombres,
             "Fecha Ingreso": t.fecha_ingreso,
+            "Fecha Nacimiento": t.fecha_nac,
             "Sueldo Base": t.sueldo_base,
             "Sistema Pensión": t.sistema_pension or "NO AFECTO",
             "Comisión AFP": t.comision_afp or "FLUJO",
@@ -1844,7 +1846,24 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                     tasa_comision = p[prefijo + "mixta"]/100 if row['Comisión AFP'] == "MIXTA" else p[prefijo + "flujo"]/100
 
                     aporte_afp = base_afp_onp * tasa_aporte
-                    prima_afp = min(base_afp_onp, p['tope_afp']) * tasa_prima
+
+                    # Exención de Prima de Seguro AFP por límite de edad
+                    aplica_prima = True
+                    fecha_nac_str = row.get('Fecha Nacimiento')
+                    if pd.notna(fecha_nac_str):
+                        try:
+                            f_nac = pd.to_datetime(fecha_nac_str)
+                            edad = anio_calc - f_nac.year - ((mes_calc, 1) < (f_nac.month, f_nac.day))
+                            if edad >= p['edad_maxima_prima_afp']:
+                                aplica_prima = False
+                        except: pass
+
+                    if aplica_prima:
+                        prima_afp = min(base_afp_onp, p['tope_afp']) * tasa_prima
+                    else:
+                        prima_afp = 0.0
+                        obs_trab.append(f"Prima AFP exonerada (Edad límite superada)")
+
                     comis_afp = base_afp_onp * tasa_comision
                     total_afp_ind = aporte_afp + prima_afp + comis_afp
                     if total_afp_ind > 0: desglose_descuentos[f'Aporte {sistema}'] = round(total_afp_ind, 2)
@@ -1910,7 +1929,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
             if aj_afp != 0:
                 desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
-                descuentos_manuales += aj_afp
+                # aj_afp NO se suma a descuentos_manuales: tiene columna propia en la sábana
                 obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
             
             if aj_quinta != 0:
@@ -1949,7 +1968,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 aporte_essalud = max(base_essalud, p['rmv']) * (p['tasa_essalud'] / 100)
                 etiqueta_seguro = "ESSALUD"
             
-            neto_pagar = ingresos_totales - total_pension - retencion_quinta - descuentos_manuales
+            neto_pagar = ingresos_totales - total_pension - aj_afp - retencion_quinta - descuentos_manuales
 
             # --- FILA DE LA SÁBANA CORPORATIVA ---
             resultados.append({
@@ -1966,6 +1985,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "AFP Aporte": round(aporte_afp, 2),
                 "AFP Seguro": round(prima_afp, 2),
                 "AFP Comis.": round(comis_afp, 2),
+                "Ajuste AFP": round(aj_afp, 2),
                 "Ret. 5ta Cat.": float(retencion_quinta),
                 "Dsctos/Faltas": round(descuentos_manuales, 2),
                 "NETO A PAGAR": round(neto_pagar, 2),
@@ -1991,7 +2011,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "seguro_social": etiqueta_seguro,
                 "aporte_seg_social": round(aporte_essalud, 2),
                 "ingresos": desglose_ingresos, "descuentos": desglose_descuentos,
-                "totales": {"ingreso": ingresos_totales, "descuento": (total_pension + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
+                "totales": {"ingreso": ingresos_totales, "descuento": (total_pension + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
                 "quinta": {
                     "rem_previa": rem_previa_historica, "ret_previa": retencion_previa_historica,
                     "base_mes": base_quinta_mes, "meses_restantes": meses_restantes,

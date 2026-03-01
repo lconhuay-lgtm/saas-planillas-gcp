@@ -75,11 +75,17 @@ def render():
 
         st.markdown("<br>---", unsafe_allow_html=True)
         st.subheader("2. Tasas del Sistema Privado de Pensiones (AFP)")
+        edad_maxima_prima = st.number_input(
+            "Edad Límite para Prima de Seguro AFP (Años)",
+            value=int(getattr(p_data, 'edad_maxima_prima_afp', 65) if p_data else 65),
+            step=1, min_value=0, max_value=100,
+            help="Trabajadores con esta edad o más quedan exonerados del descuento de Prima de Seguro AFP."
+        )
         st.markdown(
             "<div style='margin-top: -10px; margin-bottom: 20px;'>"
             "<a href='https://www.sbs.gob.pe/app/spp/empleadores/comisiones_spp/paginas/comision_prima.aspx' "
             "target='_blank' style='font-size: 13px; color: #1f77b4; text-decoration: none; font-weight: 600;'>"
-            "🔗 Consultar Cuadro de Comisiones y Primas Vigentes (Portal Oficial SBS)</a></div>", 
+            "🔗 Consultar Cuadro de Comisiones y Primas Vigentes (Portal Oficial SBS)</a></div>",
             unsafe_allow_html=True
         )
         
@@ -136,6 +142,7 @@ def render():
                 p_db.p_ap = p_ap; p_db.p_pr = p_pr; p_db.p_fl = p_fl; p_db.p_mx = p_mx
                 p_db.pr_ap = pr_ap; p_db.pr_pr = pr_pr; p_db.pr_fl = pr_fl; p_db.pr_mx = pr_mx
                 p_db.tasa_4ta = t_4ta; p_db.tope_4ta = tope_4ta
+                p_db.edad_maxima_prima_afp = edad_maxima_prima
             else: # CREAR NUEVO
                 nuevo = ParametroLegal(
                     empresa_id=empresa_id, periodo_key=periodo_key,
@@ -146,6 +153,7 @@ def render():
                     p_ap=p_ap, p_pr=p_pr, p_fl=p_fl, p_mx=p_mx,
                     pr_ap=pr_ap, pr_pr=pr_pr, pr_fl=pr_fl, pr_mx=pr_mx,
                     tasa_4ta=t_4ta, tope_4ta=tope_4ta,
+                    edad_maxima_prima_afp=edad_maxima_prima,
                 )
                 db.add(nuevo)
             
