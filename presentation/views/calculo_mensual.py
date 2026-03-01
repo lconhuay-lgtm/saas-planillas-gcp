@@ -1907,19 +1907,12 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
             
             if aj_quinta != 0:
-                # Modificamos la retención final sumando el ajuste manual
-                retencion_quinta = round(retencion_quinta + aj_quinta, 2)
-                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
-
-            # Registro oficial en el desglose para la columna "Ret. 5ta Cat."
-            # Nota: Si el resultado es negativo (devolución), se muestra 0 en la columna pero el neto sube
-            if retencion_quinta > 0:
-                desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
-            else:
-                # Si el ajuste hizo que la retención sea <= 0, nos aseguramos de no cobrar nada
-                retencion_quinta = 0.0
-                if 'Retención 5ta Cat.' in desglose_descuentos:
+                retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
+                if retencion_quinta > 0:
+                    desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
+                elif 'Retención 5ta Cat.' in desglose_descuentos:
                     del desglose_descuentos['Retención 5ta Cat.']
+                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
 
             if aj_otros != 0:
                 desglose_descuentos['Ajuste Varios (Audit)'] = round(aj_otros, 2)
