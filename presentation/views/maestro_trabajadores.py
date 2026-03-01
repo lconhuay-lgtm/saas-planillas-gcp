@@ -402,28 +402,6 @@ def render():
         if not trabajadores_db:
             st.info("No hay trabajadores registrados. Use la pestaña 'Alta de Trabajador'.")
         else:
-            # --- Lógica de Ficha PDF ---
-            ficha_id = st.session_state.get('_generar_ficha_id')
-            if ficha_id:
-                t_ficha = db.query(Trabajador).filter_by(id=ficha_id).first()
-                if t_ficha:
-                    st.info(f"📄 Generando ficha de **{t_ficha.nombres}**...")
-                    buf_ficha = generar_pdf_ficha_trabajador(
-                        t_ficha, empresa_nombre, 
-                        st.session_state.get('empresa_activa_ruc', ''), 
-                        regimen_empresa
-                    )
-                    col_fd1, col_fd2 = st.columns([1, 4])
-                    col_fd1.download_button(
-                        "📥 Descargar PDF", data=buf_ficha, 
-                        file_name=f"Ficha_{t_ficha.num_doc}.pdf", mime="application/pdf", type="primary"
-                    )
-                    if col_fd2.button("✖️ Cerrar"):
-                        st.session_state.pop('_generar_ficha_id', None)
-                        st.rerun()
-                    st.markdown("---")
-            # ---------------------------
-
             st.caption(f"{len(trabajadores_db)} trabajador(es) registrado(s)")
             for t in trabajadores_db:
                 determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
@@ -435,9 +413,19 @@ def render():
                     c3.markdown(f"{t.cargo or '—'}")
                     c4.markdown(f"S/ {t.sueldo_base:,.2f}")
                     
-                    if c_pdf.button("📄", key=f"pdf_{t.id}", help="Generar Ficha PDF"):
-                        st.session_state['_generar_ficha_id'] = t.id
-                        st.rerun()
+                    buf_ficha = generar_pdf_ficha_trabajador(
+                        t, empresa_nombre, 
+                        st.session_state.get('empresa_activa_ruc', ''), 
+                        regimen_empresa
+                    )
+                    c_pdf.download_button(
+                        "📄", 
+                        data=buf_ficha, 
+                        file_name=f"Ficha_{t.num_doc}.pdf", 
+                        mime="application/pdf", 
+                        key=f"pdf_dl_{t.id}", 
+                        help="Descargar Ficha PDF"
+                    )
 
                     if c5.button("✏️", key=f"edit_{t.id}", help="Editar trabajador"):
                         st.session_state['_editando_trabajador_id'] = t.id
