@@ -9,8 +9,11 @@ Por favor, realiza un reemplazo estricto en los siguientes archivos. Usa exactam
                 obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
             
             if aj_quinta != 0:
-                desglose_descuentos['Ajuste 5ta Cat (Audit)'] = round(aj_quinta, 2)
-                descuentos_manuales += aj_quinta
+                retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
+                if retencion_quinta > 0:
+                    desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
+                elif 'Retención 5ta Cat.' in desglose_descuentos:
+                    del desglose_descuentos['Retención 5ta Cat.']
                 obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
 
             if aj_otros != 0:
@@ -39,12 +42,21 @@ Por favor, realiza un reemplazo estricto en los siguientes archivos. Usa exactam
             st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
 
         # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
-        tab_plan, tab_loc, tab_notas, tab_ajustes = st.tabs([
+        usuario_rol = st.session_state.get('usuario_rol', '')
+        es_supervisor = usuario_rol in ['supervisor', 'admin']
+
+        tabs_list = [
             "📋 1. Planilla (5ta Cat.)",
             "🧾 2. Locadores (4ta Cat.)",
-            "📝 3. Notas de Gestión",
-            "🔧 4. Ajustes de Auditoría"
-        ])
+            "📝 3. Notas de Gestión"
+        ]
+        if es_supervisor:
+            tabs_list.append("🔧 4. Ajustes de Auditoría")
+
+        tabs = st.tabs(tabs_list)
+        tab_plan = tabs[0]
+        tab_loc = tabs[1]
+        tab_notas = tabs[2]
 
         # ══════════════════════════════════════════════════════════════════════
 *REPLACE*
