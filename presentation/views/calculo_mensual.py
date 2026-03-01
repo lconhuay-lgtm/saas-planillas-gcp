@@ -105,8 +105,15 @@ def _cargar_variables_df(db, empresa_id, periodo_key, conceptos) -> pd.DataFrame
         conceptos_data = json.loads(v.conceptos_json or '{}')
         for nombre in concepto_nombres:
             row[nombre] = conceptos_data.get(nombre, 0.0)
+        # Preservar el JSON completo para que el motor de cálculo pueda leer
+        # los ajustes de auditoría (_ajuste_afp, _ajuste_quinta, _ajuste_otros)
+        row["conceptos_json"] = v.conceptos_json or '{}'
         rows.append(row)
-    return pd.DataFrame(rows).fillna(0.0)
+    df = pd.DataFrame(rows)
+    # fillna solo en columnas numéricas para no borrar el JSON de ajustes
+    cols_num = [c for c in df.columns if c != "conceptos_json"]
+    df[cols_num] = df[cols_num].fillna(0.0)
+    return df
 
 
 def _cargar_conceptos_df(db, empresa_id) -> pd.DataFrame:
