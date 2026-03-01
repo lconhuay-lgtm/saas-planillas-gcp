@@ -1910,7 +1910,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
             if aj_afp != 0:
                 desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
-                descuentos_manuales += aj_afp
+                # aj_afp NO se suma a descuentos_manuales: tiene columna propia en la sábana
                 obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
             
             if aj_quinta != 0:
@@ -1949,7 +1949,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 aporte_essalud = max(base_essalud, p['rmv']) * (p['tasa_essalud'] / 100)
                 etiqueta_seguro = "ESSALUD"
             
-            neto_pagar = ingresos_totales - total_pension - retencion_quinta - descuentos_manuales
+            neto_pagar = ingresos_totales - total_pension - aj_afp - retencion_quinta - descuentos_manuales
 
             # --- FILA DE LA SÁBANA CORPORATIVA ---
             resultados.append({
@@ -1966,6 +1966,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "AFP Aporte": round(aporte_afp, 2),
                 "AFP Seguro": round(prima_afp, 2),
                 "AFP Comis.": round(comis_afp, 2),
+                "Ajuste AFP": round(aj_afp, 2),
                 "Ret. 5ta Cat.": float(retencion_quinta),
                 "Dsctos/Faltas": round(descuentos_manuales, 2),
                 "NETO A PAGAR": round(neto_pagar, 2),
@@ -1991,7 +1992,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 "seguro_social": etiqueta_seguro,
                 "aporte_seg_social": round(aporte_essalud, 2),
                 "ingresos": desglose_ingresos, "descuentos": desglose_descuentos,
-                "totales": {"ingreso": ingresos_totales, "descuento": (total_pension + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
+                "totales": {"ingreso": ingresos_totales, "descuento": (total_pension + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
                 "quinta": {
                     "rem_previa": rem_previa_historica, "ret_previa": retencion_previa_historica,
                     "base_mes": base_quinta_mes, "meses_restantes": meses_restantes,
