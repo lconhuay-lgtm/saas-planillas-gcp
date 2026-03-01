@@ -1907,6 +1907,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
             
             if aj_quinta != 0:
+                # Modificamos directamente la variable de retención para que impacte la columna "Ret. 5ta Cat."
                 retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
                 if retencion_quinta > 0:
                     desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
