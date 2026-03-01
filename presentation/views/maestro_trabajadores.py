@@ -1,6 +1,12 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import io
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, portrait
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from infrastructure.database.connection import get_db
 from infrastructure.database.models import Trabajador, PlanillaMensual
 
@@ -12,6 +18,68 @@ def determinar_regimen_trabajador(fecha_ingreso, regimen_empresa, fecha_acogimie
     if fecha_ingreso < fecha_acogimiento:
         return "Régimen General (Derechos Adquiridos)"
     return regimen_empresa
+
+
+def generar_pdf_ficha_trabajador(t, empresa_nombre, empresa_ruc, regimen_empresa):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=portrait(A4), rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    elements = []
+
+    C_NAVY = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+
+    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=15, textColor=C_NAVY, spaceAfter=5)
+    st_sub = ParagraphStyle('S', fontName="Helvetica", fontSize=9, textColor=colors.HexColor("#64748B"), spaceAfter=20)
+    st_sec = ParagraphStyle('Sec', fontName="Helvetica-Bold", fontSize=11, textColor=C_STEEL, spaceAfter=10, spaceBefore=15)
+
+    elements.append(Paragraph(f"{empresa_nombre.upper()}", st_title))
+    elements.append(Paragraph(f"RUC: {empresa_ruc or '—'}  |  Régimen: {regimen_empresa or '—'}", st_sub))
+    elements.append(Paragraph("FICHA DE REGISTRO DE PERSONAL", ParagraphStyle('H1', fontName="Helvetica-Bold", fontSize=13, alignment=TA_CENTER, spaceAfter=20)))
+
+    # 1. Datos Personales
+    elements.append(Paragraph("1. DATOS PERSONALES", st_sec))
+    f_nac = t.fecha_nac.strftime('%d/%m/%Y') if t.fecha_nac else "—"
+    data_per = [
+        ["Documento:", f"{t.tipo_doc} - {t.num_doc}", "Fecha Nacimiento:", f_nac],
+        ["Nombres:", t.nombres, "Apellidos:", f"{getattr(t, 'apellido_paterno', '')} {getattr(t, 'apellido_materno', '')}".strip()],
+    ]
+    t_per = Table(data_per, colWidths=[100, 160, 110, 140])
+    t_per.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
+    elements.append(t_per)
+
+    # 2. Datos Laborales
+    elements.append(Paragraph("2. DATOS LABORALES", st_sec))
+    f_ing = t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else "—"
+    tipo_c = "Locador de Servicio" if getattr(t, 'tipo_contrato', '') == 'LOCADOR' else "Planilla (5ta Cat.)"
+    data_lab = [
+        ["Tipo Contrato:", tipo_c, "Situación:", t.situacion],
+        ["Cargo / Puesto:", t.cargo or "—", "Fecha Ingreso:", f_ing],
+        ["Sueldo/Honorario:", f"S/ {float(t.sueldo_base or 0):,.2f}", "", ""],
+    ]
+    t_lab = Table(data_lab, colWidths=[100, 160, 110, 140])
+    t_lab.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
+    elements.append(t_lab)
+
+    # 3. Bancarios y Previsionales
+    elements.append(Paragraph("3. DATOS PREVISIONALES Y BANCARIOS", st_sec))
+    data_ban = [
+        ["Banco:", t.banco or "—", "Cuenta:", t.cuenta_bancaria or "—"],
+        ["CCI:", t.cci or "—", "Sist. Pensión:", t.sistema_pension or "—"],
+        ["CUSPP:", t.cuspp or "—", "Comisión AFP:", getattr(t, 'comision_afp', '—') or "—"],
+        ["Seguro Social:", getattr(t, 'seguro_social', '—') or "—", "Asig. Familiar:", "Sí" if t.asig_fam else "No"],
+    ]
+    t_ban = Table(data_ban, colWidths=[100, 160, 110, 140])
+    t_ban.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
+    elements.append(t_ban)
+
+    elements.append(Spacer(1, 60))
+    elements.append(Paragraph("_" * 40, ParagraphStyle('F', alignment=TA_CENTER)))
+    elements.append(Paragraph(f"Firma del Trabajador<br/>DNI: {t.num_doc}", ParagraphStyle('F2', alignment=TA_CENTER, fontName="Helvetica", fontSize=10)))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
 
 def consultar_dni_automatico(dni):
@@ -322,16 +390,43 @@ def render():
         if not trabajadores_db:
             st.info("No hay trabajadores registrados. Use la pestaña 'Alta de Trabajador'.")
         else:
+            # --- Lógica de Ficha PDF ---
+            ficha_id = st.session_state.get('_generar_ficha_id')
+            if ficha_id:
+                t_ficha = db.query(Trabajador).filter_by(id=ficha_id).first()
+                if t_ficha:
+                    st.info(f"📄 Generando ficha de **{t_ficha.nombres}**...")
+                    buf_ficha = generar_pdf_ficha_trabajador(
+                        t_ficha, empresa_nombre, 
+                        st.session_state.get('empresa_activa_ruc', ''), 
+                        regimen_empresa
+                    )
+                    col_fd1, col_fd2 = st.columns([1, 4])
+                    col_fd1.download_button(
+                        "📥 Descargar PDF", data=buf_ficha, 
+                        file_name=f"Ficha_{t_ficha.num_doc}.pdf", mime="application/pdf", type="primary"
+                    )
+                    if col_fd2.button("✖️ Cerrar"):
+                        st.session_state.pop('_generar_ficha_id', None)
+                        st.rerun()
+                    st.markdown("---")
+            # ---------------------------
+
             st.caption(f"{len(trabajadores_db)} trabajador(es) registrado(s)")
             for t in trabajadores_db:
                 determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
                 with st.container(border=True):
-                    c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.6, 0.6])
+                    c1, c2, c3, c4, c_pdf, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.5, 0.5, 0.5])
                     tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
                     c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
                     c2.markdown(f"Doc: `{t.num_doc}`")
                     c3.markdown(f"{t.cargo or '—'}")
                     c4.markdown(f"S/ {t.sueldo_base:,.2f}")
+                    
+                    if c_pdf.button("📄", key=f"pdf_{t.id}", help="Generar Ficha PDF"):
+                        st.session_state['_generar_ficha_id'] = t.id
+                        st.rerun()
+
                     if c5.button("✏️", key=f"edit_{t.id}", help="Editar trabajador"):
                         st.session_state['_editando_trabajador_id'] = t.id
                         st.rerun()

@@ -3,6 +3,7 @@ import streamlit as st
 _ROL_LABEL = {
     "analista":   "Analista de Planillas",
     "supervisor": "Supervisor",
+    "asistente":  "Asistente de Planta",
 }
 
 def render_sidebar():
@@ -64,17 +65,22 @@ def render_sidebar():
 
         st.markdown("---")
 
-        opciones = [
-            "Dashboard Principal",
-            "Parámetros Legales",
-            "Maestro de Personal",
-            "Maestro de Conceptos",
-            "Ingreso de Asistencias",
-            "Cálculo de Planilla",
-            "Préstamos y Descuentos",
-            "Emisión de Boletas",
-            "Reportería",
-        ]
+        if usuario_rol == 'asistente':
+            opciones = [
+                "Maestro de Personal"
+            ]
+        else:
+            opciones = [
+                "Dashboard Principal",
+                "Parámetros Legales",
+                "Maestro de Personal",
+                "Maestro de Conceptos",
+                "Ingreso de Asistencias",
+                "Cálculo de Planilla",
+                "Préstamos y Descuentos",
+                "Emisión de Boletas",
+                "Reportería",
+            ]
 
         # Solo el rol 'admin' puede gestionar usuarios y permisos
         if usuario_rol == 'admin':

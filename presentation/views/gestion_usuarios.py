@@ -22,7 +22,7 @@ def render():
                 new_user = st.text_input("Username*")
                 new_pass = st.text_input("Password*", type="password")
                 nombre = st.text_input("Nombre Completo")
-                rol = st.selectbox("Rol", ["analista", "supervisor", "admin"])
+                rol = st.selectbox("Rol", ["analista", "supervisor", "admin", "asistente"])
                 acceso_total = st.checkbox("Acceso Total (Ver todas las empresas)")
                 
                 todas_empresas = db.query(Empresa).all()
@@ -64,8 +64,8 @@ def render():
                     
                     # Formulario de edición por cada usuario
                     with st.expander(f"⚙️ Editar Permisos: {u.username}"):
-                        edit_rol = st.selectbox("Rol", ["analista", "supervisor", "admin"], 
-                                               index=["analista", "supervisor", "admin"].index(u.rol),
+                        edit_rol = st.selectbox("Rol", ["analista", "supervisor", "admin", "asistente"], 
+                                               index=["analista", "supervisor", "admin", "asistente"].index(u.rol),
                                                key=f"edit_rol_{u.id}")
                         edit_total = st.checkbox("Acceso Total", value=u.acceso_total, key=f"edit_tot_{u.id}")
                         
