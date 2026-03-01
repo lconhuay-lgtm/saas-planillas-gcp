@@ -1,142 +1,53 @@
-Actúa como un Arquitecto de Software Senior experto en Python, Streamlit y ReportLab.
+Actúa como un Arquitecto de Software Senior. Tenemos que corregir un bug visual/lógico en la asignación de "Ajustes de Auditoría" para la 5ta Categoría y añadir una restricción de seguridad basada en roles (RBAC) a la interfaz de pestañas.
 
-Necesitamos implementar un nuevo rol de sistema llamado "asistente" (Asistente de Planta) que tendrá acceso restringido EXCLUSIVAMENTE al "Maestro de Personal". Además, necesitamos generar una "Ficha de Trabajador" en PDF con un estilo corporativo (Business Intelligence) para que los asistentes puedan descargarla tras registrar a alguien.
+DEBES MODIFICAR ESTRICTAMENTE LOS SIGUIENTES 2 ARCHIVOS:
 
-DEBES MODIFICAR LOS SIGUIENTES ARCHIVOS ESTRICTAMENTE mediante programación defensiva:
+1. Modificar `presentation/views/calculo_mensual.py`:
+- Busca la sección `--- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---`.
+- Dentro de esa sección, busca el bloque `if aj_quinta != 0:`.
+- REEMPLAZA todo el bloque `if aj_quinta != 0:` por el siguiente código (asegurándote de no sumarlo a descuentos_manuales):
+```python
+            if aj_quinta != 0:
+                # Modificamos directamente la variable de retención para que impacte la columna "Ret. 5ta Cat."
+                retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
+                if retencion_quinta > 0:
+                    desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
+                elif 'Retención 5ta Cat.' in desglose_descuentos:
+                    del desglose_descuentos['Retención 5ta Cat.']
+                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+Modificar presentation/views/ingreso_asistencias.py:
 
-1. En `presentation/views/gestion_usuarios.py`:
-- En la Pestaña "Crear Usuario" (`tab_crear`), busca la variable `rol = st.selectbox("Rol"...` y cambia la lista para incluir el nuevo rol:
-  `["analista", "supervisor", "admin", "asistente"]`
-- En la Pestaña "Lista de Usuarios" (`tab_lista`), busca la edición `edit_rol = st.selectbox("Rol"...` y modifica tanto la lista como el `.index()` para que incluyan "asistente":
-  `["analista", "supervisor", "admin", "asistente"]`
+Busca la definición actual de las pestañas (alrededor de la línea 100):
+tab_plan, tab_loc, tab_notas, tab_ajustes = st.tabs([...])
 
-2. En `presentation/components/sidebar.py`:
-- En el diccionario `_ROL_LABEL` al inicio del archivo, añade la etiqueta para el nuevo rol:
-  `"asistente": "Asistente de Planta",`
-- Busca la definición de la lista `opciones = [...]` (alrededor de la línea 48). Sustituye esa asignación directa por la siguiente lógica de restricción de accesos:
-  ```python
-        if usuario_rol == 'asistente':
-            opciones = [
-                "Maestro de Personal"
-            ]
-        else:
-            opciones = [
-                "Dashboard Principal",
-                "Parámetros Legales",
-                "Maestro de Personal",
-                "Maestro de Conceptos",
-                "Ingreso de Asistencias",
-                "Cálculo de Planilla",
-                "Préstamos y Descuentos",
-                "Emisión de Boletas",
-                "Reportería",
-            ]
-En presentation/views/maestro_trabajadores.py:
-
-AÑADE estas importaciones en la parte superior del archivo:
+REEMPLAZA esa declaración por esta lógica dinámica de permisos:
 
 Python
-import io
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, portrait
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-CREA la siguiente función generadora de PDF justo antes de def _render_form_trabajador:
+        # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
+        usuario_rol = st.session_state.get('usuario_rol', '')
+        es_supervisor = usuario_rol in ['supervisor', 'admin']
+
+        tabs_list = [
+            "📋 1. Planilla (5ta Cat.)",
+            "🧾 2. Locadores (4ta Cat.)",
+            "📝 3. Notas de Gestión"
+        ]
+        if es_supervisor:
+            tabs_list.append("🔧 4. Ajustes de Auditoría")
+
+        tabs = st.tabs(tabs_list)
+        tab_plan = tabs[0]
+        tab_loc = tabs[1]
+        tab_notas = tabs[2]
+Luego, dirígete hacia el final del archivo y busca la línea:
+with tab_ajustes:
+
+REEMPLÁZALA por:
 
 Python
-def generar_pdf_ficha_trabajador(t, empresa_nombre, empresa_ruc, regimen_empresa):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=portrait(A4), rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
-    elements = []
+        if es_supervisor:
+            tab_ajustes = tabs[3]
+            with tab_ajustes:
+IMPORTANTE: Selecciona todo el código que originalmente estaba dentro del antiguo with tab_ajustes: (desde st.subheader("🔧 Ajustes... hasta el final de la función) y agrégale un nivel de tabulación adicional (4 espacios) hacia la derecha para que quede correctamente anidado dentro del nuevo if es_supervisor:.
 
-    C_NAVY = colors.HexColor("#0F2744")
-    C_STEEL = colors.HexColor("#1E4D8C")
-    C_LIGHT = colors.HexColor("#F0F4F9")
-
-    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=15, textColor=C_NAVY, spaceAfter=5)
-    st_sub = ParagraphStyle('S', fontName="Helvetica", fontSize=9, textColor=colors.HexColor("#64748B"), spaceAfter=20)
-    st_sec = ParagraphStyle('Sec', fontName="Helvetica-Bold", fontSize=11, textColor=C_STEEL, spaceAfter=10, spaceBefore=15)
-
-    elements.append(Paragraph(f"{empresa_nombre.upper()}", st_title))
-    elements.append(Paragraph(f"RUC: {empresa_ruc or '—'}  |  Régimen: {regimen_empresa or '—'}", st_sub))
-    elements.append(Paragraph("FICHA DE REGISTRO DE PERSONAL", ParagraphStyle('H1', fontName="Helvetica-Bold", fontSize=13, alignment=TA_CENTER, spaceAfter=20)))
-
-    # 1. Datos Personales
-    elements.append(Paragraph("1. DATOS PERSONALES", st_sec))
-    f_nac = t.fecha_nac.strftime('%d/%m/%Y') if t.fecha_nac else "—"
-    data_per = [
-        ["Documento:", f"{t.tipo_doc} - {t.num_doc}", "Fecha Nacimiento:", f_nac],
-        ["Nombres:", t.nombres, "Apellidos:", f"{getattr(t, 'apellido_paterno', '')} {getattr(t, 'apellido_materno', '')}".strip()],
-    ]
-    t_per = Table(data_per, colWidths=[100, 160, 110, 140])
-    t_per.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
-    elements.append(t_per)
-
-    # 2. Datos Laborales
-    elements.append(Paragraph("2. DATOS LABORALES", st_sec))
-    f_ing = t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else "—"
-    tipo_c = "Locador de Servicio" if getattr(t, 'tipo_contrato', '') == 'LOCADOR' else "Planilla (5ta Cat.)"
-    data_lab = [
-        ["Tipo Contrato:", tipo_c, "Situación:", t.situacion],
-        ["Cargo / Puesto:", t.cargo or "—", "Fecha Ingreso:", f_ing],
-        ["Sueldo/Honorario:", f"S/ {float(t.sueldo_base or 0):,.2f}", "", ""],
-    ]
-    t_lab = Table(data_lab, colWidths=[100, 160, 110, 140])
-    t_lab.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
-    elements.append(t_lab)
-
-    # 3. Bancarios y Previsionales
-    elements.append(Paragraph("3. DATOS PREVISIONALES Y BANCARIOS", st_sec))
-    data_ban = [
-        ["Banco:", t.banco or "—", "Cuenta:", t.cuenta_bancaria or "—"],
-        ["CCI:", t.cci or "—", "Sist. Pensión:", t.sistema_pension or "—"],
-        ["CUSPP:", t.cuspp or "—", "Comisión AFP:", getattr(t, 'comision_afp', '—') or "—"],
-        ["Seguro Social:", getattr(t, 'seguro_social', '—') or "—", "Asig. Familiar:", "Sí" if t.asig_fam else "No"],
-    ]
-    t_ban = Table(data_ban, colWidths=[100, 160, 110, 140])
-    t_ban.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
-    elements.append(t_ban)
-
-    elements.append(Spacer(1, 60))
-    elements.append(Paragraph("_" * 40, ParagraphStyle('F', alignment=TA_CENTER)))
-    elements.append(Paragraph(f"Firma del Trabajador<br/>DNI: {t.num_doc}", ParagraphStyle('F2', alignment=TA_CENTER, fontName="Helvetica", fontSize=10)))
-
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
-En la función render(), dentro de la sección with tab_lista: (donde se listan los trabajadores):
-Maneja el estado de descarga de ficha. Justo después de if no trabajadores_db: ... else: y ANTES del for t in trabajadores_db:, añade este bloque para renderizar el botón de descarga si el usuario presionó el botón de ficha:
-
-Python
-          # --- Lógica de Ficha PDF ---
-          ficha_id = st.session_state.get('_generar_ficha_id')
-          if ficha_id:
-              t_ficha = db.query(Trabajador).filter_by(id=ficha_id).first()
-              if t_ficha:
-                  st.info(f"📄 Generando ficha de **{t_ficha.nombres}**...")
-                  buf_ficha = generar_pdf_ficha_trabajador(
-                      t_ficha, empresa_nombre, 
-                      st.session_state.get('empresa_activa_ruc', ''), 
-                      regimen_empresa
-                  )
-                  col_fd1, col_fd2 = st.columns([1, 4])
-                  col_fd1.download_button(
-                      "📥 Descargar PDF", data=buf_ficha, 
-                      file_name=f"Ficha_{t_ficha.num_doc}.pdf", mime="application/pdf", type="primary"
-                  )
-                  if col_fd2.button("✖️ Cerrar"):
-                      st.session_state.pop('_generar_ficha_id', None)
-                      st.rerun()
-                  st.markdown("---")
-          # ---------------------------
-Luego, en la iteración de la grilla de trabajadores (for t in trabajadores_db:), modifica las columnas de c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.6, 0.6]) para añadir un séptimo botón:
-c1, c2, c3, c4, c_pdf, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.5, 0.5, 0.5])
-
-Modifica los contenidos para reflejar la nueva columna de PDF. Justo antes del botón de editar (c5.button...), inyecta:
-
-Python
-                  if c_pdf.button("📄", key=f"pdf_{t.id}", help="Generar Ficha PDF"):
-                      st.session_state['_generar_ficha_id'] = t.id
-                      st.rerun()
-Respeta estrictamente la indentación de los for/if y asegúrate de importar lo necesario.
+Realiza los cambios respetando la indentación de Streamlit.
