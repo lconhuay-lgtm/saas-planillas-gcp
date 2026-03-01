@@ -2043,99 +2043,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True, key="dl_plan_pdf")
             except Exception: pass
 
-        st.markdown("---")
-        st.markdown("### 🔒 Cierre de Planilla")
-
-        rol_usuario = st.session_state.get('usuario_rol', 'analista')
-        nombre_usuario = st.session_state.get('usuario_nombre', '')
-
-        estado_actual = "ABIERTA"
-        planilla_db_cierre = None
-        try:
-            db_c = SessionLocal()
-            planilla_db_cierre = db_c.query(PlanillaMensual).filter_by(
-                empresa_id=empresa_id, periodo_key=periodo_key
-            ).first()
-            db_c.close()
-            if planilla_db_cierre:
-                estado_actual = getattr(planilla_db_cierre, 'estado', 'ABIERTA') or 'ABIERTA'
-        except Exception:
-            pass
-
-        if estado_actual == "CERRADA":
-            cerrada_por  = getattr(planilla_db_cierre, 'cerrada_por', '') or ''
-            fecha_cierre = getattr(planilla_db_cierre, 'fecha_cierre', None)
-            fecha_str    = fecha_cierre.strftime("%d/%m/%Y %H:%M") if fecha_cierre else ''
-            st.error(f"**PLANILLA CERRADA** — Responsable: {cerrada_por}  |  Fecha: {fecha_str}")
-            if rol_usuario in ["supervisor", "admin"]:
-                st.info("Como Administrador/Supervisor puede reabrir esta planilla para modificarla.")
-                if st.button("🔓 Reabrir Planilla", use_container_width=False):
-                    try:
-                        db_up = SessionLocal()
-                        p = db_up.query(PlanillaMensual).filter_by(
-                            empresa_id=empresa_id, periodo_key=periodo_key
-                        ).first()
-                        p.estado = "ABIERTA"
-                        p.cerrada_por = None
-                        p.fecha_cierre = None
-                        # Revertir cuotas de préstamos a PENDIENTE
-                        _cuotas_rev = (
-                            db_up.query(CuotaPrestamo)
-                            .join(Prestamo)
-                            .filter(
-                                Prestamo.empresa_id == empresa_id,
-                                CuotaPrestamo.periodo_key == periodo_key,
-                                CuotaPrestamo.estado == 'PAGADA',
-                            )
-                            .all()
-                        )
-                        for _cr in _cuotas_rev:
-                            _cr.estado = 'PENDIENTE'
-                        db_up.commit()
-                        db_up.close()
-                        st.toast("Planilla REABIERTA para edición", icon="🔓")
-                        st.rerun()
-                    except Exception as e_re:
-                        st.error(f"Error al reabrir: {e_re}")
-            else:
-                st.warning("Solo un **Supervisor** puede reabrir esta planilla.")
-        else:
-            st.info("La planilla está **ABIERTA**. Puede recalcularse hasta que sea cerrada.")
-            if rol_usuario == "supervisor":
-                with st.expander("Cerrar Planilla"):
-                    st.warning("Al cerrar la planilla quedará bloqueada para el analista.")
-                    if st.button("Confirmar Cierre de Planilla", type="primary"):
-                        try:
-                            db_up = SessionLocal()
-                            p = db_up.query(PlanillaMensual).filter_by(
-                                empresa_id=empresa_id, periodo_key=periodo_key
-                            ).first()
-                            p.estado = "CERRADA"
-                            p.cerrada_por = nombre_usuario
-                            p.fecha_cierre = datetime.now()
-                            # Marcar cuotas del periodo como PAGADAS
-                            _cuotas_pag = (
-                                db_up.query(CuotaPrestamo)
-                                .join(Prestamo)
-                                .filter(
-                                    Prestamo.empresa_id == empresa_id,
-                                    CuotaPrestamo.periodo_key == periodo_key,
-                                    CuotaPrestamo.estado == 'PENDIENTE',
-                                )
-                                .all()
-                            )
-                            for _cp in _cuotas_pag:
-                                _cp.estado = 'PAGADA'
-                            db_up.commit()
-                            db_up.close()
-                            db_up.commit()
-                            db_up.close()
-                            st.toast(f"Planilla {periodo_key} CERRADA exitosamente", icon="🔒")
-                            st.rerun()
-                        except Exception as e_cl:
-                            st.error(f"Error al cerrar: {e_cl}")
-            else:
-                st.info("Solo un **Supervisor** puede cerrar la planilla.")
 
 
 # ─── MOTOR DE HONORARIOS (4ta Categoría) ─────────────────────────────────────
@@ -2489,4 +2396,112 @@ def render():
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                     )
+
+    # ── SECCIÓN GLOBAL DE CIERRE DEL PERIODO ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔒 Cierre del Periodo")
+
+    rol_usuario = st.session_state.get('usuario_rol', 'analista')
+    nombre_usuario = st.session_state.get('usuario_nombre', '')
+
+    estado_actual = "ABIERTA"
+    planilla_db_cierre = None
+    try:
+        db_c = SessionLocal()
+        planilla_db_cierre = db_c.query(PlanillaMensual).filter_by(
+            empresa_id=empresa_id, periodo_key=periodo_key
+        ).first()
+        db_c.close()
+        if planilla_db_cierre:
+            estado_actual = getattr(planilla_db_cierre, 'estado', 'ABIERTA') or 'ABIERTA'
+    except Exception:
+        pass
+
+    if estado_actual == "CERRADA":
+        cerrada_por  = getattr(planilla_db_cierre, 'cerrada_por', '') or '—'
+        fecha_cierre = getattr(planilla_db_cierre, 'fecha_cierre', None)
+        fecha_str    = fecha_cierre.strftime("%d/%m/%Y %H:%M") if fecha_cierre else '—'
+        st.error(f"**PERIODO CERRADO** — Responsable: {cerrada_por}  |  Fecha: {fecha_str}")
+        if rol_usuario in ["supervisor", "admin"]:
+            st.info("Como Administrador/Supervisor puede reabrir este periodo para modificaciones.")
+            if st.button("🔓 Reabrir Periodo", use_container_width=False):
+                try:
+                    db_up = SessionLocal()
+                    p = db_up.query(PlanillaMensual).filter_by(
+                        empresa_id=empresa_id, periodo_key=periodo_key
+                    ).first()
+                    if p:
+                        p.estado = "ABIERTA"
+                        p.cerrada_por = None
+                        p.fecha_cierre = None
+                        # Revertir cuotas de préstamos a PENDIENTE
+                        _cuotas_rev = (
+                            db_up.query(CuotaPrestamo)
+                            .join(Prestamo)
+                            .filter(
+                                Prestamo.empresa_id == empresa_id,
+                                CuotaPrestamo.periodo_key == periodo_key,
+                                CuotaPrestamo.estado == 'PAGADA',
+                            )
+                            .all()
+                        )
+                        for _cr in _cuotas_rev:
+                            _cr.estado = 'PENDIENTE'
+                        db_up.commit()
+                        db_up.close()
+                        st.toast("Periodo REABIERTO para edición", icon="🔓")
+                        st.rerun()
+                except Exception as e_re:
+                    st.error(f"Error al reabrir: {e_re}")
+        else:
+            st.warning("Solo un **Supervisor** o **Admin** puede reabrir este periodo.")
+    else:
+        st.info(f"El periodo **{periodo_key}** está **ABIERTO**. Puede recalcularse hasta que sea cerrado.")
+        if rol_usuario in ["supervisor", "admin"]:
+            with st.expander("Cerrar Periodo"):
+                st.warning("Al cerrar el periodo se bloquearán las ediciones y asistencias.")
+                if st.button("Confirmar Cierre de Periodo", type="primary"):
+                    try:
+                        db_up = SessionLocal()
+                        p = db_up.query(PlanillaMensual).filter_by(
+                            empresa_id=empresa_id, periodo_key=periodo_key
+                        ).first()
+                        
+                        # Inyección: Crear registro si el mes solo tiene locadores y no se generó planilla 5ta
+                        if not p:
+                            p = PlanillaMensual(
+                                empresa_id=empresa_id,
+                                periodo_key=periodo_key,
+                                resultado_json="[]",
+                                auditoria_json="{}"
+                            )
+                            db_up.add(p)
+                            db_up.flush()
+
+                        p.estado = "CERRADA"
+                        p.cerrada_por = nombre_usuario
+                        p.fecha_cierre = datetime.now()
+                        
+                        # Marcar cuotas del periodo como PAGADAS
+                        _cuotas_pag = (
+                            db_up.query(CuotaPrestamo)
+                            .join(Prestamo)
+                            .filter(
+                                Prestamo.empresa_id == empresa_id,
+                                CuotaPrestamo.periodo_key == periodo_key,
+                                CuotaPrestamo.estado == 'PENDIENTE',
+                            )
+                            .all()
+                        )
+                        for _cp in _cuotas_pag:
+                            _cp.estado = 'PAGADA'
+                        
+                        db_up.commit()
+                        db_up.close()
+                        st.toast(f"Periodo {periodo_key} CERRADO exitosamente", icon="🔒")
+                        st.rerun()
+                    except Exception as e_cl:
+                        st.error(f"Error al cerrar: {e_cl}")
+        else:
+            st.info("Solo un **Supervisor** o **Admin** puede cerrar el periodo.")
 
