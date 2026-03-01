@@ -179,94 +179,83 @@ def _limpiar_texto_bcp(texto: str) -> str:
     s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     return s.replace('Ñ', 'N').strip()
 
-def generar_txt_bcp(df_planilla: pd.DataFrame, cuenta_cargo: str, fecha_pago: date, df_loc: pd.DataFrame = None) -> io.BytesIO:
-    """Genera el TXT de Pago Masivo para Telecrédito BCP."""
-    # 1. Consolidar personal (Planilla + Locadores si existen)
+def generar_txt_bcp(df_planilla: pd.DataFrame, cuenta_cargo: str, fecha_pago: date, df_loc: pd.DataFrame = None, solo_bcp: bool = False) -> io.BytesIO:
+    """Genera el TXT de Pago Masivo para Telecrédito BCP (layout estricto 195 chars por detalle, CRLF)."""
     p_data = df_planilla[df_planilla['Apellidos y Nombres'] != 'TOTALES'].copy()
     p_data = p_data[p_data['NETO A PAGAR'] > 0]
-    
+
     personal = []
-    for _, r in p_data.iterrows():
+
+    def _agregar_personal(dni, nombre, cuenta_raw, neto):
+        cuenta_limpia = str(cuenta_raw).replace("-", "").strip()
+        if not cuenta_limpia or cuenta_limpia.upper() in ('NAN', 'NONE', ''):
+            return  # Sin cuenta bancaria → omitir
+        es_cci = len(cuenta_limpia) >= 20
+        if solo_bcp and es_cci:
+            return  # Filtrar interbancarias cuando se pide solo BCP
         personal.append({
-            'nombre': r['Apellidos y Nombres'],
-            'cuenta': str(r.get('N° Cuenta', r.get('Cuenta Bancaria', ''))).replace("-", ""),
-            'dni': str(r['DNI']),
-            'neto': float(r['NETO A PAGAR']),
-            'tipo_doc': "1" if len(str(r['DNI'])) == 8 else "3" # 1=DNI, 3=CE
+            'nombre': nombre,
+            'cuenta': cuenta_limpia,
+            'dni': str(dni).strip(),
+            'neto': float(neto),
+            'tipo_doc': "1" if len(str(dni).strip()) == 8 else "3"
         })
-    
+
+    for _, r in p_data.iterrows():
+        cta = r.get('N° Cuenta', r.get('Cuenta Bancaria', ''))
+        if not cta or str(cta).strip() in ('nan', 'None', ''):
+            cta = r.get('CCI', '')
+        _agregar_personal(r['DNI'], r['Apellidos y Nombres'], cta, r['NETO A PAGAR'])
+
     if df_loc is not None and not df_loc.empty:
         l_data = df_loc[df_loc['NETO A PAGAR'] > 0]
         for _, r in l_data.iterrows():
-            personal.append({
-                'nombre': r.get('Locador', r.get('Nombres y Apellidos', '')),
-                'cuenta': str(r.get('N° Cuenta', r.get('CCI', ''))).replace("-", ""),
-                'dni': str(r['DNI']),
-                'neto': float(r['NETO A PAGAR']),
-                'tipo_doc': "1" if len(str(r['DNI'])) == 8 else "3"
-            })
+            cta = r.get('N° Cuenta', r.get('CCI', ''))
+            nombre_loc = r.get('Locador', r.get('Nombres y Apellidos', ''))
+            _agregar_personal(r['DNI'], nombre_loc, cta, r['NETO A PAGAR'])
 
     if not personal:
-        raise ValueError("No hay pagos pendientes con monto mayor a cero.")
+        raise ValueError("No hay trabajadores válidos con monto a pagar y cuenta bancaria para los filtros seleccionados.")
 
-    # 2. Cálculos globales
-    cuenta_cargo_clean = str(cuenta_cargo).replace("-", "")
+    cuenta_cargo_clean = str(cuenta_cargo).replace("-", "").strip()
     sum_netos = sum(p['neto'] for p in personal)
-    monto_total_str = str(int(round(sum_netos * 100))).zfill(17)
+    monto_total_str = f"{sum_netos:.2f}".zfill(17)
     fecha_pago_str = fecha_pago.strftime("%Y%m%d")
 
-    # Checksum BCP
     sumatoria_cuentas = int(cuenta_cargo_clean[:11] or 0)
     for p in personal:
         c = p['cuenta']
-        if len(c) >= 20: # CCI
+        if len(c) >= 20:
             sumatoria_cuentas += int(c[:10] or 0)
-        else: # BCP (13 o 14)
+        else:
             sumatoria_cuentas += int(c[:11] or 0)
-    
     checksum = str(sumatoria_cuentas).zfill(15)
 
-    # 3. REGISTRO DE CABECERA
     lineas = []
+    # Cabecera: subtipo "O" obligatorio según spec BCP
     cabecera = (
-        f"1"                                  # Tipo
-        f"{str(len(personal)).zfill(6)}"      # Cant abonos
-        f"{fecha_pago_str}"                    # Fecha Proceso
-        f" "                                   # Subtipo
-        f"C"                                   # Tipo Cta Cargo (C=Corriente)
-        f"0001"                                # Moneda (Soles)
-        f"{cuenta_cargo_clean.ljust(20)}"      # Cta Cargo
-        f"{monto_total_str}"                   # Monto Total
-        f"{'PAGO PLANILLA'.ljust(40)}"         # Referencia
-        f"{checksum}"                          # Checksum
+        f"1{str(len(personal)).zfill(6)}{fecha_pago_str}OC0001"
+        f"{cuenta_cargo_clean.ljust(20)}{monto_total_str}"
+        f"{'PAGO PLANILLA'.ljust(40)}{checksum}"
     )
     lineas.append(cabecera)
 
-    # 4. REGISTROS DE DETALLE
     for p in personal:
         cta = p['cuenta']
-        t_cta = "I" if len(cta) >= 20 else ("C" if len(cta) == 14 else "A") # I=Interbancaria, C=Corriente, A=Ahorro
-        monto_p = str(int(round(p['neto'] * 100))).zfill(17)
+        t_cta = "I" if len(cta) >= 20 else ("C" if len(cta) == 14 else "A")
+        monto_p = f"{p['neto']:.2f}".zfill(17)
         nombre_clean = _limpiar_texto_bcp(p['nombre'])[:75]
-        
+
+        # Layout estricto 195 caracteres (sin campo correlativo que rompía la trama)
         detalle = (
-            f"2"                               # Tipo
-            f"{t_cta}"                         # Tipo Cta Abono
-            f"{cta.ljust(20)}"                 # Cta Abono
-            f"{p['tipo_doc']}"                 # Tipo Doc
-            f"{p['dni'].ljust(15)}"            # Num Doc
-            f"   "                             # Correlativo
-            f"{nombre_clean.ljust(75)}"        # Nombre
-            f"{'HABERES'.ljust(40)}"           # Ref Beneficiario
-            f"{'PLANILLA'.ljust(20)}"          # Ref Empresa
-            f"0001"                            # Moneda Abono
-            f"{monto_p}"                       # Monto Abono
-            f"S"                               # IDC
+            f"2{t_cta}{cta.ljust(20)}{p['tipo_doc']}{p['dni'].ljust(15)}"
+            f"{nombre_clean.ljust(75)}{'HABERES'.ljust(40)}{'PLANILLA'.ljust(20)}"
+            f"0001{monto_p}S"
         )
         lineas.append(detalle)
 
     output = io.BytesIO()
-    output.write("\n".join(lineas).encode('utf-8'))
+    output.write("\r\n".join(lineas).encode('utf-8'))  # CRLF estándar Windows para validadores bancarios
     output.seek(0)
     return output
 
