@@ -12,6 +12,8 @@ En `infrastructure/database/models.py`, añade el campo `honorarios_json` a la t
     resultado_json = Column(Text, nullable=False)
     # Datos de auditoría por trabajador (desglose detallado)
     auditoria_json = Column(Text, nullable=False)
+    # NUEVO: Resultados calculados de locadores (snapshot)
+    honorarios_json = Column(Text, default='[]')
 
     # Cierre de planilla
 ====
@@ -141,6 +143,17 @@ En el archivo `presentation/views/calculo_mensual.py`, dentro de la función `_r
         
         df_loc_res = pd.DataFrame(resultados_loc)
         st.session_state[f'res_honorarios_{periodo_key}'] = df_loc_res
+        
+        # Guardar snapshot de honorarios en BD de forma independiente si la planilla ya existe
+        try:
+            db_upd = SessionLocal()
+            plan_exist = db_upd.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            if plan_exist:
+                plan_exist.honorarios_json = df_loc_res.to_json(orient='records', date_format='iso')
+                db_upd.commit()
+            db_upd.close()
+        except Exception:
+            pass
         
         # Guardar snapshot de honorarios en BD de forma independiente si la planilla ya existe
         try:

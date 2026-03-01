@@ -454,9 +454,11 @@ def render():
         try:
             from presentation.views.calculo_mensual import generar_pdf_tesoreria
             
-            # LECTURA DE SNAPSHOT (Industrial Standard): Leer JSON guardado
+            # LECTURA DE SNAPSHOT (Congelado en BD)
             hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
             df_loc_t = pd.read_json(io.StringIO(hon_json_str), orient='records')
+            if df_loc_t is None:
+                df_loc_t = pd.DataFrame()
 
             # KPIs
             if not df_loc_t.empty:
@@ -525,6 +527,10 @@ def render():
                     hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
                     df_loc_bcp = pd.read_json(io.StringIO(hon_json_str), orient='records')
                     
+                    # Mapeo de seguridad para cuentas bancarias en Snapshot BCP
+                    if not df_loc_bcp.empty and 'N° Cuenta' not in df_loc_bcp.columns:
+                        df_loc_bcp['N° Cuenta'] = df_loc_bcp.apply(lambda r: str(r.get('cuenta_bancaria', '') or '') if str(r.get('Banco', '') or '') == 'BCP' else str(r.get('CCI', '') or ''), axis=1)
+
                     txt_bcp = generar_txt_bcp(df_planilla, cta_cargo, f_pago, df_loc=df_loc_bcp, solo_bcp=solo_bcp_flag)
                     st.download_button(
                         f"⬇️ Descargar BCP_HABERES_{f_pago.strftime('%Y%m%d')}.txt",
@@ -563,6 +569,8 @@ def render():
                 # LECTURA DE SNAPSHOT
                 hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
                 df_base_p = pd.read_json(io.StringIO(hon_json_str), orient='records')
+                if df_base_p is None:
+                    df_base_p = pd.DataFrame()
                 cols_disp = list(df_base_p.columns)
 
             if df_base_p.empty:
