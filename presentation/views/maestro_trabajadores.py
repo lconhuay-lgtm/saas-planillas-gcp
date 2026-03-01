@@ -40,9 +40,21 @@ def generar_pdf_ficha_trabajador(t, empresa_nombre, empresa_ruc, regimen_empresa
     # 1. Datos Personales
     elements.append(Paragraph("1. DATOS PERSONALES", st_sec))
     f_nac = t.fecha_nac.strftime('%d/%m/%Y') if t.fecha_nac else "—"
+    
+    # Extraer solo los nombres para evitar duplicar apellidos en el PDF
+    _full = t.nombres or ""
+    _ap_pat = getattr(t, 'apellido_paterno', '') or ''
+    _ap_mat = getattr(t, 'apellido_materno', '') or ''
+    _apellidos = f"{_ap_pat} {_ap_mat}".strip()
+    _prefix = _apellidos.upper()
+    if _prefix and _full.upper().startswith(_prefix):
+        _solo_nombres = _full[len(_prefix):].strip()
+    else:
+        _solo_nombres = _full
+
     data_per = [
         ["Documento:", f"{t.tipo_doc} - {t.num_doc}", "Fecha Nacimiento:", f_nac],
-        ["Nombres:", t.nombres, "Apellidos:", f"{getattr(t, 'apellido_paterno', '')} {getattr(t, 'apellido_materno', '')}".strip()],
+        ["Nombres:", _solo_nombres, "Apellidos:", _apellidos],
     ]
     t_per = Table(data_per, colWidths=[100, 160, 110, 140])
     t_per.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
