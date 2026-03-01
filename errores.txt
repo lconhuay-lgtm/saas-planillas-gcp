@@ -1,124 +1,142 @@
-Actúa como un Desarrollador Senior experto en Python y ReportLab.
+Actúa como un Arquitecto de Software Senior experto en Python, Streamlit y ReportLab.
 
-Necesitamos añadir la columna de "Otros Pagos" al Reporte de Tesorería en la sección de "Locadores de Servicio", para justificar los bonos adicionales antes del Pago Bruto.
+Necesitamos implementar un nuevo rol de sistema llamado "asistente" (Asistente de Planta) que tendrá acceso restringido EXCLUSIVAMENTE al "Maestro de Personal". Además, necesitamos generar una "Ficha de Trabajador" en PDF con un estilo corporativo (Business Intelligence) para que los asistentes puedan descargarla tras registrar a alguien.
 
-DEBES MODIFICAR ÚNICAMENTE EL ARCHIVO `presentation/views/calculo_mensual.py`, específicamente dentro de la función `generar_pdf_tesoreria`.
+DEBES MODIFICAR LOS SIGUIENTES ARCHIVOS ESTRICTAMENTE mediante programación defensiva:
 
-Sigue estrictamente estos 5 pasos de reemplazo:
+1. En `presentation/views/gestion_usuarios.py`:
+- En la Pestaña "Crear Usuario" (`tab_crear`), busca la variable `rol = st.selectbox("Rol"...` y cambia la lista para incluir el nuevo rol:
+  `["analista", "supervisor", "admin", "asistente"]`
+- En la Pestaña "Lista de Usuarios" (`tab_lista`), busca la edición `edit_rol = st.selectbox("Rol"...` y modifica tanto la lista como el `.index()` para que incluyan "asistente":
+  `["analista", "supervisor", "admin", "asistente"]`
 
-1. Busca la definición de `headers_l` en la sección de Locadores (alrededor de la línea 750) y modifícala:
-REEMPLAZA ESTO:
-```python
-        headers_l = ["N°", "DNI", "Nombres y Apellidos", "Honorario Base"]
-        if has_dias_lab:
-            headers_l.append("Días Laborados")
-        headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco"]
-POR ESTO:
-
-Python
-        headers_l = ["N°", "DNI", "Nombres y Apellidos", "Honorario Base"]
-        if has_dias_lab:
-            headers_l.append("Días Laborados")
-        headers_l += ["Otros Pagos", "Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco"]
-Ajusta el diccionario de anchos col_w_lmap un poco más abajo:
-REEMPLAZA ESTO:
-
-Python
-        col_w_lmap = {
-            "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
-            "Honorario Base": 60, "Días Laborados": 48,
-            "Pago Bruto": 60, "Retención 4ta": 60, "Otros Dsctos": 52, "NETO A PAGAR": 60,
-            "Banco": 52, "N° Cuenta": 70, "CCI": 80,
-        }
-POR ESTO:
-
-Python
-        col_w_lmap = {
-            "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
-            "Honorario Base": 55, "Días Laborados": 45,
-            "Otros Pagos": 52,
-            "Pago Bruto": 55, "Retención 4ta": 55, "Otros Dsctos": 50, "NETO A PAGAR": 55,
-            "Banco": 50, "N° Cuenta": 65, "CCI": 75,
-        }
-Inicializa el acumulador de totales:
-REEMPLAZA ESTO:
-
-Python
-        loc_col = "Locador" if "Locador" in df_loc.columns else df_loc.columns[2]
-        rows_l = [[Paragraph(h, hdr_s) for h in headers_l]]
-        tot_hon = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
-POR ESTO:
-
-Python
-        loc_col = "Locador" if "Locador" in df_loc.columns else df_loc.columns[2]
-        rows_l = [[Paragraph(h, hdr_s) for h in headers_l]]
-        tot_hon = tot_otros_p = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
-Extrae e imprime el valor dentro de la iteración for i, (_, row) in enumerate(df_loc.iterrows())::
-REEMPLAZA ESTO:
-
-Python
-            hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
-            bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
-            ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
-            dscto  = float(row.get("Otros Descuentos", 0.0) or 0.0)
-            neto   = float(row.get("NETO A PAGAR", 0.0) or 0.0)
-            fila   = [str(i + 1), str(row.get("DNI", "") or ""),
-                      Paragraph(str(row.get(loc_col, "") or ""), nom_s),
-                      f"{hon_b:,.2f}"]
-            if has_dias_lab:
-                fila.append(str(dias_lab))
-            fila += [
-                f"{bruto:,.2f}", f"{ret:,.2f}", f"{dscto:,.2f}", f"{neto:,.2f}",
-                str(row.get("Banco", "") or ""),
+2. En `presentation/components/sidebar.py`:
+- En el diccionario `_ROL_LABEL` al inicio del archivo, añade la etiqueta para el nuevo rol:
+  `"asistente": "Asistente de Planta",`
+- Busca la definición de la lista `opciones = [...]` (alrededor de la línea 48). Sustituye esa asignación directa por la siguiente lógica de restricción de accesos:
+  ```python
+        if usuario_rol == 'asistente':
+            opciones = [
+                "Maestro de Personal"
             ]
-            if has_bank_l:
-                fila += [str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
-            rows_l.append(fila)
-            tot_hon += hon_b; tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
-POR ESTO:
-
-Python
-            hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
-            otros_p= float(row.get("Otros Pagos", 0.0) or 0.0)
-            bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
-            ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
-            dscto  = float(row.get("Otros Descuentos", 0.0) or 0.0)
-            neto   = float(row.get("NETO A PAGAR", 0.0) or 0.0)
-            fila   = [str(i + 1), str(row.get("DNI", "") or ""),
-                      Paragraph(str(row.get(loc_col, "") or ""), nom_s),
-                      f"{hon_b:,.2f}"]
-            if has_dias_lab:
-                fila.append(str(dias_lab))
-            fila += [
-                f"{otros_p:,.2f}",
-                f"{bruto:,.2f}", f"{ret:,.2f}", f"{dscto:,.2f}", f"{neto:,.2f}",
-                str(row.get("Banco", "") or ""),
+        else:
+            opciones = [
+                "Dashboard Principal",
+                "Parámetros Legales",
+                "Maestro de Personal",
+                "Maestro de Conceptos",
+                "Ingreso de Asistencias",
+                "Cálculo de Planilla",
+                "Préstamos y Descuentos",
+                "Emisión de Boletas",
+                "Reportería",
             ]
-            if has_bank_l:
-                fila += [str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
-            rows_l.append(fila)
-            tot_hon += hon_b; tot_otros_p += otros_p; tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
-Finalmente, ajusta la fila de totales:
-REEMPLAZA ESTO:
+En presentation/views/maestro_trabajadores.py:
+
+AÑADE estas importaciones en la parte superior del archivo:
 
 Python
-        # Fila de totales locadores: "TOTALES" en columna de nombres (índice 2)
-        tot_l_fila = ["", "", Paragraph("TOTALES", tot_s), f"{tot_hon:,.2f}"]
-        if has_dias_lab:
-            tot_l_fila.append("")
-        tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", ""]
-        if has_bank_l:
-            tot_l_fila += ["", ""]
-        rows_l.append(tot_l_fila)
-POR ESTO:
+import io
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, portrait
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+CREA la siguiente función generadora de PDF justo antes de def _render_form_trabajador:
 
 Python
-        # Fila de totales locadores: "TOTALES" en columna de nombres (índice 2)
-        tot_l_fila = ["", "", Paragraph("TOTALES", tot_s), f"{tot_hon:,.2f}"]
-        if has_dias_lab:
-            tot_l_fila.append("")
-        tot_l_fila += [f"{tot_otros_p:,.2f}", f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", ""]
-        if has_bank_l:
-            tot_l_fila += ["", ""]
-        rows_l.append(tot_l_fila)
-No debes tocar la configuración del canvas ni la sección de Planilla. Ejecuta los reemplazos y haz commit.
+def generar_pdf_ficha_trabajador(t, empresa_nombre, empresa_ruc, regimen_empresa):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=portrait(A4), rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    elements = []
+
+    C_NAVY = colors.HexColor("#0F2744")
+    C_STEEL = colors.HexColor("#1E4D8C")
+    C_LIGHT = colors.HexColor("#F0F4F9")
+
+    st_title = ParagraphStyle('T', fontName="Helvetica-Bold", fontSize=15, textColor=C_NAVY, spaceAfter=5)
+    st_sub = ParagraphStyle('S', fontName="Helvetica", fontSize=9, textColor=colors.HexColor("#64748B"), spaceAfter=20)
+    st_sec = ParagraphStyle('Sec', fontName="Helvetica-Bold", fontSize=11, textColor=C_STEEL, spaceAfter=10, spaceBefore=15)
+
+    elements.append(Paragraph(f"{empresa_nombre.upper()}", st_title))
+    elements.append(Paragraph(f"RUC: {empresa_ruc or '—'}  |  Régimen: {regimen_empresa or '—'}", st_sub))
+    elements.append(Paragraph("FICHA DE REGISTRO DE PERSONAL", ParagraphStyle('H1', fontName="Helvetica-Bold", fontSize=13, alignment=TA_CENTER, spaceAfter=20)))
+
+    # 1. Datos Personales
+    elements.append(Paragraph("1. DATOS PERSONALES", st_sec))
+    f_nac = t.fecha_nac.strftime('%d/%m/%Y') if t.fecha_nac else "—"
+    data_per = [
+        ["Documento:", f"{t.tipo_doc} - {t.num_doc}", "Fecha Nacimiento:", f_nac],
+        ["Nombres:", t.nombres, "Apellidos:", f"{getattr(t, 'apellido_paterno', '')} {getattr(t, 'apellido_materno', '')}".strip()],
+    ]
+    t_per = Table(data_per, colWidths=[100, 160, 110, 140])
+    t_per.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
+    elements.append(t_per)
+
+    # 2. Datos Laborales
+    elements.append(Paragraph("2. DATOS LABORALES", st_sec))
+    f_ing = t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else "—"
+    tipo_c = "Locador de Servicio" if getattr(t, 'tipo_contrato', '') == 'LOCADOR' else "Planilla (5ta Cat.)"
+    data_lab = [
+        ["Tipo Contrato:", tipo_c, "Situación:", t.situacion],
+        ["Cargo / Puesto:", t.cargo or "—", "Fecha Ingreso:", f_ing],
+        ["Sueldo/Honorario:", f"S/ {float(t.sueldo_base or 0):,.2f}", "", ""],
+    ]
+    t_lab = Table(data_lab, colWidths=[100, 160, 110, 140])
+    t_lab.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
+    elements.append(t_lab)
+
+    # 3. Bancarios y Previsionales
+    elements.append(Paragraph("3. DATOS PREVISIONALES Y BANCARIOS", st_sec))
+    data_ban = [
+        ["Banco:", t.banco or "—", "Cuenta:", t.cuenta_bancaria or "—"],
+        ["CCI:", t.cci or "—", "Sist. Pensión:", t.sistema_pension or "—"],
+        ["CUSPP:", t.cuspp or "—", "Comisión AFP:", getattr(t, 'comision_afp', '—') or "—"],
+        ["Seguro Social:", getattr(t, 'seguro_social', '—') or "—", "Asig. Familiar:", "Sí" if t.asig_fam else "No"],
+    ]
+    t_ban = Table(data_ban, colWidths=[100, 160, 110, 140])
+    t_ban.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (0,-1), C_LIGHT), ('BACKGROUND', (2,0), (2,-1), C_LIGHT), ('PADDING', (0,0), (-1,-1), 6)]))
+    elements.append(t_ban)
+
+    elements.append(Spacer(1, 60))
+    elements.append(Paragraph("_" * 40, ParagraphStyle('F', alignment=TA_CENTER)))
+    elements.append(Paragraph(f"Firma del Trabajador<br/>DNI: {t.num_doc}", ParagraphStyle('F2', alignment=TA_CENTER, fontName="Helvetica", fontSize=10)))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+En la función render(), dentro de la sección with tab_lista: (donde se listan los trabajadores):
+Maneja el estado de descarga de ficha. Justo después de if no trabajadores_db: ... else: y ANTES del for t in trabajadores_db:, añade este bloque para renderizar el botón de descarga si el usuario presionó el botón de ficha:
+
+Python
+          # --- Lógica de Ficha PDF ---
+          ficha_id = st.session_state.get('_generar_ficha_id')
+          if ficha_id:
+              t_ficha = db.query(Trabajador).filter_by(id=ficha_id).first()
+              if t_ficha:
+                  st.info(f"📄 Generando ficha de **{t_ficha.nombres}**...")
+                  buf_ficha = generar_pdf_ficha_trabajador(
+                      t_ficha, empresa_nombre, 
+                      st.session_state.get('empresa_activa_ruc', ''), 
+                      regimen_empresa
+                  )
+                  col_fd1, col_fd2 = st.columns([1, 4])
+                  col_fd1.download_button(
+                      "📥 Descargar PDF", data=buf_ficha, 
+                      file_name=f"Ficha_{t_ficha.num_doc}.pdf", mime="application/pdf", type="primary"
+                  )
+                  if col_fd2.button("✖️ Cerrar"):
+                      st.session_state.pop('_generar_ficha_id', None)
+                      st.rerun()
+                  st.markdown("---")
+          # ---------------------------
+Luego, en la iteración de la grilla de trabajadores (for t in trabajadores_db:), modifica las columnas de c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.6, 0.6]) para añadir un séptimo botón:
+c1, c2, c3, c4, c_pdf, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.5, 0.5, 0.5])
+
+Modifica los contenidos para reflejar la nueva columna de PDF. Justo antes del botón de editar (c5.button...), inyecta:
+
+Python
+                  if c_pdf.button("📄", key=f"pdf_{t.id}", help="Generar Ficha PDF"):
+                      st.session_state['_generar_ficha_id'] = t.id
+                      st.rerun()
+Respeta estrictamente la indentación de los for/if y asegúrate de importar lo necesario.
