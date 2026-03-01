@@ -1128,15 +1128,16 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         headers_l = ["N°", "DNI", "Nombres y Apellidos", "Honorario Base"]
         if has_dias_lab:
             headers_l.append("Días Laborados")
-        headers_l += ["Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco"]
+        headers_l += ["Otros Pagos", "Pago Bruto", "Retención 4ta", "Otros Dsctos", "NETO A PAGAR", "Banco"]
         if has_bank_l:
             headers_l += ["N° Cuenta", "CCI"]
 
         col_w_lmap = {
             "N°": 20, "DNI": 48, "Nombres y Apellidos": 110,
-            "Honorario Base": 60, "Días Laborados": 48,
-            "Pago Bruto": 60, "Retención 4ta": 60, "Otros Dsctos": 52, "NETO A PAGAR": 60,
-            "Banco": 52, "N° Cuenta": 70, "CCI": 80,
+            "Honorario Base": 55, "Días Laborados": 45,
+            "Otros Pagos": 52,
+            "Pago Bruto": 55, "Retención 4ta": 55, "Otros Dsctos": 50, "NETO A PAGAR": 55,
+            "Banco": 50, "N° Cuenta": 65, "CCI": 75,
         }
         col_w_l = [col_w_lmap.get(h, 55) for h in headers_l]
         total_wl = sum(col_w_l)
@@ -1144,7 +1145,7 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
 
         loc_col = "Locador" if "Locador" in df_loc.columns else df_loc.columns[2]
         rows_l = [[Paragraph(h, hdr_s) for h in headers_l]]
-        tot_hon = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
+        tot_hon = tot_otros_p = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
 
         for i, (_, row) in enumerate(df_loc.iterrows()):
             # Ajuste visual para Tesorería: días efectivamente laborados
@@ -1170,6 +1171,7 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             dias_lab = max(0, dias_vinc - total_susp)
             
             hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
+            otros_p= float(row.get("Otros Pagos", 0.0) or 0.0)
             bruto  = float(row.get("Pago Bruto", 0.0) or 0.0)
             ret    = float(row.get("Retención 4ta (8%)", 0.0) or 0.0)
             dscto  = float(row.get("Otros Descuentos", 0.0) or 0.0)
@@ -1180,19 +1182,20 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             if has_dias_lab:
                 fila.append(str(dias_lab))
             fila += [
+                f"{otros_p:,.2f}",
                 f"{bruto:,.2f}", f"{ret:,.2f}", f"{dscto:,.2f}", f"{neto:,.2f}",
                 str(row.get("Banco", "") or ""),
             ]
             if has_bank_l:
                 fila += [str(row.get("N° Cuenta", "") or ""), str(row.get("CCI", "") or "")]
             rows_l.append(fila)
-            tot_hon += hon_b; tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
+            tot_hon += hon_b; tot_otros_p += otros_p; tot_bruto += bruto; tot_ret += ret; tot_dscto += dscto; tot_neto += neto
 
         # Fila de totales locadores: "TOTALES" en columna de nombres (índice 2)
         tot_l_fila = ["", "", Paragraph("TOTALES", tot_s), f"{tot_hon:,.2f}"]
         if has_dias_lab:
             tot_l_fila.append("")
-        tot_l_fila += [f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", ""]
+        tot_l_fila += [f"{tot_otros_p:,.2f}", f"{tot_bruto:,.2f}", f"{tot_ret:,.2f}", f"{tot_dscto:,.2f}", f"{tot_neto:,.2f}", ""]
         if has_bank_l:
             tot_l_fila += ["", ""]
         rows_l.append(tot_l_fila)
