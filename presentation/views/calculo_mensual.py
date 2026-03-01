@@ -598,12 +598,12 @@ def generar_pdf_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc="", 
     cols = [c for c in df_loc.columns if c not in cols_excluir]
     
     col_widths_map = {
-        "DNI": 55, "Locador": 130,
-        "Honorario Base": 70, "Días no Prestados": 60,
-        "Días Laborados": 60, "Descuento Días": 65, 
-        "Otros Pagos": 65, "Pago Bruto": 65, 
-        "Retención 4ta (8%)": 72, "Otros Descuentos": 70, 
-        "NETO A PAGAR": 70,
+        "DNI": 55, "Locador": 120,
+        "Honorario Base": 65, "Días no Prestados": 55,
+        "Días Laborados": 55, "Descuento Días": 60, 
+        "Otros Pagos": 60, "Pago Bruto": 60, 
+        "Retención 4ta (8%)": 70, "Otros Descuentos": 65, 
+        "NETO A PAGAR": 65,
     }
     col_w = [col_widths_map.get(c, 60) for c in cols]
     total_w = sum(col_w)
@@ -757,7 +757,7 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
 
     fecha_calc = datetime.now().strftime("%d/%m/%Y %H:%M")
     ruc_line = f"  |  RUC: {empresa_ruc}" if empresa_ruc else ""
-    elements.append(Paragraph(empresa_nombre + ruc_line, st_title))
+    elements.append(Paragraph(empresa_nombre.upper() + ruc_line, st_title))
     elements.append(Paragraph(
         f"REPORTE CONSOLIDADO DE COSTO LABORAL  ·  PERIODO: {periodo_texto}", st_head
     ))
@@ -1168,6 +1168,7 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             except:
                 total_susp = int(row.get("Días no Prestados", 0) or 0)
 
+            # Corrección visual: evitar restar dos veces (suspensiones ya restadas arriba)
             dias_lab = max(0, dias_vinc - total_susp)
             
             hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
