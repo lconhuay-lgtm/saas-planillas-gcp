@@ -1,28 +1,46 @@
-Actúa como un Arquitecto de Software Senior. Tenemos que corregir un bug visual/lógico en la asignación de "Ajustes de Auditoría" para la 5ta Categoría y añadir una restricción de seguridad basada en roles (RBAC) a la interfaz de pestañas.
+Actúa como un Desarrollador Senior. El intento anterior falló porque no encontraste las referencias exactas. Realiza un SEARCH & REPLACE estricto en los siguientes archivos.
 
-DEBES MODIFICAR ESTRICTAMENTE LOS SIGUIENTES 2 ARCHIVOS:
+1. Abre `presentation/views/calculo_mensual.py` y busca EXACTAMENTE este bloque:
 
-1. Modificar `presentation/views/calculo_mensual.py`:
-- Busca la sección `--- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---`.
-- Dentro de esa sección, busca el bloque `if aj_quinta != 0:`.
-- REEMPLAZA todo el bloque `if aj_quinta != 0:` por el siguiente código (asegurándote de no sumarlo a descuentos_manuales):
-```python
+<<<<
             if aj_quinta != 0:
-                # Modificamos directamente la variable de retención para que impacte la columna "Ret. 5ta Cat."
+                desglose_descuentos['Ajuste 5ta Cat (Audit)'] = round(aj_quinta, 2)
+                descuentos_manuales += aj_quinta
+                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+====
+REEMPLÁZALO POR:
+>>>>
+            if aj_quinta != 0:
                 retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
                 if retencion_quinta > 0:
                     desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
                 elif 'Retención 5ta Cat.' in desglose_descuentos:
                     del desglose_descuentos['Retención 5ta Cat.']
                 obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
-Modificar presentation/views/ingreso_asistencias.py:
+<<<<
 
-Busca la definición actual de las pestañas (alrededor de la línea 100):
-tab_plan, tab_loc, tab_notas, tab_ajustes = st.tabs([...])
 
-REEMPLAZA esa declaración por esta lógica dinámica de permisos:
+2. Abre `presentation/views/ingreso_asistencias.py` y busca EXACTAMENTE este bloque:
 
-Python
+<<<<
+        # Mostrar mensajes de éxito diferidos (tras rerun)
+        if st.session_state.get('_msg_asistencia'):
+            st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
+
+        # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
+        tab_plan, tab_loc, tab_notas, tab_ajustes = st.tabs([
+            "📋 1. Planilla (5ta Cat.)",
+            "🧾 2. Locadores (4ta Cat.)",
+            "📝 3. Notas de Gestión",
+            "🔧 4. Ajustes de Auditoría"
+        ])
+====
+REEMPLÁZALO POR:
+>>>>
+        # Mostrar mensajes de éxito diferidos (tras rerun)
+        if st.session_state.get('_msg_asistencia'):
+            st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
+
         # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
         usuario_rol = st.session_state.get('usuario_rol', '')
         es_supervisor = usuario_rol in ['supervisor', 'admin']
@@ -39,15 +57,25 @@ Python
         tab_plan = tabs[0]
         tab_loc = tabs[1]
         tab_notas = tabs[2]
-Luego, dirígete hacia el final del archivo y busca la línea:
-with tab_ajustes:
+<<<<
 
-REEMPLÁZALA por:
 
-Python
+3. En el mismo archivo `presentation/views/ingreso_asistencias.py`, busca EXACTAMENTE este bloque más abajo:
+
+<<<<
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 4 — AJUSTES DE AUDITORÍA (SAP/ORACLE STYLE)
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_ajustes:
+====
+REEMPLÁZALO POR:
+>>>>
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 4 — AJUSTES DE AUDITORÍA (SAP/ORACLE STYLE)
+        # ══════════════════════════════════════════════════════════════════════
         if es_supervisor:
             tab_ajustes = tabs[3]
             with tab_ajustes:
-IMPORTANTE: Selecciona todo el código que originalmente estaba dentro del antiguo with tab_ajustes: (desde st.subheader("🔧 Ajustes... hasta el final de la función) y agrégale un nivel de tabulación adicional (4 espacios) hacia la derecha para que quede correctamente anidado dentro del nuevo if es_supervisor:.
+<<<<
 
-Realiza los cambios respetando la indentación de Streamlit.
+Importante: Luego de hacer el paso 3, asegúrate de AGREGAR 4 ESPACIOS ADICIONALES (un nivel de indentación) a todo el código que está debajo de `with tab_ajustes:` hasta el final del bloque `with tab_ajustes:`, para que no rompa la sintaxis de Python por el nuevo `if es_supervisor:`. Guarda los cambios.
