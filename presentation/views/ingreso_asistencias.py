@@ -287,7 +287,20 @@ def render():
                                 v_exist.hrs_extras_25    = float(fila_t["Hrs Extras 25%"] or 0.0)
                                 v_exist.hrs_extras_35    = float(fila_t["Hrs Extras 35%"] or 0.0)
                                 v_exist.suspensiones_json = json.dumps(susp_dict)
-                                v_exist.conceptos_json   = json.dumps(conceptos_data)
+                                
+                                # Fusión de conceptos: preservar ajustes de auditoría
+                                try:
+                                    cj_actual = json.loads(v_exist.conceptos_json or '{}')
+                                except:
+                                    cj_actual = {}
+                                
+                                # Limpiar solo conceptos operativos antiguos (no ajustes)
+                                for c in conceptos_ing + conceptos_desc:
+                                    cj_actual.pop(c.nombre, None)
+                                
+                                # Integrar nuevos valores de esta pestaña
+                                cj_actual.update(conceptos_data)
+                                v_exist.conceptos_json = json.dumps(cj_actual)
                             else:
                                 db.add(VariablesMes(
                                     empresa_id=empresa_id, trabajador_id=trab_id, periodo_key=periodo_key,
@@ -380,7 +393,16 @@ def render():
                             v_exist = variables_exist.get(trab_id)
                             if v_exist:
                                 v_exist.dias_descuento_locador = dias
-                                v_exist.conceptos_json = json.dumps(conceptos_data)
+                                
+                                # Fusión de conceptos: preservar ajustes de auditoría
+                                try:
+                                    cj_actual = json.loads(v_exist.conceptos_json or '{}')
+                                except:
+                                    cj_actual = {}
+                                
+                                # Actualizar solo campos de locadores
+                                cj_actual.update(conceptos_data)
+                                v_exist.conceptos_json = json.dumps(cj_actual)
                             else:
                                 db.add(VariablesMes(
                                     empresa_id=empresa_id,

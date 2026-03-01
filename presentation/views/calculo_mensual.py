@@ -1888,7 +1888,6 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 if retencion_quinta > 0: desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
 
             # --- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---
-            # Forzamos la lectura desde la columna 'conceptos_json' del merge de planilla
             conceptos_manuales = {}
             try:
                 _cj_raw = row.get('conceptos_json', '{}')
@@ -1898,9 +1897,10 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                     conceptos_manuales = _cj_raw
             except:
                 conceptos_manuales = {}
-            aj_afp    = float(conceptos_manuales.get('_ajuste_afp', 0.0))
-            aj_quinta = float(conceptos_manuales.get('_ajuste_quinta', 0.0))
-            aj_otros  = float(conceptos_manuales.get('_ajuste_otros', 0.0))
+                
+            aj_afp    = float(conceptos_manuales.get('_ajuste_afp', 0.0) or 0.0)
+            aj_quinta = float(conceptos_manuales.get('_ajuste_quinta', 0.0) or 0.0)
+            aj_otros  = float(conceptos_manuales.get('_ajuste_otros', 0.0) or 0.0)
 
             if aj_afp != 0:
                 desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
