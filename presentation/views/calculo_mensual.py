@@ -1888,7 +1888,16 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 if retencion_quinta > 0: desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
 
             # --- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---
-            conceptos_manuales = json.loads(row.get('conceptos_json', '{}') or '{}')
+            # Forzamos la lectura desde la columna 'conceptos_json' del merge de planilla
+            conceptos_manuales = {}
+            try:
+                _cj_raw = row.get('conceptos_json', '{}')
+                if isinstance(_cj_raw, str):
+                    conceptos_manuales = json.loads(_cj_raw or '{}')
+                elif isinstance(_cj_raw, dict):
+                    conceptos_manuales = _cj_raw
+            except:
+                conceptos_manuales = {}
             aj_afp    = float(conceptos_manuales.get('_ajuste_afp', 0.0))
             aj_quinta = float(conceptos_manuales.get('_ajuste_quinta', 0.0))
             aj_otros  = float(conceptos_manuales.get('_ajuste_otros', 0.0))
@@ -1899,12 +1908,18 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
             
             if aj_quinta != 0:
-                # Modificamos directamente la variable de retención para que impacte la columna "Ret. 5ta Cat."
-                retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
+                # Modificamos la retención final sumando el ajuste (que puede ser negativo para devolver o reducir)
+                retencion_quinta = round(retencion_quinta + aj_quinta, 2)
+                
+                # Para fines de declaración PLAME, la retención no puede ser negativa en la columna oficial
+                # Si el ajuste resulta en negativo, se registra como 0.00 en la columna y el neto sube.
                 if retencion_quinta > 0:
                     desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
-                elif 'Retención 5ta Cat.' in desglose_descuentos:
-                    del desglose_descuentos['Retención 5ta Cat.']
+                else:
+                    retencion_quinta = 0.0
+                    if 'Retención 5ta Cat.' in desglose_descuentos:
+                        del desglose_descuentos['Retención 5ta Cat.']
+                
                 obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
 
             if aj_otros != 0:
