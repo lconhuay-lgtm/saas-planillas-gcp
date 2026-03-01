@@ -137,10 +137,15 @@ def _cargar_conceptos_df(db, empresa_id) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
-def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data):
+def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=None):
     """Guarda (upsert) el resultado de planilla en la tabla PlanillaMensual de Neon."""
     resultado_json = df_resultados.to_json(orient='records', date_format='iso')
     auditoria_json = json.dumps(auditoria_data, default=str)
+    
+    # Extraer el JSON de locadores si existe
+    hon_json = "[]"
+    if df_locadores is not None and not df_locadores.empty:
+        hon_json = df_locadores.to_json(orient='records', date_format='iso')
 
     existente = db.query(PlanillaMensual).filter_by(
         empresa_id=empresa_id, periodo_key=periodo_key
@@ -148,6 +153,7 @@ def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data
     if existente:
         existente.resultado_json = resultado_json
         existente.auditoria_json = auditoria_json
+        existente.honorarios_json = hon_json
         existente.fecha_calculo = datetime.now()
     else:
         nueva = PlanillaMensual(
@@ -155,6 +161,7 @@ def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data
             periodo_key=periodo_key,
             resultado_json=resultado_json,
             auditoria_json=auditoria_json,
+            honorarios_json=hon_json
         )
         db.add(nueva)
     db.commit()
@@ -2041,7 +2048,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
         try:
             db2 = SessionLocal()
-            _guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data)
+            df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
+            _guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
             db2.close()
         except Exception as e:
             st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")

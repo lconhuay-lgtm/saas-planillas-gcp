@@ -222,6 +222,8 @@ class PlanillaMensual(Base):
     resultado_json = Column(Text, nullable=False)
     # Datos de auditoría por trabajador (desglose detallado)
     auditoria_json = Column(Text, nullable=False)
+    # NUEVO: Resultados calculados de locadores (snapshot)
+    honorarios_json = Column(Text, default='[]')
 
     # Cierre de planilla
     estado      = Column(String(10), default="ABIERTA")   # ABIERTA | CERRADA
