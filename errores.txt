@@ -1,106 +1,64 @@
-Por favor, realiza un reemplazo estricto en los siguientes archivos. Usa exactamente este bloque SEARCH/REPLACE.
+Actúa como un Desarrollador Senior de Python experto en Streamlit.
+Necesito optimizar la experiencia de usuario en la descarga de la ficha de personal. Actualmente requiere dos clics (un botón activa un estado, recarga la página, y muestra un segundo botón de descarga). 
+Debemos cambiarlo para que el ícono "📄" sea directamente un `st.download_button`, generándose el buffer de memoria en el mismo bucle de la lista de trabajadores.
 
-1. En `presentation/views/calculo_mensual.py`:
+Aplica EXCLUSIVAMENTE los siguientes dos bloques de SEARCH/REPLACE en el archivo `presentation/views/maestro_trabajadores.py`. No modifiques ninguna otra parte de la interfaz.
 
-*SEARCH*
-            if aj_afp != 0:
-                desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
-                descuentos_manuales += aj_afp
-                obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
-            
-            if aj_quinta != 0:
-                retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
-                if retencion_quinta > 0:
-                    desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
-                elif 'Retención 5ta Cat.' in desglose_descuentos:
-                    del desglose_descuentos['Retención 5ta Cat.']
-                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+### BLOQUE 1: Eliminar la lógica de estado intermedio al inicio de la lista
+Busca la sección `# --- Lógica de Ficha PDF ---` y elimínala, dejando solo el texto del caption inferior.
 
-            if aj_otros != 0:
-*REPLACE*
-            if aj_afp != 0:
-                desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
-                descuentos_manuales += aj_afp
-                obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
-            
-            if aj_quinta != 0:
-                retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
-                if retencion_quinta > 0:
-                    desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
-                elif 'Retención 5ta Cat.' in desglose_descuentos:
-                    del desglose_descuentos['Retención 5ta Cat.']
-                obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+<<<<
+            # --- Lógica de Ficha PDF ---
+            ficha_id = st.session_state.get('_generar_ficha_id')
+            if ficha_id:
+                t_ficha = db.query(Trabajador).filter_by(id=ficha_id).first()
+                if t_ficha:
+                    st.info(f"📄 Generando ficha de **{t_ficha.nombres}**...")
+                    buf_ficha = generar_pdf_ficha_trabajador(
+                        t_ficha, empresa_nombre, 
+                        st.session_state.get('empresa_activa_ruc', ''), 
+                        regimen_empresa
+                    )
+                    col_fd1, col_fd2 = st.columns([1, 4])
+                    col_fd1.download_button(
+                        "📥 Descargar PDF", data=buf_ficha, 
+                        file_name=f"Ficha_{t_ficha.num_doc}.pdf", mime="application/pdf", type="primary"
+                    )
+                    if col_fd2.button("✖️ Cerrar"):
+                        st.session_state.pop('_generar_ficha_id', None)
+                        st.rerun()
+                    st.markdown("---")
+            # ---------------------------
 
-            if aj_otros != 0:
-
-
-2. En `presentation/views/ingreso_asistencias.py`:
-
-*SEARCH*
-        # Mostrar mensajes de éxito diferidos (tras rerun)
-        if st.session_state.get('_msg_asistencia'):
-            st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
-
-        # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
-        usuario_rol = st.session_state.get('usuario_rol', '')
-        es_supervisor = usuario_rol in ['supervisor', 'admin']
-
-        tabs_list = [
-            "📋 1. Planilla (5ta Cat.)",
-            "🧾 2. Locadores (4ta Cat.)",
-            "📝 3. Notas de Gestión"
-        ]
-        if es_supervisor:
-            tabs_list.append("🔧 4. Ajustes de Auditoría")
-
-        tabs = st.tabs(tabs_list)
-        tab_plan = tabs[0]
-        tab_loc = tabs[1]
-        tab_notas = tabs[2]
-
-        # ══════════════════════════════════════════════════════════════════════
-*REPLACE*
-        # Mostrar mensajes de éxito diferidos (tras rerun)
-        if st.session_state.get('_msg_asistencia'):
-            st.toast(st.session_state.pop('_msg_asistencia'), icon="✅")
-
-        # ── Cuatro pestañas principales (Estándar Corporativo) ──────────────────
-        usuario_rol = st.session_state.get('usuario_rol', '')
-        es_supervisor = usuario_rol in ['supervisor', 'admin']
-
-        tabs_list = [
-            "📋 1. Planilla (5ta Cat.)",
-            "🧾 2. Locadores (4ta Cat.)",
-            "📝 3. Notas de Gestión"
-        ]
-        if es_supervisor:
-            tabs_list.append("🔧 4. Ajustes de Auditoría")
-
-        tabs = st.tabs(tabs_list)
-        tab_plan = tabs[0]
-        tab_loc = tabs[1]
-        tab_notas = tabs[2]
-
-        # ══════════════════════════════════════════════════════════════════════
+            st.caption(f"{len(trabajadores_db)} trabajador(es) registrado(s)")
+====
+            st.caption(f"{len(trabajadores_db)} trabajador(es) registrado(s)")
+>>>>
 
 
-3. En `presentation/views/ingreso_asistencias.py`:
+### BLOQUE 2: Reemplazar el botón normal por el botón de descarga directa en el bucle
+Busca la línea donde se dibuja el botón `c_pdf.button` dentro del bucle de trabajadores y reemplázalo para generar y asignar el PDF directamente a un `download_button`.
 
-*SEARCH*
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 4 — AJUSTES DE AUDITORÍA (SAP/ORACLE STYLE)
-        # ══════════════════════════════════════════════════════════════════════
-        with tab_ajustes:
-            st.subheader("🔧 Ajustes y Regularizaciones de Nómina")
-            st.info("Utilice esta sección para ingresar montos manuales que regularicen errores de meses previos o sistemas externos. Estos montos afectan directamente al Neto a Pagar.")
-*REPLACE*
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 4 — AJUSTES DE AUDITORÍA (SAP/ORACLE STYLE)
-        # ══════════════════════════════════════════════════════════════════════
-        if es_supervisor:
-            tab_ajustes = tabs[3]
-            with tab_ajustes:
-                st.subheader("🔧 Ajustes y Regularizaciones de Nómina")
-                st.info("Utilice esta sección para ingresar montos manuales que regularicen errores de meses previos o sistemas externos. Estos montos afectan directamente al Neto a Pagar.")
+<<<<
+                    if c_pdf.button("📄", key=f"pdf_{t.id}", help="Generar Ficha PDF"):
+                        st.session_state['_generar_ficha_id'] = t.id
+                        st.rerun()
 
-IMPORTANTE: Re-indenta correctamente todo el código que se encuentra debajo de `with tab_ajustes:` (agregando 4 espacios) hasta el final del archivo para que coincida con la nueva condición `if es_supervisor:`.
+                    if c5.button("✏️", key=f"edit_{t.id}", help="Editar trabajador"):
+====
+                    buf_ficha = generar_pdf_ficha_trabajador(
+                        t, empresa_nombre, 
+                        st.session_state.get('empresa_activa_ruc', ''), 
+                        regimen_empresa
+                    )
+                    c_pdf.download_button(
+                        "📄", 
+                        data=buf_ficha, 
+                        file_name=f"Ficha_{t.num_doc}.pdf", 
+                        mime="application/pdf", 
+                        key=f"pdf_dl_{t.id}", 
+                        help="Descargar Ficha PDF"
+                    )
+
+                    if c5.button("✏️", key=f"edit_{t.id}", help="Editar trabajador"):
+>>>>
