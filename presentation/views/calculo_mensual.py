@@ -122,23 +122,14 @@ def _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado
 
 
 
-def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_idx, periodo_key,
-                              historico_quinta, cuotas_del_mes, notas_gestion_map,
-                              conceptos_empresa, factor_g):
-    """Calcula los campos de planilla para un trabajador. Retorna (fila_dict, auditoria_dict) o None."""
-    # Definir variables de cálculo para filtros y lógica proporcional
-
-    # Filtro de fecha de ingreso para personal en planilla
-    try:
-        fi_p = pd.to_datetime(row['Fecha Ingreso'])
-        if fi_p.year > anio_calc or (fi_p.year == anio_calc and fi_p.month > mes_calc):
-            return None
-    except: pass
-
-    dni_trabajador = row['Num. Doc.']
-    nombres = row['Nombres y Apellidos_x']
-    sistema = str(row.get('Sistema Pensión', 'NO AFECTO')).upper()
-    
+def _calcular_haberes(
+    row, p, horas_jornada, mes_calc, anio_calc,
+    dni_trabajador, cuotas_del_mes, notas_gestion_map, conceptos_empresa,
+) -> dict | None:
+    """
+    Calcula proporcionalidad, sueldos, asig. familiar, horas extras, cuotas y conceptos
+    dinámicos. Retorna dict con bases y desgloses, o None si el trabajador no computa.
+    """
     # --- TIEMPOS Y BASES FIJAS (Proporcionalidad Segura) ---
     try:
         fecha_ingreso = pd.to_datetime(row['Fecha Ingreso'])
@@ -189,7 +180,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
     obs_trab = []
     if ingreso_este_mes:
         obs_trab.append(f"Ingresó el {fecha_ingreso.strftime('%d/%m/%Y')}")
-    
+
     # Detalle de descuentos por ausencias para Tesorería
     monto_dscto_ausencias = round(sueldo_base_nominal - sueldo_computable, 2)
     if total_ausencias > 0:
@@ -198,7 +189,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
     dscto_tardanzas = float(row['Min. Tardanza']) * (valor_hora / 60)
     if dscto_tardanzas > 0:
         obs_trab.append(f"Tardanzas: {int(row['Min. Tardanza'])} min (Desc: S/ {dscto_tardanzas:,.2f})")
-    
+
     # Integrar Nota de Gestión Manual
     nota_manual = notas_gestion_map.get(str(dni_trabajador), "")
     if nota_manual:
@@ -224,7 +215,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
     # ── CUOTAS DE PRÉSTAMOS/DESCUENTOS PROGRAMADOS ──────────────────
-    # IMPORTANTE: Estos montos NO afectan bases de AFP, 5ta o EsSalud. 
+    # IMPORTANTE: Estos montos NO afectan bases de AFP, 5ta o EsSalud.
     # Solo se restan al final para llegar al NETO A PAGAR.
     for _cuota in cuotas_del_mes.get(str(dni_trabajador), []):
         _monto_c = _cuota['monto']
@@ -301,13 +292,48 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
     base_afp_onp = max(0.0, base_afp_onp)
     base_essalud = max(0.0, base_essalud)
     base_quinta_mes = max(0.0, base_quinta_mes)
-    
-    # --- CÁLCULO DE PENSIONES ---
+
+    return {
+        'dias_laborados':       dias_laborados,
+        'dias_computables':     dias_computables,
+        'dias_remunerados':     dias_remunerados,
+        'horas_ordinarias':     horas_ordinarias,
+        'susp_dict':            susp_dict,
+        'sueldo_computable':    sueldo_computable,
+        'sueldo_base_nominal':  sueldo_base_nominal,
+        'monto_asig_fam':       monto_asig_fam,
+        'pago_he_25':           pago_he_25,
+        'pago_he_35':           pago_he_35,
+        'monto_grati':          monto_grati,
+        'otros_ingresos':       otros_ingresos,
+        'ingreso_este_mes':     ingreso_este_mes,
+        'total_ausencias':      total_ausencias,
+        'ingresos_totales':     ingresos_totales,
+        'descuentos_manuales':  descuentos_manuales,
+        'base_afp_onp':         base_afp_onp,
+        'base_essalud':         base_essalud,
+        'base_quinta_mes':      base_quinta_mes,
+        'conceptos_recuperados_5ta': conceptos_recuperados_5ta,
+        'desglose_ingresos':    desglose_ingresos,
+        'desglose_descuentos':  desglose_descuentos,
+        'obs_trab':             obs_trab,
+    }
+
+
+def _calcular_pension(
+    sistema, base_afp_onp, row, p, mes_calc, anio_calc,
+    desglose_descuentos, obs_trab,
+) -> dict:
+    """
+    Calcula aportes AFP (aporte, prima, comisión) o descuento ONP.
+    Modifica desglose_descuentos y obs_trab in-place con las entradas de pensión.
+    Retorna dict con los montos individuales.
+    """
     aporte_afp = 0.0
     prima_afp = 0.0
     comis_afp = 0.0
     dscto_onp = 0.0
-    
+
     if sistema == "ONP":
         dscto_onp = base_afp_onp * (p['tasa_onp'] / 100)
         if dscto_onp > 0: desglose_descuentos['Aporte ONP'] = round(dscto_onp, 2)
@@ -347,8 +373,25 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
             if total_afp_ind > 0: desglose_descuentos[f'Aporte {sistema}'] = round(total_afp_ind, 2)
 
     total_pension = dscto_onp + aporte_afp + prima_afp + comis_afp
+    return {
+        'total_pension': total_pension,
+        'dscto_onp':     dscto_onp,
+        'aporte_afp':    aporte_afp,
+        'prima_afp':     prima_afp,
+        'comis_afp':     comis_afp,
+    }
 
-    # --- RENTA 5TA CATEGORÍA (Redondeo Entero PLAME) ---
+
+def _calcular_quinta(
+    base_quinta_mes, mes_idx, anio_calc, mes_calc, p,
+    historico_quinta, dni_trabajador,
+    sueldo_base_nominal, sueldo_computable, conceptos_recuperados_5ta,
+    total_ausencias, ingreso_este_mes, factor_g,
+) -> dict:
+    """
+    Calcula la retención de 5ta categoría con proyección anual (método PLAME).
+    Retorna dict con la retención y datos de auditoría.
+    """
     uit = p['uit']
     meses_restantes = 12 - mes_idx
     hist_q = historico_quinta.get(str(dni_trabajador), {})
@@ -364,10 +407,10 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
     elif mes_idx <= 11:
         proyeccion_gratis = base_quinta_proyeccion * 1 * factor_g * 1.09
     proyeccion_sueldos_restantes = base_quinta_proyeccion * meses_restantes
-    
+
     renta_bruta_anual = int(round(rem_previa_historica + base_quinta_mes + proyeccion_sueldos_restantes + proyeccion_gratis))
     renta_neta_anual = int(round(renta_bruta_anual - (7 * uit)))
-    
+
     impuesto_anual = 0.0
     retencion_quinta = 0.0
     detalle_tramos = []
@@ -390,6 +433,64 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
                 renta_restante -= monto_tramo
         retencion_quinta = float(int(round(max(0.0, (impuesto_anual - retencion_previa_historica) / divisor))))
 
+    return {
+        'retencion_quinta':           retencion_quinta,
+        'impuesto_anual':             impuesto_anual,
+        'detalle_tramos':             detalle_tramos,
+        'renta_bruta_anual':          renta_bruta_anual,
+        'renta_neta_anual':           renta_neta_anual,
+        'divisor':                    divisor,
+        'rem_previa_historica':       rem_previa_historica,
+        'retencion_previa_historica': retencion_previa_historica,
+        'meses_restantes':            meses_restantes,
+        'proy_sueldo':               proyeccion_sueldos_restantes,
+        'proy_grati':                proyeccion_gratis,
+    }
+
+
+def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_idx, periodo_key,
+                              historico_quinta, cuotas_del_mes, notas_gestion_map,
+                              conceptos_empresa, factor_g):
+    """Calcula los campos de planilla para un trabajador. Retorna (fila_dict, auditoria_dict) o None."""
+    # Filtro de fecha de ingreso para personal en planilla
+    try:
+        fi_p = pd.to_datetime(row['Fecha Ingreso'])
+        if fi_p.year > anio_calc or (fi_p.year == anio_calc and fi_p.month > mes_calc):
+            return None
+    except: pass
+
+    dni_trabajador = row['Num. Doc.']
+    nombres = row['Nombres y Apellidos_x']
+    sistema = str(row.get('Sistema Pensión', 'NO AFECTO')).upper()
+
+    # ── BASES Y HABERES ──────────────────────────────────────────────────────
+    h = _calcular_haberes(
+        row, p, horas_jornada, mes_calc, anio_calc,
+        dni_trabajador, cuotas_del_mes, notas_gestion_map, conceptos_empresa,
+    )
+    if h is None:
+        return None
+
+    # ── PENSIONES ───────────────────────────────────────────────────────────
+    pen = _calcular_pension(
+        sistema, h['base_afp_onp'], row, p, mes_calc, anio_calc,
+        h['desglose_descuentos'], h['obs_trab'],
+    )
+
+    # ── 5TA CATEGORÍA ────────────────────────────────────────────────────────
+    qta = _calcular_quinta(
+        h['base_quinta_mes'], mes_idx, anio_calc, mes_calc, p,
+        historico_quinta, dni_trabajador,
+        h['sueldo_base_nominal'], h['sueldo_computable'], h['conceptos_recuperados_5ta'],
+        h['total_ausencias'], h['ingreso_este_mes'], factor_g,
+    )
+
+    # Desempaquetar variables mutables (se modifican en ajustes de auditoría)
+    desglose_descuentos = h['desglose_descuentos']
+    obs_trab            = h['obs_trab']
+    retencion_quinta    = qta['retencion_quinta']
+    descuentos_manuales = h['descuentos_manuales']
+
     # --- APLICACIÓN DE AJUSTES DE AUDITORÍA (MANUALES) ---
     conceptos_manuales = {}
     try:
@@ -400,7 +501,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
             conceptos_manuales = _cj_raw
     except:
         conceptos_manuales = {}
-        
+
     aj_afp    = float(conceptos_manuales.get('_ajuste_afp', 0.0) or 0.0)
     aj_quinta = float(conceptos_manuales.get('_ajuste_quinta', 0.0) or 0.0)
     aj_otros  = float(conceptos_manuales.get('_ajuste_otros', 0.0) or 0.0)
@@ -409,7 +510,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         desglose_descuentos['Ajuste AFP (Audit)'] = round(aj_afp, 2)
         # aj_afp NO se suma a descuentos_manuales: tiene columna propia en la sábana
         obs_trab.append(f"Ajuste AFP: S/ {aj_afp:,.2f}")
-    
+
     if aj_quinta != 0:
         retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
         if retencion_quinta > 0:
@@ -428,7 +529,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
     # menos 1 día remunerado (trabajado o pagado).  Si el mes completo fue
     # suspensión sin goce de haber (días_remunerados == 0) → EsSalud = 0.
     seguro_social = str(row.get('Seguro Social', 'ESSALUD')).upper()
-    _mes_completo_ssgh = (dias_remunerados == 0)
+    _mes_completo_ssgh = (h['dias_remunerados'] == 0)
 
     if _mes_completo_ssgh:
         # Suspensión sin goce de haber todo el mes → sin aporte patronal
@@ -440,13 +541,13 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         aporte_essalud = 15.0  # Monto fijo SIS - Solo Micro Empresa
         etiqueta_seguro = "SIS"
     elif row.get('EPS', 'No') == "Sí":
-        aporte_essalud = max(base_essalud, p['rmv']) * (p['tasa_eps'] / 100)
+        aporte_essalud = max(h['base_essalud'], p['rmv']) * (p['tasa_eps'] / 100)
         etiqueta_seguro = "ESSALUD-EPS"
     else:
-        aporte_essalud = max(base_essalud, p['rmv']) * (p['tasa_essalud'] / 100)
+        aporte_essalud = max(h['base_essalud'], p['rmv']) * (p['tasa_essalud'] / 100)
         etiqueta_seguro = "ESSALUD"
-    
-    neto_pagar = ingresos_totales - total_pension - aj_afp - retencion_quinta - descuentos_manuales
+
+    neto_pagar = h['ingresos_totales'] - pen['total_pension'] - aj_afp - retencion_quinta - descuentos_manuales
 
     # --- FILA DE LA SÁBANA CORPORATIVA ---
     fila = {
@@ -454,14 +555,14 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         "Apellidos y Nombres": nombres,
         "Sist. Pensión": sistema,
         "Seg. Social": etiqueta_seguro,
-        "Sueldo Base": round(sueldo_computable, 2),
-        "Asig. Fam.": round(monto_asig_fam, 2),
-        "Otros Ingresos": round((pago_he_25 + pago_he_35 + monto_grati + otros_ingresos), 2),
-        "TOTAL BRUTO": round(ingresos_totales, 2),
-        "ONP (13%)": round(dscto_onp, 2),
-        "AFP Aporte": round(aporte_afp, 2),
-        "AFP Seguro": round(prima_afp, 2),
-        "AFP Comis.": round(comis_afp, 2),
+        "Sueldo Base": round(h['sueldo_computable'], 2),
+        "Asig. Fam.": round(h['monto_asig_fam'], 2),
+        "Otros Ingresos": round((h['pago_he_25'] + h['pago_he_35'] + h['monto_grati'] + h['otros_ingresos']), 2),
+        "TOTAL BRUTO": round(h['ingresos_totales'], 2),
+        "ONP (13%)": round(pen['dscto_onp'], 2),
+        "AFP Aporte": round(pen['aporte_afp'], 2),
+        "AFP Seguro": round(pen['prima_afp'], 2),
+        "AFP Comis.": round(pen['comis_afp'], 2),
         "Ajuste AFP": round(aj_afp, 2),
         "Ret. 5ta Cat.": float(retencion_quinta),
         "Dsctos/Faltas": round(descuentos_manuales, 2),
@@ -478,24 +579,24 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
 
     auditoria = {
         "nombres": nombres, "periodo": periodo_key,
-        "dias": dias_laborados,               # días efectivamente laborados
-        "dias_computables": dias_computables,  # base de proporcionalidad
+        "dias": h['dias_laborados'],               # días efectivamente laborados
+        "dias_computables": h['dias_computables'],  # base de proporcionalidad
         "observaciones": " | ".join(obs_trab),
-        "rem_diaria": round(sueldo_base_nominal / 30.0, 2),
-        "horas_ordinarias": horas_ordinarias,  # para .JOR de PLAME
-        "suspensiones": susp_dict,             # para .SNL de PLAME
-        "base_afp": round(base_afp_onp, 2),   # para AFPnet
+        "rem_diaria": round(h['sueldo_base_nominal'] / 30.0, 2),
+        "horas_ordinarias": h['horas_ordinarias'],  # para .JOR de PLAME
+        "suspensiones": h['susp_dict'],             # para .SNL de PLAME
+        "base_afp": round(h['base_afp_onp'], 2),   # para AFPnet
         "seguro_social": etiqueta_seguro,
         "aporte_seg_social": round(aporte_essalud, 2),
-        "ingresos": desglose_ingresos, "descuentos": desglose_descuentos,
-        "totales": {"ingreso": ingresos_totales, "descuento": (total_pension + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
+        "ingresos": h['desglose_ingresos'], "descuentos": desglose_descuentos,
+        "totales": {"ingreso": h['ingresos_totales'], "descuento": (pen['total_pension'] + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
         "quinta": {
-            "rem_previa": rem_previa_historica, "ret_previa": retencion_previa_historica,
-            "base_mes": base_quinta_mes, "meses_restantes": meses_restantes,
-            "proy_sueldo": proyeccion_sueldos_restantes, "proy_grati": proyeccion_gratis, 
-            "bruta_anual": renta_bruta_anual, "uit_valor": uit, "uit_7": 7 * uit, 
-            "neta_anual": renta_neta_anual, "detalle_tramos": detalle_tramos,
-            "imp_anual": impuesto_anual, "divisor": divisor, "retencion": retencion_quinta
+            "rem_previa": qta['rem_previa_historica'], "ret_previa": qta['retencion_previa_historica'],
+            "base_mes": h['base_quinta_mes'], "meses_restantes": qta['meses_restantes'],
+            "proy_sueldo": qta['proy_sueldo'], "proy_grati": qta['proy_grati'],
+            "bruta_anual": qta['renta_bruta_anual'], "uit_valor": p['uit'], "uit_7": 7 * p['uit'],
+            "neta_anual": qta['renta_neta_anual'], "detalle_tramos": qta['detalle_tramos'],
+            "imp_anual": qta['impuesto_anual'], "divisor": qta['divisor'], "retencion": retencion_quinta
         }
     }
     return fila, auditoria
