@@ -2506,26 +2506,42 @@ def render():
                             empresa_id=empresa_id, periodo_key=periodo_key
                         ).first()
 
-                        # ── VALIDACIÓN ENTERPRISE: snapshot de locadores obligatorio ──────────────
+                        # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
+                        _n_planilla = db_up.query(Trabajador).filter_by(
+                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="PLANILLA"
+                        ).count()
                         _n_locs = db_up.query(Trabajador).filter_by(
                             empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
                         ).count()
-                        _hon_snap = (getattr(p, 'honorarios_json', '[]') if p else '[]') or '[]'
+
+                        _resultado_snap = (getattr(p, 'resultado_json', '[]') if p else '[]') or '[]'
+                        _hon_snap       = (getattr(p, 'honorarios_json', '[]') if p else '[]') or '[]'
+                        try:
+                            _resultado_list = json.loads(_resultado_snap)
+                        except Exception:
+                            _resultado_list = []
                         try:
                             _hon_list = json.loads(_hon_snap)
                         except Exception:
                             _hon_list = []
 
+                        _errores = []
+                        if _n_planilla > 0 and len(_resultado_list) == 0:
+                            _errores.append(
+                                f"• **Planilla 5ta Categoría** — {_n_planilla} trabajador(es) activo(s) sin planilla calculada. "
+                                "Vaya a la tab **1. Planilla** y ejecute el motor de cálculo."
+                            )
                         if _n_locs > 0 and len(_hon_list) == 0:
+                            _errores.append(
+                                f"• **Honorarios 4ta Categoría** — {_n_locs} locador(es) activo(s) sin honorarios calculados. "
+                                "Vaya a la tab **2. Honorarios** y presione **🧮 Calcular Honorarios**."
+                            )
+
+                        if _errores:
                             db_up.close()
                             st.error(
-                                f"🚫 **CIERRE BLOQUEADO** — Existen **{_n_locs} Locador(es) de Servicio activos** "
-                                f"para este periodo, pero sus honorarios **NO han sido calculados** (snapshot vacío).\n\n"
-                                "**Para cerrar el periodo:**\n"
-                                "1. Vaya a la tab **2. Honorarios (4ta Categoría)**\n"
-                                "2. Presione **🧮 Calcular Honorarios**\n"
-                                "3. Regrese aquí y confirme el cierre.\n\n"
-                                "_Este control garantiza que el snapshot del periodo quede completo e íntegro._"
+                                "🚫 **CIERRE BLOQUEADO** — Faltan cálculos obligatorios antes de cerrar el periodo:\n\n" +
+                                "\n\n".join(_errores)
                             )
                         else:
                             # Inyección: Crear registro si el mes solo tiene locadores y no se generó planilla 5ta
