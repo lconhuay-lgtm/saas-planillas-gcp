@@ -2217,6 +2217,29 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             })
         st.session_state[f'res_honorarios_{periodo_key}'] = pd.DataFrame(resultados_loc)
 
+        # Persistir snapshot de locadores a BD de forma inmediata e independiente del motor 5ta
+        try:
+            _df_hon_save = pd.DataFrame(resultados_loc)
+            db_hon = SessionLocal()
+            _plan_hon = db_hon.query(PlanillaMensual).filter_by(
+                empresa_id=empresa_id, periodo_key=periodo_key
+            ).first()
+            _hon_json_str = _df_hon_save.to_json(orient='records', date_format='iso')
+            if _plan_hon:
+                _plan_hon.honorarios_json = _hon_json_str
+            else:
+                db_hon.add(PlanillaMensual(
+                    empresa_id=empresa_id,
+                    periodo_key=periodo_key,
+                    resultado_json='[]',
+                    auditoria_json='{}',
+                    honorarios_json=_hon_json_str,
+                ))
+            db_hon.commit()
+            db_hon.close()
+        except Exception as _e_hon_save:
+            st.warning(f"Honorarios calculados pero no se pudo guardar snapshot en la nube: {_e_hon_save}")
+
     key_res = f'res_honorarios_{periodo_key}'
     if st.session_state.get(key_res) is not None and not st.session_state[key_res].empty:
         df_loc = st.session_state[key_res]
