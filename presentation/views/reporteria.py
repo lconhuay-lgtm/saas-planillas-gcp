@@ -307,143 +307,104 @@ def render():
         st.markdown(f"**Periodo:** {_periodo_legible(sel_key)}  |  **Estado:** {badge}")
         st.markdown("---")
 
+        # ── FUENTE ÚNICA DE VERDAD: snapshot congelado en PlanillaMensual.honorarios_json ──
+        hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
         try:
-            _db2 = SessionLocal()
+            df_loc_rep = pd.read_json(io.StringIO(hon_json_str), orient='records')
+        except Exception:
+            df_loc_rep = pd.DataFrame()
 
-            locadores_rep = (
-                _db2.query(Trabajador)
-                .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
-                .all()
-            )
-
-            if not locadores_rep:
-                st.info("ℹ️ No hay Locadores de Servicio activos registrados para esta empresa.")
+        if df_loc_rep.empty:
+            if estado_sel == "CERRADA":
+                st.warning(
+                    "⚠️ **Snapshot de locadores no encontrado** para este periodo cerrado.\n\n"
+                    "Los honorarios de locadores no fueron calculados antes del cierre. "
+                    "Para recuperar los datos: reabra el periodo (requiere Supervisor), vaya a "
+                    "**Cálculo de Planilla → tab 2. Honorarios (4ta Categoría)**, presione "
+                    "**🧮 Calcular Honorarios** y vuelva a cerrar el periodo."
+                )
             else:
-                p_rep = _db2.query(ParametroLegal).filter_by(
-                    empresa_id=empresa_id, periodo_key=sel_key
-                ).first()
-                if not p_rep:
-                    st.warning(f"No se encontraron Parámetros Legales para **{sel_key}**. Configure las tasas en 'Parámetros Legales'.")
-                else:
-                    tasa_4ta_r = getattr(p_rep, 'tasa_4ta', 8.0) or 8.0
-                    tope_4ta_r = getattr(p_rep, 'tope_4ta', 1500.0) or 1500.0
-                    variables_rep = {
-                        v.trabajador_id: v
-                        for v in _db2.query(VariablesMes).filter_by(
-                            empresa_id=empresa_id, periodo_key=sel_key
-                        ).all()
-                    }
-                    mes_rep  = int(sel_key[:2])
-                    anio_rep = int(sel_key[3:])
-                    dias_mes_r = _cal.monthrange(anio_rep, mes_rep)[1]
+                st.info(
+                    "ℹ️ Los honorarios de locadores aún no han sido calculados para este periodo. "
+                    "Vaya a **Cálculo de Planilla → tab 2. Honorarios (4ta Categoría)** "
+                    "y presione **🧮 Calcular Honorarios**."
+                )
+        else:
+            cols_display = [c for c in df_loc_rep.columns if c not in ("Banco", "N° Cuenta", "CCI", "Observaciones")]
+            ml1, ml2, ml3 = st.columns(3)
+            ml1.metric("Locadores", len(df_loc_rep))
+            ml2.metric("Total Pago Bruto",   f"S/ {df_loc_rep['Pago Bruto'].sum():,.2f}")
+            ml3.metric("Total Neto a Pagar", f"S/ {df_loc_rep['NETO A PAGAR'].sum():,.2f}")
+            st.caption("📌 Datos congelados al momento del cálculo — Fuente: snapshot auditado del periodo.")
+            st.dataframe(df_loc_rep[cols_display], use_container_width=True, hide_index=True)
 
-                    from core.use_cases.calculo_honorarios import calcular_recibo_honorarios
+            st.markdown("---")
+            st.markdown("#### 📥 Exportación Corporativa")
+            col_l1, col_l2 = st.columns(2)
+            with col_l1:
+                try:
+                    from presentation.views.calculo_mensual import generar_excel_honorarios
+                    buf_xl_loc = generar_excel_honorarios(
+                        df_loc_rep, empresa_nombre, sel_key,
+                        empresa_ruc=st.session_state.get('empresa_activa_ruc', '')
+                    )
+                    st.download_button(
+                        "📊 Descargar Excel Locadores", data=buf_xl_loc,
+                        file_name=f"HONORARIOS_{sel_key}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True, key="rep_dl_hon_xl"
+                    )
+                except Exception as ex_xl:
+                    st.error(f"Error generando Excel: {ex_xl}")
+            with col_l2:
+                try:
+                    from presentation.views.calculo_mensual import generar_pdf_honorarios
+                    buf_pdf_loc = generar_pdf_honorarios(
+                        df_loc_rep, empresa_nombre, sel_key,
+                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                        empresa_regimen=st.session_state.get('empresa_activa_regimen', '')
+                    )
+                    st.download_button(
+                        "📄 Descargar PDF Locadores", data=buf_pdf_loc,
+                        file_name=f"HONORARIOS_{sel_key}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True, key="rep_dl_hon_pdf"
+                    )
+                except Exception as ex_pdf:
+                    st.error(f"Error generando PDF: {ex_pdf}")
 
-                    resultados_rep = []
-                    for loc in locadores_rep:
-                        v = variables_rep.get(loc.id)
-                        if v:
-                            cj = json.loads(v.conceptos_json or '{}')
-                            vars_loc = {
-                                'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
-                                'otros_pagos':       float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
-                                'otros_descuentos':  float(cj.get('_otros_descuentos_loc', 0.0) or 0.0),
-                            }
-                        else:
-                            vars_loc = {'dias_no_prestados': 0, 'otros_pagos': 0.0, 'otros_descuentos': 0.0}
-
-                        res = calcular_recibo_honorarios(
-                            loc, vars_loc, dias_mes_r,
-                            tasa_4ta=tasa_4ta_r, tope_4ta=tope_4ta_r
-                        )
-                        resultados_rep.append({
-                            "DNI":                loc.num_doc,
-                            "Locador":            loc.nombres,
-                            "Cargo / Actividad":  loc.cargo or "Locador de Servicio",
-                            "Honorario Base":     res['honorario_base'],
-                            "Días no Prestados":  res['dias_no_prestados'],
-                            "Descuento Días":     res['monto_descuento'],
-                            "Otros Pagos":        res['otros_pagos'],
-                            "Pago Bruto":         res['pago_bruto'],
-                            "Retención 4ta (8%)": res['retencion_4ta'],
-                            "Otros Descuentos":   res['otros_descuentos'],
-                            "NETO A PAGAR":       res['neto_a_pagar'],
-                        })
-
-                    df_loc_rep = pd.DataFrame(resultados_rep)
-                    ml1, ml2, ml3 = st.columns(3)
-                    ml1.metric("Locadores", len(df_loc_rep))
-                    ml2.metric("Total Pago Bruto",    f"S/ {df_loc_rep['Pago Bruto'].sum():,.2f}")
-                    ml3.metric("Total Neto a Pagar",  f"S/ {df_loc_rep['NETO A PAGAR'].sum():,.2f}")
-                    st.caption(f"Tasa 4ta Cat.: **{tasa_4ta_r}%** | Tope mínimo retención: **S/ {tope_4ta_r:,.2f}**")
-                    st.dataframe(df_loc_rep, use_container_width=True, hide_index=True)
-
-                    st.markdown("---")
-                    st.markdown("#### 📥 Exportación Corporativa")
-                    col_l1, col_l2 = st.columns(2)
-                    with col_l1:
-                        try:
-                            from presentation.views.calculo_mensual import generar_excel_honorarios
-                            buf_xl_loc = generar_excel_honorarios(
-                                df_loc_rep, empresa_nombre, sel_key,
-                                empresa_ruc=st.session_state.get('empresa_activa_ruc', '')
-                            )
-                            st.download_button(
-                                "📊 Descargar Excel Locadores", data=buf_xl_loc,
-                                file_name=f"HONORARIOS_{sel_key}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True, key="rep_dl_hon_xl"
-                            )
-                        except Exception as ex_xl:
-                            st.error(f"Error generando Excel: {ex_xl}")
-                    with col_l2:
-                        try:
-                            from presentation.views.calculo_mensual import generar_pdf_honorarios
-                            buf_pdf_loc = generar_pdf_honorarios(
-                                df_loc_rep, empresa_nombre, sel_key,
-                                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-                                empresa_regimen=st.session_state.get('empresa_activa_regimen', '')
-                            )
-                            st.download_button(
-                                "📄 Descargar PDF Locadores", data=buf_pdf_loc,
-                                file_name=f"HONORARIOS_{sel_key}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True, key="rep_dl_hon_pdf"
-                            )
-                        except Exception as ex_pdf:
-                            st.error(f"Error generando PDF: {ex_pdf}")
-
-                    # Detalle individual
-                    st.markdown("---")
-                    st.markdown("#### 🔍 Detalle por Locador")
-                    opciones_loc = [f"{r['DNI']} — {r['Locador']}" for r in resultados_rep]
-                    if opciones_loc:
-                        sel_loc = st.selectbox("Seleccione un locador:", opciones_loc, key="rep_loc_sel")
-                        dni_loc_sel = sel_loc.split(" — ")[0]
-                        data_loc = next((r for r in resultados_rep if r['DNI'] == dni_loc_sel), None)
-                        if data_loc:
-                            c_ing, c_dsc = st.columns(2)
-                            with c_ing:
-                                st.markdown("**Ingresos**")
-                                st.write(f"- Honorario Base: S/ {data_loc['Honorario Base']:,.2f}")
-                                if data_loc['Otros Pagos'] > 0:
-                                    st.write(f"- Otros Pagos/Bonos: S/ {data_loc['Otros Pagos']:,.2f}")
-                                if data_loc['Descuento Días'] > 0:
-                                    st.write(f"- Desc. días no prestados: − S/ {data_loc['Descuento Días']:,.2f}")
-                                st.success(f"**Pago Bruto: S/ {data_loc['Pago Bruto']:,.2f}**")
-                            with c_dsc:
-                                st.markdown("**Deducciones**")
-                                if data_loc['Retención 4ta (8%)'] > 0:
-                                    st.write(f"- Retención 4ta Cat. ({tasa_4ta_r}%): S/ {data_loc['Retención 4ta (8%)']:,.2f}")
-                                if data_loc['Otros Descuentos'] > 0:
-                                    st.write(f"- Otros Descuentos: S/ {data_loc['Otros Descuentos']:,.2f}")
-                                tot_dsc = data_loc['Retención 4ta (8%)'] + data_loc['Otros Descuentos']
-                                st.error(f"**Total Deducciones: S/ {tot_dsc:,.2f}**")
-                            st.info(f"**NETO A PAGAR: S/ {data_loc['NETO A PAGAR']:,.2f}**")
-
-            _db2.close()
-        except Exception as e_loc:
-            st.error(f"Error cargando datos de locadores: {e_loc}")
+            # ── Detalle individual por locador ─────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 🔍 Detalle por Locador")
+            resultados_rep_list = df_loc_rep.to_dict('records')
+            opciones_loc = [f"{r.get('DNI', '')} — {r.get('Locador', '')}" for r in resultados_rep_list]
+            if opciones_loc:
+                sel_loc = st.selectbox("Seleccione un locador:", opciones_loc, key="rep_loc_sel")
+                dni_loc_sel = sel_loc.split(" — ")[0]
+                data_loc = next((r for r in resultados_rep_list if str(r.get('DNI', '')) == dni_loc_sel), None)
+                if data_loc:
+                    c_ing, c_dsc = st.columns(2)
+                    with c_ing:
+                        st.markdown("**Ingresos**")
+                        st.write(f"- Honorario Base: S/ {float(data_loc.get('Honorario Base', 0) or 0):,.2f}")
+                        if float(data_loc.get('Otros Pagos', 0) or 0) > 0:
+                            st.write(f"- Otros Pagos/Bonos: S/ {float(data_loc['Otros Pagos']):,.2f}")
+                        if float(data_loc.get('Descuento Días', 0) or 0) > 0:
+                            st.write(f"- Desc. días no prestados: − S/ {float(data_loc['Descuento Días']):,.2f}")
+                        st.success(f"**Pago Bruto: S/ {float(data_loc.get('Pago Bruto', 0) or 0):,.2f}**")
+                    with c_dsc:
+                        st.markdown("**Deducciones**")
+                        ret4ta    = float(data_loc.get('Retención 4ta (8%)', 0) or 0)
+                        otros_dsc = float(data_loc.get('Otros Descuentos', 0) or 0)
+                        if ret4ta > 0:
+                            st.write(f"- Retención 4ta Cat.: S/ {ret4ta:,.2f}")
+                        if otros_dsc > 0:
+                            st.write(f"- Otros Descuentos: S/ {otros_dsc:,.2f}")
+                        st.error(f"**Total Deducciones: S/ {ret4ta + otros_dsc:,.2f}**")
+                    st.info(f"**NETO A PAGAR: S/ {float(data_loc.get('NETO A PAGAR', 0) or 0):,.2f}**")
+                    obs = str(data_loc.get('Observaciones', '') or '')
+                    if obs:
+                        st.caption(f"📝 {obs}")
 
     # ── TAB: REPORTE DE TESORERÍA ─────────────────────────────────────────────
     with tab_tesoreria:
