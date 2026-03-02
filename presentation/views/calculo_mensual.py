@@ -640,26 +640,8 @@ def generar_pdf_honorarios(df_loc, empresa_nombre, periodo_key, empresa_ruc="", 
 
     for _, row in df_loc[cols].iterrows():
         fila = []
-        dni_l = str(row.get("DNI", ""))
-        
-        # Lógica de días laborados reales igual que tesorería
-        d_vinc = dias_mes
-        try:
-            db_v = SessionLocal()
-            l_obj = db_v.query(Trabajador).filter_by(num_doc=dni_l).first()
-            if l_obj and l_obj.fecha_ingreso and l_obj.fecha_ingreso.year == anio_num and l_obj.fecha_ingreso.month == mes_num:
-                d_vinc = dias_mes - l_obj.fecha_ingreso.day + 1
-            
-            v_obj = db_v.query(VariablesMes).filter_by(trabajador_id=l_obj.id, periodo_key=periodo_key).first()
-            db_v.close()
-            
-            susp_t21 = json.loads(v_obj.suspensiones_json or '{}') if v_obj else {}
-            cods_desc = ["01", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35"]
-            t_susp = sum(int(v or 0) for k, v in susp_t21.items() if k in cods_desc)
-        except:
-            t_susp = int(row.get("Días no Prestados", 0) or 0)
-
-        d_lab_real = max(0, d_vinc - t_susp)
+        # Días laborados desde el snapshot — dato auditado y congelado al momento del cálculo
+        d_lab_real = int(row.get("Días Laborados", 0) or 0)
 
         for i, c_name in enumerate(cols):
             val = row[c_name]
@@ -1165,28 +1147,8 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         tot_hon = tot_otros_p = tot_bruto = tot_ret = tot_dscto = tot_neto = 0.0
 
         for i, (_, row) in enumerate(df_loc.iterrows()):
-            # Ajuste visual para Tesorería: días efectivamente laborados
-            # 1. Días según fecha de ingreso vs calendario real
-            dni_l = str(row.get("DNI", ""))
-            dias_vinc = dias_mes
-            try:
-                db_v = SessionLocal()
-                l_obj = db_v.query(Trabajador).filter_by(num_doc=dni_l).first()
-                if l_obj and l_obj.fecha_ingreso and l_obj.fecha_ingreso.year == anio_num and l_obj.fecha_ingreso.month == mes_num:
-                    dias_vinc = dias_mes - l_obj.fecha_ingreso.day + 1
-                
-                # 2. Descontar suspensiones Tabla 21
-                v_obj = db_v.query(VariablesMes).filter_by(trabajador_id=l_obj.id, periodo_key=periodo_key).first()
-                db_v.close()
-                
-                susp_t21 = json.loads(v_obj.suspensiones_json or '{}') if v_obj else {}
-                cods_desc = ["01", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35"]
-                total_susp = sum(int(v or 0) for k, v in susp_t21.items() if k in cods_desc)
-            except:
-                total_susp = int(row.get("Días no Prestados", 0) or 0)
-
-            # Corrección visual: evitar restar dos veces (suspensiones ya restadas arriba)
-            dias_lab = max(0, dias_vinc - total_susp)
+            # Días laborados desde el snapshot — dato auditado y congelado al momento del cálculo
+            dias_lab = int(row.get("Días Laborados", 0) or 0)
             
             hon_b  = float(row.get("Honorario Base", 0.0) or 0.0)
             otros_p= float(row.get("Otros Pagos", 0.0) or 0.0)
@@ -2520,40 +2482,62 @@ def render():
                         p = db_up.query(PlanillaMensual).filter_by(
                             empresa_id=empresa_id, periodo_key=periodo_key
                         ).first()
-                        
-                        # Inyección: Crear registro si el mes solo tiene locadores y no se generó planilla 5ta
-                        if not p:
-                            p = PlanillaMensual(
-                                empresa_id=empresa_id,
-                                periodo_key=periodo_key,
-                                resultado_json="[]",
-                                auditoria_json="{}"
-                            )
-                            db_up.add(p)
-                            db_up.flush()
 
-                        p.estado = "CERRADA"
-                        p.cerrada_por = nombre_usuario
-                        p.fecha_cierre = datetime.now()
-                        
-                        # Marcar cuotas del periodo como PAGADAS
-                        _cuotas_pag = (
-                            db_up.query(CuotaPrestamo)
-                            .join(Prestamo)
-                            .filter(
-                                Prestamo.empresa_id == empresa_id,
-                                CuotaPrestamo.periodo_key == periodo_key,
-                                CuotaPrestamo.estado == 'PENDIENTE',
+                        # ── VALIDACIÓN ENTERPRISE: snapshot de locadores obligatorio ──────────────
+                        _n_locs = db_up.query(Trabajador).filter_by(
+                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
+                        ).count()
+                        _hon_snap = (getattr(p, 'honorarios_json', '[]') if p else '[]') or '[]'
+                        try:
+                            _hon_list = json.loads(_hon_snap)
+                        except Exception:
+                            _hon_list = []
+
+                        if _n_locs > 0 and len(_hon_list) == 0:
+                            db_up.close()
+                            st.error(
+                                f"🚫 **CIERRE BLOQUEADO** — Existen **{_n_locs} Locador(es) de Servicio activos** "
+                                f"para este periodo, pero sus honorarios **NO han sido calculados** (snapshot vacío).\n\n"
+                                "**Para cerrar el periodo:**\n"
+                                "1. Vaya a la tab **2. Honorarios (4ta Categoría)**\n"
+                                "2. Presione **🧮 Calcular Honorarios**\n"
+                                "3. Regrese aquí y confirme el cierre.\n\n"
+                                "_Este control garantiza que el snapshot del periodo quede completo e íntegro._"
                             )
-                            .all()
-                        )
-                        for _cp in _cuotas_pag:
-                            _cp.estado = 'PAGADA'
-                        
-                        db_up.commit()
-                        db_up.close()
-                        st.toast(f"Periodo {periodo_key} CERRADO exitosamente", icon="🔒")
-                        st.rerun()
+                        else:
+                            # Inyección: Crear registro si el mes solo tiene locadores y no se generó planilla 5ta
+                            if not p:
+                                p = PlanillaMensual(
+                                    empresa_id=empresa_id,
+                                    periodo_key=periodo_key,
+                                    resultado_json="[]",
+                                    auditoria_json="{}"
+                                )
+                                db_up.add(p)
+                                db_up.flush()
+
+                            p.estado = "CERRADA"
+                            p.cerrada_por = nombre_usuario
+                            p.fecha_cierre = datetime.now()
+
+                            # Marcar cuotas del periodo como PAGADAS
+                            _cuotas_pag = (
+                                db_up.query(CuotaPrestamo)
+                                .join(Prestamo)
+                                .filter(
+                                    Prestamo.empresa_id == empresa_id,
+                                    CuotaPrestamo.periodo_key == periodo_key,
+                                    CuotaPrestamo.estado == 'PENDIENTE',
+                                )
+                                .all()
+                            )
+                            for _cp in _cuotas_pag:
+                                _cp.estado = 'PAGADA'
+
+                            db_up.commit()
+                            db_up.close()
+                            st.toast(f"Periodo {periodo_key} CERRADO exitosamente", icon="🔒")
+                            st.rerun()
                     except Exception as e_cl:
                         st.error(f"Error al cerrar: {e_cl}")
         else:
