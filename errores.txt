@@ -1,44 +1,29 @@
-Actúa como un Desarrollador Senior en Python y experto en lógica de ERP.
+Objetivo: Corregir el error UnboundLocalError en la vista de cálculo mensual asegurando la inicialización de variables antes del procesamiento de trabajadores.
 
-Objetivo: Implementar un sistema de "Limpieza de Snapshot" y "Barrera de Integridad" en la vista de cálculo para asegurar que no existan datos huérfanos entre la 5ta y 4ta categoría, y evitar reportes de tesorería incorrectos.
-
-Archivos a modificar:
-
+Archivo a modificar:
 presentation/views/calculo_mensual.py
 
-Instrucciones de modificación:
+Instrucciones de búsqueda y reemplazo:
 
-1. Limpieza Automática de Locadores (en _render_planilla_tab):
-Modifica la sección donde se llama a guardar_planilla tras ejecutar el motor de 5ta categoría. Si el Maestro de Personal indica que ya no hay locadores activos, debemos limpiar el snapshot antiguo.
-
-Python
-# --- BUSCAR ESTE BLOQUE ---
-try:
-    db2 = SessionLocal()
-    df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-    guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
-    db2.close()
-# --- REEMPLAZAR CON ESTA LÓGICA DE INTEGRIDAD ---
-try:
-    db2 = SessionLocal()
-    # Validación Maestra: ¿Existen realmente locadores activos en este periodo?
-    n_loc_activos = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").count()
-    df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-    
-    # Si el maestro dice 0, forzamos limpieza del snapshot de honorarios aunque existan datos en sesión
-    df_loc_to_save = df_loc_state if n_loc_activos > 0 else pd.DataFrame()
-    
-    guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
-    db2.close()
-2. Barrera de Seguridad en Tesorería (en _render_seccion_tesoreria):
-No permitas la descarga del reporte si hay una inconsistencia entre el maestro y los snapshots calculados.
+Busca el bloque dentro de la función _render_planilla_tab donde se ejecuta el botón del motor de planilla y asegúrate de que la inicialización esté fuera de cualquier ambigüedad lógica:
 
 Python
-# --- MODIFICAR LA LÓGICA DE ADVERTENCIA ---
-if _n_loc_glob > 0 and df_loc_glob.empty:
-    st.warning("⚠️ **Reporte Bloqueado:** Se detectaron locadores activos pero sus honorarios no han sido calculados. Calcule en la pestaña '🧾 2' para habilitar el reporte de tesorería.")
-    # No renderizar el botón de descarga aquí
-else:
-    # Renderizar el botón de generar_pdf_tesoreria solo si hay integridad total
-3. Control de Flujo en Mes Cerrado:
-Asegúrate de que el botón st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}") esté dentro del bloque else de if es_cerrada:, para que desaparezca completamente si el mes ya está bloqueado.
+<<<<
+    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
+        st.session_state['ultima_planilla_calculada'] = True
+        resultados = []
+        auditoria_data = {}
+
+        mes_calc  = int(mes_seleccionado[:2])
+====
+    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
+        st.session_state['ultima_planilla_calculada'] = True
+        
+        # INICIALIZACIÓN GARANTIZADA
+        resultados = []
+        auditoria_data = {}
+
+        mes_calc  = int(mes_seleccionado[:2])
+>>>>
+Análisis adicional:
+Revisa que después del cambio realizado anteriormente para ocultar el botón en meses cerrados, no haya quedado código de cálculo (como el bucle for index, row in df_planilla.iterrows():) fuera del bloque if st.button(...). Todo el proceso de llenado de resultados debe ocurrir estrictamente dentro de la acción del botón o después de una inicialización clara.
