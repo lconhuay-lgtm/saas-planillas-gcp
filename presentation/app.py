@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="Sistema de Planillas SaaS",
     page_icon="💼",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 from presentation.session_state import inicializar_estado
@@ -94,7 +94,7 @@ st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
-        header {visibility: hidden;}
+        header[data-testid="stHeader"] { height: 0px; background: transparent; }
         .stButton>button {
             border-radius: 5px;
             font-weight: bold;
