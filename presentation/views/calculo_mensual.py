@@ -1013,35 +1013,51 @@ def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
         st.markdown("---")
         st.subheader("🏦 Gestión de Tesorería")
 
+        # Verificar si el periodo está cerrado
+        es_cerrada = False
         try:
-            _db_chk = SessionLocal()
-            _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-            _db_chk.close()
-        except:
-            _n_loc_glob = 0
-        
-        if _n_loc_glob > 0 and df_loc_glob.empty:
-            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
-        
-        try:
-            buf_teso_f = generar_pdf_tesoreria(
-                df_planilla=df_plan_glob if not df_plan_glob.empty else None,
-                df_loc=df_loc_glob if not df_loc_glob.empty else None,
-                empresa_nombre=empresa_nombre,
-                periodo_key=periodo_key,
-                auditoria_data=aud_glob,
-                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-            )
-            st.download_button(
-                "🏦 Descargar Reporte de Tesorería (PDF)",
-                data=buf_teso_f,
-                file_name=f"TESORERIA_{periodo_key}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary",
-                key="btn_teso_global_v_final"
-            )
-        except Exception: pass
+            db_chk_c = SessionLocal()
+            plan_chk_c = db_chk_c.query(PlanillaMensual).filter_by(
+                empresa_id=empresa_id, periodo_key=periodo_key
+            ).first()
+            if plan_chk_c and getattr(plan_chk_c, 'estado', 'ABIERTA') == 'CERRADA':
+                es_cerrada = True
+            db_chk_c.close()
+        except Exception:
+            pass
+
+        if es_cerrada:
+            st.info("ℹ️ **Periodo Cerrado:** Para obtener el reporte oficial de tesorería y archivos bancarios, debe ir al módulo **Reportería**, pestaña **🏦 Reporte Tesorería**.")
+        else:
+            try:
+                _db_chk = SessionLocal()
+                _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+                _db_chk.close()
+            except:
+                _n_loc_glob = 0
+            
+            if _n_loc_glob > 0 and df_loc_glob.empty:
+                st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
+            
+            try:
+                buf_teso_f = generar_pdf_tesoreria(
+                    df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                    df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                    empresa_nombre=empresa_nombre,
+                    periodo_key=periodo_key,
+                    auditoria_data=aud_glob,
+                    empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                )
+                st.download_button(
+                    "🏦 Descargar Reporte de Tesorería (PDF)",
+                    data=buf_teso_f,
+                    file_name=f"TESORERIA_{periodo_key}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                    key="btn_teso_global_v_final"
+                )
+            except Exception: pass
 
         st.markdown("---")
         with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
