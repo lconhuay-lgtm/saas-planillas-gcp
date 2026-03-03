@@ -689,14 +689,15 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
     if es_cerrada:
         st.error(f"🔒 La planilla del periodo **{periodo_key}** ya fue CERRADA y contabilizada. Vaya al final de la página para reabrirla si tiene permisos de Supervisor.")
-    elif locadores_pendientes:
-        st.warning(
-            f"⚠️ **CÁLCULO BLOQUEADO:** Hay locadores de servicio sin asistencia guardada para **{periodo_key}**. "
-            f"Vaya al módulo **'Ingreso de Asistencias'** → pestaña **'🧾 2. Valorización de Locadores'** "
-            f"y guarde antes de ejecutar el motor de planilla."
-        )
-    st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")
-    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
+    else:
+        if locadores_pendientes:
+            st.warning(
+                f"⚠️ **CÁLCULO BLOQUEADO:** Hay locadores de servicio sin asistencia guardada para **{periodo_key}**. "
+                f"Vaya al módulo **'Ingreso de Asistencias'** → pestaña **'🧾 2. Valorización de Locadores'** "
+                f"y guarde antes de ejecutar el motor de planilla."
+            )
+        st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")
+        if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
         st.session_state['ultima_planilla_calculada'] = True
         resultados = []
         auditoria_data = {}
@@ -731,11 +732,17 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         st.session_state['res_planilla'] = df_resultados
         st.session_state['auditoria_data'] = auditoria_data
 
-        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
+        # --- GUARDAR PLANILLA EN NEON (Lógica de Integridad de Snapshot) ---
         try:
             db2 = SessionLocal()
+            # Validación Maestra: ¿Existen realmente locadores activos en este periodo?
+            n_loc_activos = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").count()
             df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
+            
+            # Si el maestro dice 0, forzamos limpieza del snapshot aunque existan datos en sesión
+            df_loc_to_save = df_loc_state if n_loc_activos > 0 else pd.DataFrame()
+            
+            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
             db2.close()
         except Exception as e:
             st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
@@ -1037,10 +1044,10 @@ def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
                 _n_loc_glob = 0
             
             if _n_loc_glob > 0 and df_loc_glob.empty:
-                st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
-            
-            try:
-                buf_teso_f = generar_pdf_tesoreria(
+                st.warning("⚠️ **Reporte Bloqueado:** Se detectaron locadores activos pero sus honorarios no han sido calculados. Calcule en la pestaña '🧾 2' para habilitar el reporte de tesorería.")
+            else:
+                try:
+                    buf_teso_f = generar_pdf_tesoreria(
                     df_planilla=df_plan_glob if not df_plan_glob.empty else None,
                     df_loc=df_loc_glob if not df_loc_glob.empty else None,
                     empresa_nombre=empresa_nombre,
@@ -1048,16 +1055,16 @@ def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
                     auditoria_data=aud_glob,
                     empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
                 )
-                st.download_button(
-                    "🏦 Descargar Reporte de Tesorería (PDF)",
-                    data=buf_teso_f,
-                    file_name=f"TESORERIA_{periodo_key}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    type="primary",
-                    key="btn_teso_global_v_final"
-                )
-            except Exception: pass
+                    st.download_button(
+                        "🏦 Descargar Reporte de Tesorería (PDF)",
+                        data=buf_teso_f,
+                        file_name=f"TESORERIA_{periodo_key}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary",
+                        key="btn_teso_global_v_final"
+                    )
+                except Exception: pass
 
         st.markdown("---")
         with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
