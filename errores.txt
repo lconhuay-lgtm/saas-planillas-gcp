@@ -1,349 +1,108 @@
-Actúa como un Arquitecto de Software y Desarrollador Senior en Python.
-Tenemos un problema de "Data Snapshot" en el reporte de Tesorería para planillas cerradas. Los honorarios de los locadores se están recalculando "al vuelo" en lugar de leerse de una foto estática guardada en la base de datos, lo que causa reportes incompletos y pérdida de datos como las Observaciones.
-Además, el botón de cálculo de honorarios debe ser capaz de actualizar de forma independiente su propia porción del snapshot en la BD.
+Prompt para Aider
+Actúa como un Desarrollador Senior de Python y experto en Streamlit.
 
-Vamos a solucionarlo guardando el resultado de los locadores como un JSON estático en la tabla `PlanillaMensual`. Aplica estrictamente los siguientes bloques SEARCH/REPLACE.
+Objetivo: Modificar la vista de cálculo mensual para que, cuando un periodo de planilla esté en estado "CERRADA", se oculte la interfaz interactiva de Tesorería (botones de descarga y advertencias de cálculo) y se redirija al usuario al módulo de Reportería.
 
-### PASO 1: Agregar el campo JSON al modelo
-En `infrastructure/database/models.py`, añade el campo `honorarios_json` a la tabla `PlanillaMensual`:
+Archivos a modificar:
 
+presentation/views/calculo_mensual.py
+
+Análisis de Seguridad:
+
+Debemos verificar el estado del periodo consultando la tabla PlanillaMensual antes de renderizar la sección de tesorería.
+
+La variable periodo_key ya está disponible en el scope del archivo.
+
+No debemos afectar el "Panel de Auditoría Tributaria", el cual debe seguir siendo visible para consultas rápidas.
+
+Instrucciones estrictas de SEARCH/REPLACE:
+
+En presentation/views/calculo_mensual.py, localiza la función _render_seccion_tesoreria y aplica los siguientes cambios:
+
+Python
 <<<<
-    # DataFrame completo de resultados serializado como JSON
-    resultado_json = Column(Text, nullable=False)
-    # Datos de auditoría por trabajador (desglose detallado)
-    auditoria_json = Column(Text, nullable=False)
-    # NUEVO: Resultados calculados de locadores (snapshot)
-    honorarios_json = Column(Text, default='[]')
+    if not df_plan_glob.empty or not df_loc_glob.empty:
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
 
-    # Cierre de planilla
-====
-    # DataFrame completo de resultados serializado como JSON
-    resultado_json = Column(Text, nullable=False)
-    # Datos de auditoría por trabajador (desglose detallado)
-    auditoria_json = Column(Text, nullable=False)
-    # NUEVO: Resultados calculados de locadores (snapshot)
-    honorarios_json = Column(Text, default='[]')
-
-    # Cierre de planilla
->>>>
-
-
-### PASO 2: Auto-Migrar la base de datos
-En `presentation/app.py`, añade la instrucción SQL para crear el nuevo campo sin borrar datos:
-
-<<<<
-            "ALTER TABLE variables_mes ADD COLUMN IF NOT EXISTS notas_gestion TEXT DEFAULT ''",
-            "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS prorrateable_por_asistencia BOOLEAN DEFAULT false",
-            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS factor_proyeccion_grati FLOAT",
-        ]
-        with engine.connect() as _conn:
-====
-            "ALTER TABLE variables_mes ADD COLUMN IF NOT EXISTS notas_gestion TEXT DEFAULT ''",
-            "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS prorrateable_por_asistencia BOOLEAN DEFAULT false",
-            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS factor_proyeccion_grati FLOAT",
-            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS honorarios_json TEXT DEFAULT '[]'",
-        ]
-        with engine.connect() as _conn:
->>>>
-
-
-### PASO 3: Guardar los honorarios en el cálculo mensual (Motor Principal)
-En `presentation/views/calculo_mensual.py`, modifica la función `_guardar_planilla` para que acepte y guarde el DataFrame de locadores:
-
-<<<<
-def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data):
-    """Guarda (upsert) el resultado de planilla en la tabla PlanillaMensual de Neon."""
-    resultado_json = df_resultados.to_json(orient='records', date_format='iso')
-    auditoria_json = json.dumps(auditoria_data, default=str)
-
-    existente = db.query(PlanillaMensual).filter_by(
-        empresa_id=empresa_id, periodo_key=periodo_key
-    ).first()
-    if existente:
-        existente.resultado_json = resultado_json
-        existente.auditoria_json = auditoria_json
-        existente.fecha_calculo = datetime.now()
-    else:
-        nueva = PlanillaMensual(
-            empresa_id=empresa_id,
-            periodo_key=periodo_key,
-            resultado_json=resultado_json,
-            auditoria_json=auditoria_json,
-        )
-        db.add(nueva)
-    db.commit()
-====
-def _guardar_planilla(db, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=None):
-    """Guarda (upsert) el resultado de planilla en la tabla PlanillaMensual de Neon."""
-    resultado_json = df_resultados.to_json(orient='records', date_format='iso')
-    auditoria_json = json.dumps(auditoria_data, default=str)
-    
-    hon_json = "[]"
-    if df_locadores is not None and not df_locadores.empty:
-        hon_json = df_locadores.to_json(orient='records', date_format='iso')
-
-    existente = db.query(PlanillaMensual).filter_by(
-        empresa_id=empresa_id, periodo_key=periodo_key
-    ).first()
-    if existente:
-        existente.resultado_json = resultado_json
-        existente.auditoria_json = auditoria_json
-        # Solo sobreescribe si se envía un df válido, si no, respeta lo que ya estaba
-        if df_locadores is not None:
-            existente.honorarios_json = hon_json
-        existente.fecha_calculo = datetime.now()
-    else:
-        nueva = PlanillaMensual(
-            empresa_id=empresa_id,
-            periodo_key=periodo_key,
-            resultado_json=resultado_json,
-            auditoria_json=auditoria_json,
-            honorarios_json=hon_json
-        )
-        db.add(nueva)
-    db.commit()
->>>>
-
-
-### PASO 4: Inyectar el DF de locadores al guardar desde la pestaña 1
-En `presentation/views/calculo_mensual.py`, en la parte donde se llama a `_guardar_planilla`, añade el estado actual de los honorarios:
-
-<<<<
-        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
         try:
-            db2 = SessionLocal()
-            _guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data)
-            db2.close()
-        except Exception as e:
-====
-        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
-        try:
-            db2 = SessionLocal()
-            df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-            _guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
-            db2.close()
-        except Exception as e:
->>>>
-
-
-### PASO 5: Actualizar Snapshot Independiente al Calcular Honorarios (Pestaña 2)
-En el archivo `presentation/views/calculo_mensual.py`, dentro de la función `_render_honorarios_tab`, permite que el cálculo de locadores actualice su propia parte del registro en BD:
-
-<<<<
-                "CCI":                 getattr(loc, 'cci', '') or '',
-                "Observaciones":       resultado['observaciones'],
-            })
-        st.session_state[f'res_honorarios_{periodo_key}'] = pd.DataFrame(resultados_loc)
-
-    key_res = f'res_honorarios_{periodo_key}'
-====
-                "CCI":                 getattr(loc, 'cci', '') or '',
-                "Observaciones":       resultado['observaciones'],
-            })
+            _db_chk = SessionLocal()
+            _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+            _db_chk.close()
+        except:
+            _n_loc_glob = 0
         
-        df_loc_res = pd.DataFrame(resultados_loc)
-        st.session_state[f'res_honorarios_{periodo_key}'] = df_loc_res
+        if _n_loc_glob > 0 and df_loc_glob.empty:
+            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
         
-        # Guardar snapshot de honorarios en BD de forma independiente si la planilla ya existe
         try:
-            db_upd = SessionLocal()
-            plan_exist = db_upd.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-            if plan_exist:
-                plan_exist.honorarios_json = df_loc_res.to_json(orient='records', date_format='iso')
-                db_upd.commit()
-            db_upd.close()
-        except Exception:
-            pass
-        
-        # Guardar snapshot de honorarios en BD de forma independiente si la planilla ya existe
-        try:
-            db_upd = SessionLocal()
-            plan_exist = db_upd.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-            if plan_exist:
-                plan_exist.honorarios_json = df_loc_res.to_json(orient='records', date_format='iso')
-                db_upd.commit()
-            db_upd.close()
-        except Exception:
-            pass
-
-    key_res = f'res_honorarios_{periodo_key}'
->>>>
-
-
-### PASO 6: Refactorizar Reportería para leer el Snapshot (Tesorería)
-En `presentation/views/reporteria.py`, en el bloque de la pestaña `tab_tesoreria`, REEMPLAZA la lógica de recálculo en vivo por la lectura del JSON congelado:
-
-<<<<
-        try:
-            from presentation.views.calculo_mensual import generar_pdf_tesoreria
-            from core.use_cases.calculo_honorarios import calcular_recibo_honorarios
-
-            _db_t = SessionLocal()
-            locadores_t = (
-                _db_t.query(Trabajador)
-                .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
-                .all()
+            buf_teso_f = generar_pdf_tesoreria(
+                df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=periodo_key,
+                auditoria_data=aud_glob,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
             )
-            p_t = _db_t.query(ParametroLegal).filter_by(
-                empresa_id=empresa_id, periodo_key=sel_key
-            ).first()
-            variables_t = {
-                v.trabajador_id: v
-                for v in _db_t.query(VariablesMes).filter_by(
-                    empresa_id=empresa_id, periodo_key=sel_key
-                ).all()
-            }
-            _db_t.close()
-
-            # Recalcular locadores
-            import json as _json_t
-            mes_t = int(sel_key[:2]); anio_t = int(sel_key[3:])
-            dias_mes_t = _cal.monthrange(anio_t, mes_t)[1]
-            tasa_4ta_t  = getattr(p_t, 'tasa_4ta',  8.0)    if p_t else 8.0
-            tope_4ta_t  = getattr(p_t, 'tope_4ta', 1500.0) if p_t else 1500.0
-
-            resultados_t = []
-            for loc in locadores_t:
-                v = variables_t.get(loc.id)
-                if v:
-                    cj = _json_t.loads(v.conceptos_json or '{}')
-                    vl = {
-                        'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
-                        'otros_pagos':       float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
-                        'otros_descuentos':  float(cj.get('_otros_descuentos_loc', 0.0) or 0.0),
-                    }
-                else:
-                    vl = {'dias_no_prestados': 0, 'otros_pagos': 0.0, 'otros_descuentos': 0.0}
-                res = calcular_recibo_honorarios(loc, vl, dias_mes_t, tasa_4ta=tasa_4ta_t, tope_4ta=tope_4ta_t)
-                resultados_t.append({
-                    "DNI":                loc.num_doc,
-                    "Locador":            loc.nombres,
-                    "Días no Prestados":  res['dias_no_prestados'],
-                    "Pago Bruto":         res['pago_bruto'],
-                    "Retención 4ta (8%)": res['retencion_4ta'],
-                    "Otros Descuentos":   res['otros_descuentos'],
-                    "NETO A PAGAR":       res['neto_a_pagar'],
-                    "Banco":              getattr(loc, 'banco', '') or '',
-                    "N° Cuenta":          getattr(loc, 'cuenta_bancaria', '') or '',
-                    "CCI":                getattr(loc, 'cci', '') or '',
-                })
-
-            df_loc_t = pd.DataFrame(resultados_t) if resultados_t else pd.DataFrame()
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF)",
+                data=buf_teso_f,
+                file_name=f"TESORERIA_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="btn_teso_global_v_final"
+            )
+        except Exception: pass
 ====
+    if not df_plan_glob.empty or not df_loc_glob.empty:
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
+
+        # Verificar si el periodo está cerrado
+        es_cerrada = False
         try:
-            from presentation.views.calculo_mensual import generar_pdf_tesoreria
+            db_chk_c = SessionLocal()
+            plan_chk_c = db_chk_c.query(PlanillaMensual).filter_by(
+                empresa_id=empresa_id, periodo_key=periodo_key
+            ).first()
+            if plan_chk_c and getattr(plan_chk_c, 'estado', 'ABIERTA') == 'CERRADA':
+                es_cerrada = True
+            db_chk_c.close()
+        except Exception:
+            pass
+
+        if es_cerrada:
+            st.info("ℹ️ **Periodo Cerrado:** Para obtener el reporte oficial de tesorería y archivos bancarios, debe ir al módulo **Reportería**, pestaña **🏦 Reporte Tesorería**.")
+        else:
+            try:
+                _db_chk = SessionLocal()
+                _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+                _db_chk.close()
+            except:
+                _n_loc_glob = 0
             
-            # LECTURA DE SNAPSHOT (Congelado en BD)
-            hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
-            df_loc_t = pd.read_json(io.StringIO(hon_json_str), orient='records')
-            if df_loc_t is None:
-                df_loc_t = pd.DataFrame()
->>>>
-
-
-### PASO 7: Refactorizar BCP y Personalizado para leer Snapshot
-En el archivo `presentation/views/reporteria.py`, repite la misma lectura del Snapshot para la pestaña BCP:
-
-<<<<
-            else:
-                try:
-                    from core.use_cases.generador_interfaces import generar_txt_bcp
-                    from core.use_cases.calculo_honorarios import calcular_recibo_honorarios as _chr_txt
-                    _db_txt = SessionLocal()
-                    locs_txt = _db_txt.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").all()
-                    vars_txt = {v.trabajador_id: v for v in _db_txt.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=sel_key).all()}
-                    p_txt = _db_txt.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=sel_key).first()
-                    _db_txt.close()
-
-                    res_l_txt = []
-                    mes_i = int(sel_key[:2]); ani_i = int(sel_key[3:])
-                    d_mes_i = _cal.monthrange(ani_i, mes_i)[1]
-                    for l in locs_txt:
-                        v = vars_txt.get(l.id)
-                        cj = json.loads(v.conceptos_json or '{}') if v else {}
-                        vl = {'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
-                              'otros_pagos': float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
-                              'otros_descuentos': float(cj.get('_otros_descuentos_loc', 0.0) or 0.0)}
-                        r = _chr_txt(l, vl, d_mes_i, 
-                                     tasa_4ta=getattr(p_txt, 'tasa_4ta', 8.0) if p_txt else 8.0,
-                                     tope_4ta=getattr(p_txt, 'tope_4ta', 1500.0) if p_txt else 1500.0)
-                        
-                        # Mapear correctamente la cuenta para el generador TXT
-                        cuenta_loc = l.cuenta_bancaria if l.banco == 'BCP' else l.cci
-                        
-                        res_l_txt.append({"DNI": l.num_doc, "Locador": l.nombres, "NETO A PAGAR": r['neto_a_pagar'], "CCI": l.cci, "N° Cuenta": cuenta_loc, "Banco": l.banco})
-                    
-                    txt_bcp = generar_txt_bcp(df_planilla, cta_cargo, f_pago, df_loc=pd.DataFrame(res_l_txt), solo_bcp=solo_bcp_flag)
-====
-            else:
-                try:
-                    from core.use_cases.generador_interfaces import generar_txt_bcp
-                    
-                    # LECTURA DE SNAPSHOT
-                    hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
-                    df_loc_bcp = pd.read_json(io.StringIO(hon_json_str), orient='records')
-                    
-                    # Mapeo de seguridad para cuentas bancarias en Snapshot BCP
-                    if not df_loc_bcp.empty and 'N° Cuenta' not in df_loc_bcp.columns:
-                        df_loc_bcp['N° Cuenta'] = df_loc_bcp.apply(lambda r: str(r.get('cuenta_bancaria', '') or '') if str(r.get('Banco', '') or '') == 'BCP' else str(r.get('CCI', '') or ''), axis=1)
-
-                    txt_bcp = generar_txt_bcp(df_planilla, cta_cargo, f_pago, df_loc=df_loc_bcp, solo_bcp=solo_bcp_flag)
->>>>
-
-Y finalmente, para el Reporte Personalizado en el mismo archivo `presentation/views/reporteria.py`:
-<<<<
-            else:
-                # Recalcular locadores para reporte personalizado
-                from core.use_cases.calculo_honorarios import calcular_recibo_honorarios as _chr_p
-                _db_p = SessionLocal()
-                locadores_p = (
-                    _db_p.query(Trabajador)
-                    .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
-                    .all()
+            if _n_loc_glob > 0 and df_loc_glob.empty:
+                st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
+            
+            try:
+                buf_teso_f = generar_pdf_tesoreria(
+                    df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                    df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                    empresa_nombre=empresa_nombre,
+                    periodo_key=periodo_key,
+                    auditoria_data=aud_glob,
+                    empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
                 )
-                p_p = _db_p.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=sel_key).first()
-                variables_p = {
-                    v.trabajador_id: v
-                    for v in _db_p.query(VariablesMes).filter_by(empresa_id=empresa_id, periodo_key=sel_key).all()
-                }
-                _db_p.close()
-                mes_p = int(sel_key[:2]); anio_p = int(sel_key[3:])
-                dias_mes_p = _cal.monthrange(anio_p, mes_p)[1]
-                tasa_4ta_p = getattr(p_p, 'tasa_4ta',  8.0)    if p_p else 8.0
-                tope_4ta_p = getattr(p_p, 'tope_4ta', 1500.0) if p_p else 1500.0
-                rows_p = []
-                for loc in locadores_p:
-                    v = variables_p.get(loc.id)
-                    if v:
-                        cj = _json_p.loads(v.conceptos_json or '{}')
-                        vl = {'dias_no_prestados': getattr(v, 'dias_descuento_locador', 0) or 0,
-                              'otros_pagos': float(cj.get('_otros_pagos_loc', 0.0) or 0.0),
-                              'otros_descuentos': float(cj.get('_otros_descuentos_loc', 0.0) or 0.0)}
-                    else:
-                        vl = {'dias_no_prestados': 0, 'otros_pagos': 0.0, 'otros_descuentos': 0.0}
-                    res = _chr_p(loc, vl, dias_mes_p, tasa_4ta=tasa_4ta_p, tope_4ta=tope_4ta_p)
-                    rows_p.append({
-                        "DNI": loc.num_doc, "Locador": loc.nombres, "Cargo": loc.cargo or "",
-                        "Honorario Base": res['honorario_base'],
-                        "Días no Prestados": res['dias_no_prestados'],
-                        "Descuento Días": res['monto_descuento'],
-                        "Otros Pagos": res['otros_pagos'],
-                        "Pago Bruto": res['pago_bruto'],
-                        "Retención 4ta (8%)": res['retencion_4ta'],
-                        "Otros Descuentos": res['otros_descuentos'],
-                        "NETO A PAGAR": res['neto_a_pagar'],
-                        "Banco": getattr(loc, 'banco', '') or '',
-                        "N° Cuenta": getattr(loc, 'cuenta_bancaria', '') or '',
-                        "CCI": getattr(loc, 'cci', '') or '',
-                    })
-                df_base_p = pd.DataFrame(rows_p) if rows_p else pd.DataFrame()
-                cols_disp = list(df_base_p.columns)
-====
-            else:
-                # LECTURA DE SNAPSHOT
-                hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
-                df_base_p = pd.read_json(io.StringIO(hon_json_str), orient='records')
-                if df_base_p is None:
-                    df_base_p = pd.DataFrame()
-                cols_disp = list(df_base_p.columns)
+                st.download_button(
+                    "🏦 Descargar Reporte de Tesorería (PDF)",
+                    data=buf_teso_f,
+                    file_name=f"TESORERIA_{periodo_key}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                    key="btn_teso_global_v_final"
+                )
+            except Exception: pass
 >>>>
+Validación final: Asegúrate de que no existan duplicados de la lógica de cierre en el mismo archivo y que el mensaje informativo use el componente st.info para destacar visualmente.
