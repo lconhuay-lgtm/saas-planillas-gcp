@@ -734,16 +734,30 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             st.session_state['res_planilla'] = df_resultados
             st.session_state['auditoria_data'] = auditoria_data
 
-            # --- GUARDAR PLANILLA EN NEON (Lógica de Integridad de Snapshot) ---
+            # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
             try:
                 db2 = SessionLocal()
-                # Validación Maestra: ¿Existen realmente locadores activos en este periodo?
-                n_loc_activos = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").count()
-                df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
                 
-                # Si el maestro dice 0, forzamos limpieza del snapshot aunque existan datos en sesión
-                df_loc_to_save = df_loc_state if n_loc_activos > 0 else pd.DataFrame()
+                # Validación Maestra Date-Aware: ¿Existen locadores activos para ESTE periodo?
+                _m_calc = int(periodo_key[:2])
+                _a_calc = int(periodo_key[3:])
+                _locs_all = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").all()
+                n_loc_periodo = len([
+                    l for l in _locs_all 
+                    if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_calc or (l.fecha_ingreso.year == _a_calc and l.fecha_ingreso.month > _m_calc)))
+                ])
                 
+                df_loc_to_save = st.session_state.get(f'res_honorarios_{periodo_key}')
+                
+                # Si el maestro dice 0, forzamos un DataFrame vacío para LIMPIAR el snapshot fantasma
+                if n_loc_periodo == 0:
+                    df_loc_to_save = pd.DataFrame()
+                elif df_loc_to_save is None:
+                    # Recuperar snapshot existente para no perderlo si el usuario solo calculó la 5ta categoría
+                    p_exist = db2.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+                    if p_exist and p_exist.honorarios_json and p_exist.honorarios_json != '[]':
+                        df_loc_to_save = pd.read_json(io.StringIO(p_exist.honorarios_json), orient='records')
+
                 guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
                 db2.close()
             except Exception as e:
@@ -1241,12 +1255,18 @@ def _render_seccion_cierre(empresa_id, empresa_nombre, periodo_key):
                         ).first()
 
                         # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
-                        _n_planilla = db_up.query(Trabajador).filter_by(
-                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="PLANILLA"
-                        ).count()
-                        _n_locs = db_up.query(Trabajador).filter_by(
-                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
-                        ).count()
+                        _m_c = int(periodo_key[:2])
+                        _a_c = int(periodo_key[3:])
+                        _trab_all = db_up.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO").all()
+                        
+                        _n_planilla = len([
+                            t for t in _trab_all 
+                            if t.tipo_contrato == "PLANILLA" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
+                        ])
+                        _n_locs = len([
+                            t for t in _trab_all 
+                            if t.tipo_contrato == "LOCADOR" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
+                        ])
 
                         _resultado_snap = (getattr(p, 'resultado_json', '[]') if p else '[]') or '[]'
                         _hon_snap       = (getattr(p, 'honorarios_json', '[]') if p else '[]') or '[]'
