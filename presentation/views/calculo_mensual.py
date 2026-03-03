@@ -705,49 +705,49 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             auditoria_data = {}
 
             mes_calc  = int(mes_seleccionado[:2])
-        anio_calc = int(anio_seleccionado)
-        contexto  = _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado)
-        seq_num   = 0
-        for index, row in df_planilla.iterrows():
-            resultado = _calcular_fila_trabajador(
-                row, p, horas_jornada, mes_calc, anio_calc, mes_idx, periodo_key,
-                contexto['historico_quinta'], contexto['cuotas_del_mes'],
-                contexto['notas_gestion_map'], conceptos_empresa, contexto['factor_g'],
-            )
-            if resultado is not None:
-                seq_num += 1
-                fila, auditoria_row = resultado
-                fila['N°'] = seq_num
-                resultados.append(fila)
-                auditoria_data[fila['DNI']] = auditoria_row
+            anio_calc = int(anio_seleccionado)
+            contexto  = _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado)
+            seq_num   = 0
+            for index, row in df_planilla.iterrows():
+                resultado = _calcular_fila_trabajador(
+                    row, p, horas_jornada, mes_calc, anio_calc, mes_idx, periodo_key,
+                    contexto['historico_quinta'], contexto['cuotas_del_mes'],
+                    contexto['notas_gestion_map'], conceptos_empresa, contexto['factor_g'],
+                )
+                if resultado is not None:
+                    seq_num += 1
+                    fila, auditoria_row = resultado
+                    fila['N°'] = seq_num
+                    resultados.append(fila)
+                    auditoria_data[fila['DNI']] = auditoria_row
 
-        df_resultados = pd.DataFrame(resultados).fillna(0.0)
-        
-        # --- FILA DE TOTALES DINÁMICA ---
-        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI", "Observaciones"}
-        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": "", "Observaciones": ""}
-        for col in df_resultados.columns:
-            if col not in cols_texto:
-                totales[col] = df_resultados[col].sum()
+            df_resultados = pd.DataFrame(resultados).fillna(0.0)
             
-        df_resultados = pd.concat([df_resultados, pd.DataFrame([totales])], ignore_index=True)
-        st.session_state['res_planilla'] = df_resultados
-        st.session_state['auditoria_data'] = auditoria_data
+            # --- FILA DE TOTALES DINÁMICA ---
+            cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI", "Observaciones"}
+            totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": "", "Observaciones": ""}
+            for col in df_resultados.columns:
+                if col not in cols_texto:
+                    totales[col] = df_resultados[col].sum()
+                
+            df_resultados = pd.concat([df_resultados, pd.DataFrame([totales])], ignore_index=True)
+            st.session_state['res_planilla'] = df_resultados
+            st.session_state['auditoria_data'] = auditoria_data
 
-        # --- GUARDAR PLANILLA EN NEON (Lógica de Integridad de Snapshot) ---
-        try:
-            db2 = SessionLocal()
-            # Validación Maestra: ¿Existen realmente locadores activos en este periodo?
-            n_loc_activos = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").count()
-            df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-            
-            # Si el maestro dice 0, forzamos limpieza del snapshot aunque existan datos en sesión
-            df_loc_to_save = df_loc_state if n_loc_activos > 0 else pd.DataFrame()
-            
-            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
-            db2.close()
-        except Exception as e:
-            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
+            # --- GUARDAR PLANILLA EN NEON (Lógica de Integridad de Snapshot) ---
+            try:
+                db2 = SessionLocal()
+                # Validación Maestra: ¿Existen realmente locadores activos en este periodo?
+                n_loc_activos = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").count()
+                df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
+                
+                # Si el maestro dice 0, forzamos limpieza del snapshot aunque existan datos en sesión
+                df_loc_to_save = df_loc_state if n_loc_activos > 0 else pd.DataFrame()
+                
+                guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
+                db2.close()
+            except Exception as e:
+                st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
 
     # --- INTENTAR RECUPERAR PLANILLA GUARDADA EN NEON SI NO HAY EN SESSION ---
     if not st.session_state.get('ultima_planilla_calculada', False):
