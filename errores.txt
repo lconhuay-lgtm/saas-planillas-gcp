@@ -1,29 +1,195 @@
-Objetivo: Corregir el error UnboundLocalError en la vista de cálculo mensual asegurando la inicialización de variables antes del procesamiento de trabajadores.
+Actúa como un Desarrollador Senior en Python. Hemos detectado un bug crítico de falsos positivos en el conteo de trabajadores en presentation/views/calculo_mensual.py. El uso de .count() global ignora la fecha_ingreso, lo que bloquea Tesorería y genera duplicados fantasma en los snapshots al cruzar periodos.
 
-Archivo a modificar:
-presentation/views/calculo_mensual.py
+Archivo a modificar: presentation/views/calculo_mensual.py
 
-Instrucciones de búsqueda y reemplazo:
-
-Busca el bloque dentro de la función _render_planilla_tab donde se ejecuta el botón del motor de planilla y asegúrate de que la inicialización esté fuera de cualquier ambigüedad lógica:
+1. Solucionar el guardado del Motor de Planilla (Limpieza Inteligente):
+Reemplaza el bloque de persistencia en _render_planilla_tab.
 
 Python
 <<<<
-    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
-        st.session_state['ultima_planilla_calculada'] = True
-        resultados = []
-        auditoria_data = {}
-
-        mes_calc  = int(mes_seleccionado[:2])
+        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
+        try:
+            db2 = SessionLocal()
+            df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
+            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
+            db2.close()
+        except Exception as e:
+            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
 ====
-    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
-        st.session_state['ultima_planilla_calculada'] = True
-        
-        # INICIALIZACIÓN GARANTIZADA
-        resultados = []
-        auditoria_data = {}
+        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
+        try:
+            db2 = SessionLocal()
+            
+            # Validación Maestra Date-Aware: ¿Existen locadores activos para ESTE periodo?
+            _m_calc = int(periodo_key[:2])
+            _a_calc = int(periodo_key[3:])
+            _locs_all = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").all()
+            n_loc_periodo = len([
+                l for l in _locs_all 
+                if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_calc or (l.fecha_ingreso.year == _a_calc and l.fecha_ingreso.month > _m_calc)))
+            ])
+            
+            df_loc_to_save = st.session_state.get(f'res_honorarios_{periodo_key}')
+            
+            # Si el maestro dice 0, forzamos un DataFrame vacío para LIMPIAR el snapshot fantasma
+            if n_loc_periodo == 0:
+                df_loc_to_save = pd.DataFrame()
+            elif df_loc_to_save is None:
+                # Recuperar snapshot existente para no perderlo si el usuario solo calculó la 5ta categoría
+                p_exist = db2.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+                if p_exist and p_exist.honorarios_json and p_exist.honorarios_json != '[]':
+                    df_loc_to_save = pd.read_json(io.StringIO(p_exist.honorarios_json), orient='records')
 
-        mes_calc  = int(mes_seleccionado[:2])
+            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
+            db2.close()
+        except Exception as e:
+            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
 >>>>
-Análisis adicional:
-Revisa que después del cambio realizado anteriormente para ocultar el botón en meses cerrados, no haya quedado código de cálculo (como el bucle for index, row in df_planilla.iterrows():) fuera del bloque if st.button(...). Todo el proceso de llenado de resultados debe ocurrir estrictamente dentro de la acción del botón o después de una inicialización clara.
+2. Solucionar el bloqueo en la sección Tesorería y ocultar el botón en meses cerrados:
+Refactoriza _render_seccion_tesoreria para rescatar la sesión y aplicar el conteo con filtro de fechas.
+
+Python
+<<<<
+def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
+    """Sección de Gestión de Tesorería: reporte PDF + panel de auditoría tributaria."""
+    # ── SECCIÓN GLOBAL DE TESORERÍA ──────────────────────────────────────────
+    df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
+    df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+    aud_glob  = st.session_state.get('auditoria_data', {})
+
+    if not df_plan_glob.empty or not df_loc_glob.empty:
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
+
+        try:
+            _db_chk = SessionLocal()
+            _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
+            _db_chk.close()
+        except:
+            _n_loc_glob = 0
+        
+        if _n_loc_glob > 0 and df_loc_glob.empty:
+            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
+        
+        try:
+            buf_teso_f = generar_pdf_tesoreria(
+                df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                empresa_nombre=empresa_nombre,
+                periodo_key=periodo_key,
+                auditoria_data=aud_glob,
+                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+            )
+            st.download_button(
+                "🏦 Descargar Reporte de Tesorería (PDF)",
+                data=buf_teso_f,
+                file_name=f"TESORERIA_{periodo_key}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+                key="btn_teso_global_v_final"
+            )
+        except Exception: pass
+
+        st.markdown("---")
+====
+def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
+    """Sección de Gestión de Tesorería: reporte PDF + panel de auditoría tributaria."""
+    # ── SECCIÓN GLOBAL DE TESORERÍA ──────────────────────────────────────────
+    df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
+    df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
+    aud_glob  = st.session_state.get('auditoria_data', {})
+
+    # Rescate de snapshot en BD si la sesión está vacía (tras reapertura)
+    if df_loc_glob.empty:
+        try:
+            _db_s = SessionLocal()
+            _p_s = _db_s.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            if _p_s and _p_s.honorarios_json and _p_s.honorarios_json != '[]':
+                df_loc_glob = pd.read_json(io.StringIO(_p_s.honorarios_json), orient='records')
+                st.session_state[f'res_honorarios_{periodo_key}'] = df_loc_glob
+            _db_s.close()
+        except: pass
+
+    if not df_plan_glob.empty or not df_loc_glob.empty:
+        st.markdown("---")
+        st.subheader("🏦 Gestión de Tesorería")
+
+        # Verificar estado de cierre
+        es_cerrada_teso = False
+        try:
+            db_ct = SessionLocal()
+            plan_ct = db_ct.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            if plan_ct and getattr(plan_ct, 'estado', 'ABIERTA') == 'CERRADA':
+                es_cerrada_teso = True
+            db_ct.close()
+        except: pass
+
+        if es_cerrada_teso:
+            st.info("ℹ️ **Periodo Cerrado:** Para obtener el reporte oficial de tesorería y archivos bancarios inmutables, debe ir al módulo **Reportería**, pestaña **🏦 Reporte Tesorería**.")
+        else:
+            try:
+                _db_chk = SessionLocal()
+                _m_t = int(periodo_key[:2])
+                _a_t = int(periodo_key[3:])
+                _locs_t = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').all()
+                _n_loc_glob = len([
+                    l for l in _locs_t 
+                    if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_t or (l.fecha_ingreso.year == _a_t and l.fecha_ingreso.month > _m_t)))
+                ])
+                _db_chk.close()
+            except:
+                _n_loc_glob = 0
+            
+            if _n_loc_glob > 0 and df_loc_glob.empty:
+                st.warning("⚠️ **Reporte Bloqueado:** Se detectaron locadores activos en este periodo sin honorarios calculados. Calcule en la pestaña '🧾 2' para habilitar el reporte de tesorería.")
+            else:
+                try:
+                    buf_teso_f = generar_pdf_tesoreria(
+                        df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                        empresa_nombre=empresa_nombre,
+                        periodo_key=periodo_key,
+                        auditoria_data=aud_glob,
+                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                    )
+                    st.download_button(
+                        "🏦 Descargar Reporte de Tesorería (PDF)",
+                        data=buf_teso_f,
+                        file_name=f"TESORERIA_{periodo_key}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary",
+                        key="btn_teso_global_v_final"
+                    )
+                except Exception: pass
+
+        st.markdown("---")
+>>>>
+3. Solucionar el bloqueo de cierre ("Validación Enterprise"):
+Reemplaza el .count() falso en _render_seccion_cierre.
+
+Python
+<<<<
+                        # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
+                        _n_planilla = db_up.query(Trabajador).filter_by(
+                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="PLANILLA"
+                        ).count()
+                        _n_locs = db_up.query(Trabajador).filter_by(
+                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
+                        ).count()
+====
+                        # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
+                        _m_c = int(periodo_key[:2])
+                        _a_c = int(periodo_key[3:])
+                        _trab_all = db_up.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO").all()
+                        
+                        _n_planilla = len([
+                            t for t in _trab_all 
+                            if t.tipo_contrato == "PLANILLA" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
+                        ])
+                        _n_locs = len([
+                            t for t in _trab_all 
+                            if t.tipo_contrato == "LOCADOR" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
+                        ])
+>>>>
