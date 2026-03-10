@@ -452,11 +452,17 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
                               historico_quinta, cuotas_del_mes, notas_gestion_map,
                               conceptos_empresa, factor_g):
     """Calcula los campos de planilla para un trabajador. Retorna (fila_dict, auditoria_dict) o None."""
-    # Filtro de fecha de ingreso para personal en planilla
+    # Filtro de fecha de ingreso y cese para personal en planilla
     try:
         fi_p = pd.to_datetime(row['Fecha Ingreso'])
         if fi_p.year > anio_calc or (fi_p.year == anio_calc and fi_p.month > mes_calc):
             return None
+        
+        # Si tiene fecha de cese y es anterior al mes de cálculo, omitir
+        if 'fecha_cese' in row and pd.notna(row['fecha_cese']):
+            fc_p = pd.to_datetime(row['fecha_cese'])
+            if fc_p.year < anio_calc or (fc_p.year == anio_calc and fc_p.month < mes_calc):
+                return None
     except: pass
 
     dni_trabajador = row['Num. Doc.']
@@ -616,8 +622,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         empresa_obj = db.query(EmpresaModel).filter_by(id=empresa_id).first()
         horas_jornada = float(getattr(empresa_obj, 'horas_jornada_diaria', None) or 8.0)
 
-        # 2. Trabajadores activos
-        df_trab = cargar_trabajadores_df(db, empresa_id)
+        # 2. Trabajadores activos (considerando fecha de cese para el periodo)
+        df_trab = cargar_trabajadores_df(db, empresa_id, periodo_key=periodo_key)
         if df_trab.empty:
             st.warning("⚠️ No hay trabajadores activos registrados en el Maestro de Personal.")
             return

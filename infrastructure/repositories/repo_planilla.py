@@ -40,24 +40,33 @@ def cargar_parametros(db, empresa_id, periodo_key) -> dict | None:
     }
 
 
-def cargar_trabajadores_df(db, empresa_id) -> pd.DataFrame:
+def cargar_trabajadores_df(db, empresa_id, periodo_key=None) -> pd.DataFrame:
     """Lee trabajadores activos de Neon y los devuelve como DataFrame compatible."""
-    trabajadores = (
-        db.query(Trabajador)
-        .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
-        .filter(or_(
-            Trabajador.tipo_contrato == 'PLANILLA', 
-            Trabajador.tipo_contrato == None,
-            Trabajador.tipo_contrato == ''
-        ))
-        .all()
-    )
+    query = db.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO")
+    
+    query = query.filter(or_(
+        Trabajador.tipo_contrato == 'PLANILLA', 
+        Trabajador.tipo_contrato == None,
+        Trabajador.tipo_contrato == ''
+    ))
+    
+    trabajadores = query.all()
+
+    # Filtrar por fecha de cese si se especifica el periodo
+    if periodo_key:
+        mes_p = int(periodo_key[:2])
+        anio_p = int(periodo_key[3:])
+        trabajadores = [
+            t for t in trabajadores
+            if not (t.fecha_cese and (t.fecha_cese.year < anio_p or (t.fecha_cese.year == anio_p and t.fecha_cese.month < mes_p)))
+        ]
     rows = []
     for t in trabajadores:
         rows.append({
             "Num. Doc.": t.num_doc,
             "Nombres y Apellidos": t.nombres,
             "Fecha Ingreso": t.fecha_ingreso,
+            "fecha_cese": t.fecha_cese,
             "Fecha Nacimiento": t.fecha_nac,
             "Sueldo Base": t.sueldo_base,
             "Sistema Pensión": t.sistema_pension or "NO AFECTO",
