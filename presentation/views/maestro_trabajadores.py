@@ -119,6 +119,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         ap_pat_val, ap_mat_val, nombres_val = "", "", ""
         f_nac_val = datetime.date(1990, 1, 1)
         cargo_val, f_ingreso_val = "", datetime.date.today()
+        f_cese_val = None
         s_base_val, situacion_val = 1025.0, "ACTIVO"
         s_pension_val, t_comision_val, cuspp_val = "ONP", "FLUJO", ""
         banco_val, n_cuenta_val, cci_val = "BCP", "", ""
@@ -146,6 +147,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         situacion_val = t.situacion or "ACTIVO"
         s_pension_val = t.sistema_pension or "ONP"
         t_comision_val = t.comision_afp or "FLUJO"
+        f_cese_val = getattr(t, 'fecha_cese', None)
         cuspp_val = t.cuspp or ""
         banco_val = t.banco or "BCP"
         n_cuenta_val = t.cuenta_bancaria or ""
@@ -211,18 +213,22 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     # ── Sección 2: Información Laboral ─────────────────────────────────────────
     st.markdown("##### 2. Información Laboral")
-    cl1, cl2, cl3, cl4 = st.columns(4)
+    cl1, cl2, cl3, cl4, cl5 = st.columns(5)
     cargo = cl1.text_input("Cargo / Puesto", value=cargo_val, key=f"{key_prefix}_cargo")
     f_ingreso = cl2.date_input("Fecha de Ingreso*", value=f_ingreso_val,
                                min_value=datetime.date(1960, 1, 1),
                                max_value=datetime.date.today(),
                                key=f"{key_prefix}_fingreso")
+    f_cese = cl3.date_input("Fecha de Cese", value=f_cese_val,
+                            min_value=datetime.date(1960, 1, 1),
+                            max_value=datetime.date(2050, 12, 31),
+                            key=f"{key_prefix}_fcese")
     label_sueldo = "Honorario Base Mensual (S/)*" if es_locador else "Sueldo Mensual (S/)*"
     min_sueldo = 0.01 if es_locador else 1025.0
-    s_base = cl3.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
+    s_base = cl4.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
                               value=max(min_sueldo, s_base_val), key=f"{key_prefix}_sbase")
     opciones_sit = ["ACTIVO", "CESADO", "SUSPENDIDO"]
-    situacion = cl4.selectbox("Situación", opciones_sit,
+    situacion = cl5.selectbox("Situación", opciones_sit,
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
                               key=f"{key_prefix}_situacion")
 
@@ -325,6 +331,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "fecha_nac": f_nac,
             "cargo": cargo,
             "fecha_ingreso": f_ingreso,
+            "fecha_cese": f_cese if situacion == "CESADO" else None,
             "sueldo_base": s_base,
             "situacion": situacion,
             "tipo_contrato": "LOCADOR" if es_locador else "PLANILLA",

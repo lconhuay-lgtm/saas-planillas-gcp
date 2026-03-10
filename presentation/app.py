@@ -77,6 +77,7 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS prorrateable_por_asistencia BOOLEAN DEFAULT false",
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS factor_proyeccion_grati FLOAT",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS honorarios_json TEXT DEFAULT '[]'",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS fecha_cese DATE",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

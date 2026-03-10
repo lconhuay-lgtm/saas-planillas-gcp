@@ -75,7 +75,16 @@ def render():
             if not t.fecha_ingreso:
                 return True
             fi = t.fecha_ingreso
-            return not (fi.year > _anio_asis or (fi.year == _anio_asis and fi.month > _mes_asis))
+            # Validar ingreso posterior
+            ingreso_posterior = (fi.year > _anio_asis or (fi.year == _anio_asis and fi.month > _mes_asis))
+            
+            # Validar cese previo
+            cese_previo = False
+            fc = getattr(t, 'fecha_cese', None)
+            if fc:
+                cese_previo = (fc.year < _anio_asis or (fc.year == _anio_asis and fc.month < _mes_asis))
+            
+            return not (ingreso_posterior or cese_previo)
 
         planilleros = [t for t in planilleros if _activo_en_periodo(t)]
         locadores   = [t for t in locadores   if _activo_en_periodo(t)]

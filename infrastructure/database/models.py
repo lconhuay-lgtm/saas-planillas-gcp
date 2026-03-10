@@ -78,6 +78,7 @@ class Trabajador(Base):
     # Datos Laborales
     cargo = Column(String(100))
     fecha_ingreso = Column(Date)
+    fecha_cese = Column(Date, nullable=True)
     situacion = Column(String(50), default="ACTIVO")
     sueldo_base = Column(Float, nullable=False)
     # Tipo de contratación: 'PLANILLA' (5ta Cat.) o 'LOCADOR' (4ta Cat.)
