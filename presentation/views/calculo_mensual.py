@@ -833,10 +833,11 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             .all()
         )
 
-        # Filtrar locadores que ya iniciaron labores en o antes del periodo de cálculo
+        # Filtrar locadores por fecha de ingreso y fecha de cese
         locadores = [
             l for l in locadores_db
             if not (l.fecha_ingreso and (l.fecha_ingreso.year > anio_int or (l.fecha_ingreso.year == anio_int and l.fecha_ingreso.month > mes_int)))
+            and not (getattr(l, 'fecha_cese', None) and (l.fecha_cese.year < anio_int or (l.fecha_cese.year == anio_int and l.fecha_cese.month < mes_int)))
         ]
 
         if not locadores:
