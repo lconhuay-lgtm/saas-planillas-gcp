@@ -123,6 +123,29 @@ def render():
     try:
         df_planilla = pd.read_json(io.StringIO(planilla_sel.resultado_json), orient='records')
         auditoria   = json.loads(planilla_sel.auditoria_json)
+
+        # Filtro de seguridad: Si el trabajador fue cesado ANTES de este periodo, 
+        # no debería visualizarse en el detalle, incluso si está en el JSON.
+        mes_p, anio_p = int(sel_key[:2]), int(sel_key[3:])
+        
+        # Recuperar trabajadores de la BD para verificar fecha de cese real
+        db_aux = SessionLocal()
+        trab_cesados = db_aux.query(Trabajador).filter(
+            Trabajador.empresa_id == empresa_id,
+            Trabajador.fecha_cese != None
+        ).all()
+        db_aux.close()
+
+        dnis_a_omitir = [
+            t.num_doc for t in trab_cesados 
+            if (t.fecha_cese.year < anio_p or (t.fecha_cese.year == anio_p and t.fecha_cese.month < mes_p))
+        ]
+
+        if dnis_a_omitir and not df_planilla.empty:
+            df_planilla = df_planilla[~df_planilla['DNI'].isin(dnis_a_omitir)]
+            # También limpiar la auditoría para consistencia
+            auditoria = {dni: info for dni, info in auditoria.items() if dni not in dnis_a_omitir}
+
     except Exception as e:
         st.error(f"No se pudo deserializar la planilla: {e}")
         return
@@ -311,6 +334,10 @@ def render():
         hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
         try:
             df_loc_rep = pd.read_json(io.StringIO(hon_json_str), orient='records')
+            
+            # Aplicar mismo filtro de seguridad para locadores cesados
+            if not df_loc_rep.empty and dnis_a_omitir:
+                df_loc_rep = df_loc_rep[~df_loc_rep['DNI'].isin(dnis_a_omitir)]
         except Exception:
             df_loc_rep = pd.DataFrame()
 
