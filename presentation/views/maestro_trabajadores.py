@@ -127,6 +127,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         seguro_social_val = "ESSALUD"
         tipo_contrato_val = "PLANILLA"
         suspension_4ta_val = False
+        # Default según régimen para nuevos ingresos
+        dias_vac_val = 15 if "Micro" in regimen_empresa or "Pequeña" in regimen_empresa else 30
     else:
         opciones_doc = ["DNI", "CE", "PTP"]
         t_doc_val = t.tipo_doc if t.tipo_doc in opciones_doc else "DNI"
@@ -157,6 +159,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
         tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
         suspension_4ta_val = bool(getattr(t, 'tiene_suspension_4ta', False) or False)
+        dias_vac_val = getattr(t, 'dias_vacaciones_anuales', 30)
 
     # ── Tipo de Contratación ───────────────────────────────────────────────────
     opciones_contrato = ["Planilla (5ta Categoría)", "Locador de Servicio (4ta Categoría)"]
@@ -227,7 +230,16 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     min_sueldo = 0.01 if es_locador else 1025.0
     s_base = cl4.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
                               value=max(min_sueldo, s_base_val), key=f"{key_prefix}_sbase")
+    
+    dias_vac_input = cl5.number_input("Días Vac. Año", min_value=0, max_value=60, 
+                                     value=dias_vac_val if not es_locador else 0,
+                                     disabled=es_locador, key=f"{key_prefix}_vac")
+
     opciones_sit = ["ACTIVO", "CESADO", "SUSPENDIDO"]
+    cl_sit = st.columns(1)[0] # Usar espacio debajo si es necesario o ajustar
+    situacion = cl_sit.selectbox("Situación", opciones_sit,
+                              index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
+                              key=f"{key_prefix}_situacion")
     situacion = cl5.selectbox("Situación", opciones_sit,
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
                               key=f"{key_prefix}_situacion")
@@ -345,6 +357,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "eps": eps_afecto,
             "seguro_social": seguro_social,
             "tiene_suspension_4ta": tiene_suspension_4ta_val,
+            "dias_vacaciones_anuales": dias_vac_input,
         }
     return None
 

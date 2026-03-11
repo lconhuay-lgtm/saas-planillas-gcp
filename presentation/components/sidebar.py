@@ -76,6 +76,7 @@ def render_sidebar():
                 "Maestro de Personal",
                 "Maestro de Conceptos",
                 "Ingreso de Asistencias",
+                "Kardex de Vacaciones",
                 "Cálculo de Planilla",
                 "Préstamos y Descuentos",
                 "Emisión de Boletas",

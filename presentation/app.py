@@ -29,6 +29,7 @@ from presentation.views import parametros_legales
 from presentation.views import maestro_conceptos
 from presentation.views import emision_boletas
 from presentation.views import reporteria
+from presentation.views import kardex_vacaciones
 from presentation.views import login
 from presentation.views import prestamos
 from presentation.views import gestion_usuarios
@@ -78,6 +79,8 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS factor_proyeccion_grati FLOAT",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS honorarios_json TEXT DEFAULT '[]'",
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS fecha_cese DATE",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS dias_vacaciones_anuales INTEGER DEFAULT 30",
+            "CREATE TABLE IF NOT EXISTS registro_vacaciones (id SERIAL PRIMARY KEY, trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id), fecha_inicio DATE NOT NULL, fecha_fin DATE NOT NULL, dias_gozados INTEGER DEFAULT 0, dias_vendidos INTEGER DEFAULT 0, periodo_origen VARCHAR(50), estado VARCHAR(20) DEFAULT 'APROBADO', observaciones TEXT, fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -148,6 +151,9 @@ elif vista_actual == "Emisión de Boletas":
 
 elif vista_actual == "Reportería":
     reporteria.render()
+
+elif vista_actual == "Kardex de Vacaciones":
+    kardex_vacaciones.render()
 
 elif vista_actual == "Préstamos y Descuentos":
     prestamos.render()
