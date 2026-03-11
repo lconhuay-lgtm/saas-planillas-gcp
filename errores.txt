@@ -1,39 +1,48 @@
-Actúa como un Arquitecto de Software experto en normativas laborales peruanas (D.L. 713).
-Necesito expandir el módulo de "Kardex de Vacaciones" para incluir un Sistema de Alertas de Vencimiento (Prevención de Indemnización Vacacional / Triple Vacacional), basándonos en la lógica FIFO y de caducidad que utilizan sistemas como SAP HCM y Oracle.
+Actúa como un Arquitecto de Software y Experto en Bases de Datos con SQLAlchemy.
+URGENCIA CRÍTICA: En tu implementación anterior del módulo "Kardex de Vacaciones", creaste la lógica y las migraciones físicas en SQL, pero OMITISTE actualizar el modelo ORM. Esto ha roto la aplicación generando un `ImportError` y `AttributeError`.
 
-REGLA DE NEGOCIO (PERÚ):
-Un trabajador gana sus vacaciones (ej. 30 días) al cumplir 1 año de servicios. Tiene el 2do año completo para gozarlas. Si llega al último día del 2do año y no las gozó, la empresa debe pagar una indemnización. 
-Por lo tanto, la alerta debe dispararse meses antes de que el trabajador cumpla un año múltiplo (ej. meses 21, 22, 23 desde su ingreso, o meses 33, 34, 35) SI su saldo indica que aún no ha consumido las vacaciones del periodo más antiguo.
+Necesito que corrijas esto INMEDIATAMENTE modificando un único archivo: `infrastructure/database/models.py`.
 
-Por favor, implementa esto estrictamente en los siguientes archivos:
+Sigue rigurosamente estas instrucciones exactas:
 
-PASO 1: ACTUALIZAR LA LÓGICA DEL KARDEX (core/use_cases/calculo_kardex.py)
-Actualiza (o crea si no existe) la función `calcular_saldo_vacacional(trabajador, registros_vacaciones, fecha_calculo)` para que también devuelva un estado de alerta.
-Lógica matemática sugerida para la alerta:
-1. Calcular antigüedad total en meses (`meses_antiguedad = (fecha_calculo.year - fi.year) * 12 + fecha_calculo.month - fi.month`).
-2. Calcular el saldo actual (`devengados - gozados_vendidos`).
-3. Detección de Riesgo:
-   - Si `saldo >= trabajador.dias_vacaciones_anuales`, significa que el trabajador tiene al menos 1 periodo completo acumulado.
-   - Evaluar la cercanía al límite: El límite legal ocurre cada 12 meses a partir del mes 24 (mes 24, 36, 48, etc.).
-   - `meses_para_vencimiento = 12 - (meses_antiguedad % 12)`
-   - Si `saldo >= trabajador.dias_vacaciones_anuales`:
-      - Si `meses_para_vencimiento <= 3`: `nivel_alerta = "🔴 PELIGRO INMINENTE"` (Faltan 3 meses o menos para pagar indemnización).
-      - Si `meses_para_vencimiento <= 6`: `nivel_alerta = "🟡 RIESGO MODERADO"` (Faltan 6 meses o menos).
-      - En caso contrario: `nivel_alerta = "🟢 OK"`
-   - Si `saldo < trabajador.dias_vacaciones_anuales`, no hay riesgo inminente de indemnización (`nivel_alerta = "🟢 OK"`).
-4. El dict de retorno debe ser: `{'devengados': X, 'consumidos': Y, 'saldo': Z, 'nivel_alerta': nivel_alerta, 'meses_para_vencimiento': meses_para_vencimiento}`.
+PASO 1: ABRIR EL ARCHIVO
+Abre el archivo `infrastructure/database/models.py`.
 
-PASO 2: INYECTAR LA ALERTA EN EL DASHBOARD (presentation/views/dashboard.py)
-En tu archivo dashboard.py, actualmente tienes una sección llamada "🔔 Centro de Notificaciones y Cumplimiento". 
-1. Importa la función `calcular_saldo_vacacional`.
-2. Lee todos los trabajadores en 'PLANILLA' que estén 'ACTIVO'. Trae también sus `RegistroVacaciones`.
-3. Itera sobre ellos y calcula su saldo. 
-4. Filtra aquellos que tengan `nivel_alerta` en "🔴 PELIGRO INMINENTE" o "🟡 RIESGO MODERADO".
-5. Muestra una nueva tarjeta de alerta en el Dashboard (usa `st.error` o divs con HTML) que diga: "🚨 Riesgo de Indemnización Vacacional detectado" y lista a los trabajadores en riesgo, mostrando su nombre, su saldo actual y cuántos meses le quedan para el vencimiento legal.
+PASO 2: ACTUALIZAR LA CLASE `Trabajador`
+Busca la clase `Trabajador(Base):`. 
+1. Ve al bloque de "Datos Laborales" (debajo de `tipo_contrato = Column(...)`) y añade este nuevo campo:
+    dias_vacaciones_anuales = Column(Integer, default=30)
 
-PASO 3: MEJORAR LA VISTA DEL KARDEX (presentation/views/kardex_vacaciones.py)
-En la pestaña "Tab 1: 📊 Resumen y Saldo":
-- Debajo de las métricas principales (Ganados, Gozados, Saldo), añade un componente visual que muestre el `nivel_alerta`.
-- Si está en Peligro Inminente, muestra un `st.error("⚠️ Este trabajador está a punto de generar una multa por indemnización vacacional. Programe su descanso inmediatamente.")`.
+2. Ve al final de la clase `Trabajador`, en la sección "# Relación Inversa" o debajo de `empresa = relationship(...)`, y añade la relación hacia la nueva tabla de vacaciones:
+    vacaciones = relationship("RegistroVacaciones", backref="trabajador", cascade="all, delete-orphan")
 
-Asegúrate de manejar posibles divisiones por cero o trabajadores sin fecha de ingreso. El código debe ser limpio, eficiente e integrarse con la base de datos de SQLAlchemy ya existente.
+PASO 3: CREAR LA NUEVA CLASE `RegistroVacaciones`
+Ve al final del archivo `infrastructure/database/models.py` (después de la clase `CuotaPrestamo` o al fondo del documento) y pega EXACTAMENTE el siguiente bloque de código para mapear la tabla que ya creaste en SQL:
+
+# 8. TABLA DE KARDEX DE VACACIONES
+class RegistroVacaciones(Base):
+    __tablename__ = "registro_vacaciones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    
+    # Rango de fechas
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_fin = Column(Date, nullable=False)
+    
+    # Consumo
+    dias_gozados = Column(Integer, default=0)
+    dias_vendidos = Column(Integer, default=0)
+    
+    # Control
+    periodo_origen = Column(String(50), nullable=True) # Ej: '2024-2025'
+    estado = Column(String(20), default="APROBADO")    # APROBADO | ANULADO
+    observaciones = Column(Text, nullable=True)
+    
+    # Auditoría
+    fecha_registro = Column(DateTime, default=datetime.now)
+
+PASO 4: VERIFICAR IMPORTACIONES
+Asegúrate de que el archivo `models.py` ya tiene importados `Column, Integer, String, Date, ForeignKey, DateTime, Text` desde `sqlalchemy` y `relationship` desde `sqlalchemy.orm`. (Normalmente ya están en la cabecera, pero valídalo).
+
+No toques ningún otro archivo (ni presentation, ni core). Solo repara el ORM para que la aplicación vuelva a levantar y los imports funcionen correctamente. Confirma cuando hayas terminado.
