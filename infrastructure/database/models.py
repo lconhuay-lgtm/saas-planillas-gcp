@@ -83,6 +83,7 @@ class Trabajador(Base):
     sueldo_base = Column(Float, nullable=False)
     # Tipo de contratación: 'PLANILLA' (5ta Cat.) o 'LOCADOR' (4ta Cat.)
     tipo_contrato = Column(String(20), default='PLANILLA', nullable=False, server_default='PLANILLA')
+    dias_vacaciones_anuales = Column(Integer, default=30)
     
     # Datos Bancarios
     banco = Column(String(100))
@@ -102,6 +103,7 @@ class Trabajador(Base):
     
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="trabajadores")
+    vacaciones = relationship("RegistroVacaciones", backref="trabajador", cascade="all, delete-orphan")
 
 
 # 3. TABLA DE CONCEPTOS REMUNERATIVOS (Ingresos y Descuentos)
@@ -263,3 +265,27 @@ class CuotaPrestamo(Base):
     estado       = Column(String(20), default="PENDIENTE")  # PENDIENTE | PAGADA
 
     prestamo = relationship("Prestamo", back_populates="cuotas")
+
+
+# 8. TABLA DE KARDEX DE VACACIONES
+class RegistroVacaciones(Base):
+    __tablename__ = "registro_vacaciones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    
+    # Rango de fechas
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_fin = Column(Date, nullable=False)
+    
+    # Consumo
+    dias_gozados = Column(Integer, default=0)
+    dias_vendidos = Column(Integer, default=0)
+    
+    # Control
+    periodo_origen = Column(String(50), nullable=True) # Ej: '2024-2025'
+    estado = Column(String(20), default="APROBADO")    # APROBADO | ANULADO
+    observaciones = Column(Text, nullable=True)
+    
+    # Auditoría
+    fecha_registro = Column(DateTime, default=datetime.now)
