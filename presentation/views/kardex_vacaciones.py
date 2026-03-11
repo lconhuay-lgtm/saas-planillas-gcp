@@ -39,6 +39,12 @@ def render():
         
         with tab1:
             st.subheader(f"Estado de Cuenta: {trabajador.nombres}")
+            
+            if resumen['nivel_alerta'] == "🔴 PELIGRO INMINENTE":
+                st.error(f"⚠️ **{resumen['nivel_alerta']}**: Este trabajador está a punto de generar una multa por indemnización vacacional. Quedan {resumen['meses_para_vencimiento']} meses para el límite legal. Programe su descanso inmediatamente.")
+            elif resumen['nivel_alerta'] == "🟡 RIESGO MODERADO":
+                st.warning(f"⚠️ **{resumen['nivel_alerta']}**: El trabajador tiene periodos acumulados. Quedan {resumen['meses_para_vencimiento']} meses para que venza el periodo más antiguo.")
+
             c1, c2, c3 = st.columns(3)
             c1.metric("Días Devengados", f"{resumen['devengados']} d")
             c2.metric("Días Consumidos", f"{resumen['consumidos']} d")

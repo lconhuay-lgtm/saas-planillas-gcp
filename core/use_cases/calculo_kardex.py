@@ -28,9 +28,30 @@ def calcular_saldo_vacacional(trabajador, registros_vacaciones, fecha_calculo=No
     vendidos = sum(r.dias_vendidos for r in registros_vacaciones if r.estado == "APROBADO")
     consumidos = gozados + vendidos
     
+    # --- Lógica de Alerta de Vencimiento (Prevención Indemnización D.L. 713) ---
+    saldo = round(devengados - consumidos, 2)
+    nivel_alerta = "🟢 OK"
+    meses_para_vencimiento = 0
+    
+    # La indemnización se genera si al mes 24 no se gozó el periodo ganado al mes 12.
+    if saldo >= cuota_anual:
+        fi = trabajador.fecha_ingreso
+        meses_antiguedad = (fecha_calculo.year - fi.year) * 12 + fecha_calculo.month - fi.month
+        
+        # El vencimiento legal ocurre cada 12 meses a partir del mes 24 (24, 36, 48...)
+        if meses_antiguedad >= 12:
+            meses_para_vencimiento = 12 - (meses_antiguedad % 12)
+            
+            if meses_para_vencimiento <= 3:
+                nivel_alerta = "🔴 PELIGRO INMINENTE"
+            elif meses_para_vencimiento <= 6:
+                nivel_alerta = "🟡 RIESGO MODERADO"
+
     return {
         'devengados': devengados,
         'consumidos': float(consumidos),
-        'saldo': round(devengados - consumidos, 2),
-        'meses_servicio': total_meses
+        'saldo': saldo,
+        'meses_servicio': total_meses,
+        'nivel_alerta': nivel_alerta,
+        'meses_para_vencimiento': meses_para_vencimiento
     }
