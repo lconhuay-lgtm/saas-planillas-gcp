@@ -1,195 +1,39 @@
-Actúa como un Desarrollador Senior en Python. Hemos detectado un bug crítico de falsos positivos en el conteo de trabajadores en presentation/views/calculo_mensual.py. El uso de .count() global ignora la fecha_ingreso, lo que bloquea Tesorería y genera duplicados fantasma en los snapshots al cruzar periodos.
+Actúa como un Arquitecto de Software experto en normativas laborales peruanas (D.L. 713).
+Necesito expandir el módulo de "Kardex de Vacaciones" para incluir un Sistema de Alertas de Vencimiento (Prevención de Indemnización Vacacional / Triple Vacacional), basándonos en la lógica FIFO y de caducidad que utilizan sistemas como SAP HCM y Oracle.
 
-Archivo a modificar: presentation/views/calculo_mensual.py
+REGLA DE NEGOCIO (PERÚ):
+Un trabajador gana sus vacaciones (ej. 30 días) al cumplir 1 año de servicios. Tiene el 2do año completo para gozarlas. Si llega al último día del 2do año y no las gozó, la empresa debe pagar una indemnización. 
+Por lo tanto, la alerta debe dispararse meses antes de que el trabajador cumpla un año múltiplo (ej. meses 21, 22, 23 desde su ingreso, o meses 33, 34, 35) SI su saldo indica que aún no ha consumido las vacaciones del periodo más antiguo.
 
-1. Solucionar el guardado del Motor de Planilla (Limpieza Inteligente):
-Reemplaza el bloque de persistencia en _render_planilla_tab.
+Por favor, implementa esto estrictamente en los siguientes archivos:
 
-Python
-<<<<
-        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
-        try:
-            db2 = SessionLocal()
-            df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
-            db2.close()
-        except Exception as e:
-            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
-====
-        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
-        try:
-            db2 = SessionLocal()
-            
-            # Validación Maestra Date-Aware: ¿Existen locadores activos para ESTE periodo?
-            _m_calc = int(periodo_key[:2])
-            _a_calc = int(periodo_key[3:])
-            _locs_all = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").all()
-            n_loc_periodo = len([
-                l for l in _locs_all 
-                if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_calc or (l.fecha_ingreso.year == _a_calc and l.fecha_ingreso.month > _m_calc)))
-            ])
-            
-            df_loc_to_save = st.session_state.get(f'res_honorarios_{periodo_key}')
-            
-            # Si el maestro dice 0, forzamos un DataFrame vacío para LIMPIAR el snapshot fantasma
-            if n_loc_periodo == 0:
-                df_loc_to_save = pd.DataFrame()
-            elif df_loc_to_save is None:
-                # Recuperar snapshot existente para no perderlo si el usuario solo calculó la 5ta categoría
-                p_exist = db2.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-                if p_exist and p_exist.honorarios_json and p_exist.honorarios_json != '[]':
-                    df_loc_to_save = pd.read_json(io.StringIO(p_exist.honorarios_json), orient='records')
+PASO 1: ACTUALIZAR LA LÓGICA DEL KARDEX (core/use_cases/calculo_kardex.py)
+Actualiza (o crea si no existe) la función `calcular_saldo_vacacional(trabajador, registros_vacaciones, fecha_calculo)` para que también devuelva un estado de alerta.
+Lógica matemática sugerida para la alerta:
+1. Calcular antigüedad total en meses (`meses_antiguedad = (fecha_calculo.year - fi.year) * 12 + fecha_calculo.month - fi.month`).
+2. Calcular el saldo actual (`devengados - gozados_vendidos`).
+3. Detección de Riesgo:
+   - Si `saldo >= trabajador.dias_vacaciones_anuales`, significa que el trabajador tiene al menos 1 periodo completo acumulado.
+   - Evaluar la cercanía al límite: El límite legal ocurre cada 12 meses a partir del mes 24 (mes 24, 36, 48, etc.).
+   - `meses_para_vencimiento = 12 - (meses_antiguedad % 12)`
+   - Si `saldo >= trabajador.dias_vacaciones_anuales`:
+      - Si `meses_para_vencimiento <= 3`: `nivel_alerta = "🔴 PELIGRO INMINENTE"` (Faltan 3 meses o menos para pagar indemnización).
+      - Si `meses_para_vencimiento <= 6`: `nivel_alerta = "🟡 RIESGO MODERADO"` (Faltan 6 meses o menos).
+      - En caso contrario: `nivel_alerta = "🟢 OK"`
+   - Si `saldo < trabajador.dias_vacaciones_anuales`, no hay riesgo inminente de indemnización (`nivel_alerta = "🟢 OK"`).
+4. El dict de retorno debe ser: `{'devengados': X, 'consumidos': Y, 'saldo': Z, 'nivel_alerta': nivel_alerta, 'meses_para_vencimiento': meses_para_vencimiento}`.
 
-            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
-            db2.close()
-        except Exception as e:
-            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
->>>>
-2. Solucionar el bloqueo en la sección Tesorería y ocultar el botón en meses cerrados:
-Refactoriza _render_seccion_tesoreria para rescatar la sesión y aplicar el conteo con filtro de fechas.
+PASO 2: INYECTAR LA ALERTA EN EL DASHBOARD (presentation/views/dashboard.py)
+En tu archivo dashboard.py, actualmente tienes una sección llamada "🔔 Centro de Notificaciones y Cumplimiento". 
+1. Importa la función `calcular_saldo_vacacional`.
+2. Lee todos los trabajadores en 'PLANILLA' que estén 'ACTIVO'. Trae también sus `RegistroVacaciones`.
+3. Itera sobre ellos y calcula su saldo. 
+4. Filtra aquellos que tengan `nivel_alerta` en "🔴 PELIGRO INMINENTE" o "🟡 RIESGO MODERADO".
+5. Muestra una nueva tarjeta de alerta en el Dashboard (usa `st.error` o divs con HTML) que diga: "🚨 Riesgo de Indemnización Vacacional detectado" y lista a los trabajadores en riesgo, mostrando su nombre, su saldo actual y cuántos meses le quedan para el vencimiento legal.
 
-Python
-<<<<
-def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
-    """Sección de Gestión de Tesorería: reporte PDF + panel de auditoría tributaria."""
-    # ── SECCIÓN GLOBAL DE TESORERÍA ──────────────────────────────────────────
-    df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
-    df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-    aud_glob  = st.session_state.get('auditoria_data', {})
+PASO 3: MEJORAR LA VISTA DEL KARDEX (presentation/views/kardex_vacaciones.py)
+En la pestaña "Tab 1: 📊 Resumen y Saldo":
+- Debajo de las métricas principales (Ganados, Gozados, Saldo), añade un componente visual que muestre el `nivel_alerta`.
+- Si está en Peligro Inminente, muestra un `st.error("⚠️ Este trabajador está a punto de generar una multa por indemnización vacacional. Programe su descanso inmediatamente.")`.
 
-    if not df_plan_glob.empty or not df_loc_glob.empty:
-        st.markdown("---")
-        st.subheader("🏦 Gestión de Tesorería")
-
-        try:
-            _db_chk = SessionLocal()
-            _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-            _db_chk.close()
-        except:
-            _n_loc_glob = 0
-        
-        if _n_loc_glob > 0 and df_loc_glob.empty:
-            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
-        
-        try:
-            buf_teso_f = generar_pdf_tesoreria(
-                df_planilla=df_plan_glob if not df_plan_glob.empty else None,
-                df_loc=df_loc_glob if not df_loc_glob.empty else None,
-                empresa_nombre=empresa_nombre,
-                periodo_key=periodo_key,
-                auditoria_data=aud_glob,
-                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-            )
-            st.download_button(
-                "🏦 Descargar Reporte de Tesorería (PDF)",
-                data=buf_teso_f,
-                file_name=f"TESORERIA_{periodo_key}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary",
-                key="btn_teso_global_v_final"
-            )
-        except Exception: pass
-
-        st.markdown("---")
-====
-def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
-    """Sección de Gestión de Tesorería: reporte PDF + panel de auditoría tributaria."""
-    # ── SECCIÓN GLOBAL DE TESORERÍA ──────────────────────────────────────────
-    df_plan_glob = st.session_state.get('res_planilla', pd.DataFrame())
-    df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
-    aud_glob  = st.session_state.get('auditoria_data', {})
-
-    # Rescate de snapshot en BD si la sesión está vacía (tras reapertura)
-    if df_loc_glob.empty:
-        try:
-            _db_s = SessionLocal()
-            _p_s = _db_s.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-            if _p_s and _p_s.honorarios_json and _p_s.honorarios_json != '[]':
-                df_loc_glob = pd.read_json(io.StringIO(_p_s.honorarios_json), orient='records')
-                st.session_state[f'res_honorarios_{periodo_key}'] = df_loc_glob
-            _db_s.close()
-        except: pass
-
-    if not df_plan_glob.empty or not df_loc_glob.empty:
-        st.markdown("---")
-        st.subheader("🏦 Gestión de Tesorería")
-
-        # Verificar estado de cierre
-        es_cerrada_teso = False
-        try:
-            db_ct = SessionLocal()
-            plan_ct = db_ct.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-            if plan_ct and getattr(plan_ct, 'estado', 'ABIERTA') == 'CERRADA':
-                es_cerrada_teso = True
-            db_ct.close()
-        except: pass
-
-        if es_cerrada_teso:
-            st.info("ℹ️ **Periodo Cerrado:** Para obtener el reporte oficial de tesorería y archivos bancarios inmutables, debe ir al módulo **Reportería**, pestaña **🏦 Reporte Tesorería**.")
-        else:
-            try:
-                _db_chk = SessionLocal()
-                _m_t = int(periodo_key[:2])
-                _a_t = int(periodo_key[3:])
-                _locs_t = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').all()
-                _n_loc_glob = len([
-                    l for l in _locs_t 
-                    if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_t or (l.fecha_ingreso.year == _a_t and l.fecha_ingreso.month > _m_t)))
-                ])
-                _db_chk.close()
-            except:
-                _n_loc_glob = 0
-            
-            if _n_loc_glob > 0 and df_loc_glob.empty:
-                st.warning("⚠️ **Reporte Bloqueado:** Se detectaron locadores activos en este periodo sin honorarios calculados. Calcule en la pestaña '🧾 2' para habilitar el reporte de tesorería.")
-            else:
-                try:
-                    buf_teso_f = generar_pdf_tesoreria(
-                        df_planilla=df_plan_glob if not df_plan_glob.empty else None,
-                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
-                        empresa_nombre=empresa_nombre,
-                        periodo_key=periodo_key,
-                        auditoria_data=aud_glob,
-                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-                    )
-                    st.download_button(
-                        "🏦 Descargar Reporte de Tesorería (PDF)",
-                        data=buf_teso_f,
-                        file_name=f"TESORERIA_{periodo_key}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        type="primary",
-                        key="btn_teso_global_v_final"
-                    )
-                except Exception: pass
-
-        st.markdown("---")
->>>>
-3. Solucionar el bloqueo de cierre ("Validación Enterprise"):
-Reemplaza el .count() falso en _render_seccion_cierre.
-
-Python
-<<<<
-                        # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
-                        _n_planilla = db_up.query(Trabajador).filter_by(
-                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="PLANILLA"
-                        ).count()
-                        _n_locs = db_up.query(Trabajador).filter_by(
-                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
-                        ).count()
-====
-                        # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
-                        _m_c = int(periodo_key[:2])
-                        _a_c = int(periodo_key[3:])
-                        _trab_all = db_up.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO").all()
-                        
-                        _n_planilla = len([
-                            t for t in _trab_all 
-                            if t.tipo_contrato == "PLANILLA" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
-                        ])
-                        _n_locs = len([
-                            t for t in _trab_all 
-                            if t.tipo_contrato == "LOCADOR" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
-                        ])
->>>>
+Asegúrate de manejar posibles divisiones por cero o trabajadores sin fecha de ingreso. El código debe ser limpio, eficiente e integrarse con la base de datos de SQLAlchemy ya existente.
