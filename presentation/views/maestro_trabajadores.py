@@ -236,10 +236,6 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
                                      disabled=es_locador, key=f"{key_prefix}_vac")
 
     opciones_sit = ["ACTIVO", "CESADO", "SUSPENDIDO"]
-    cl_sit = st.columns(1)[0] # Usar espacio debajo si es necesario o ajustar
-    situacion = cl_sit.selectbox("Situación", opciones_sit,
-                              index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
-                              key=f"{key_prefix}_situacion")
     situacion = cl5.selectbox("Situación", opciones_sit,
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
                               key=f"{key_prefix}_situacion")
@@ -395,7 +391,7 @@ def render():
         st.caption(f"DNI/CE: {t_edit.num_doc}  —  Solo se pueden editar datos laborales y de contacto.")
         st.markdown("---")
 
-        datos = _render_form_trabajador(t=t_edit, key_prefix="edit")
+        datos = _render_form_trabajador(t=t_edit, key_prefix=f"edit_{t_edit.id}")
         if datos:
             try:
                 campos_editables = {k: v for k, v in datos.items() if k not in ("tipo_doc", "num_doc")}
