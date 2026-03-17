@@ -554,7 +554,7 @@ def render():
 
             if col_ind2.button(f"📧 Enviar por Correo a {nombre_sel}", use_container_width=True, disabled=not email_destino):
                 from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
-                from infrastructure.database.models import LogEnvioBoleta, Trabajador as TrabajadorModel
+                from infrastructure.database.models import LogEnvioBoleta, Trabajador as TrabajadorModel, Empresa as EmpresaModel
                 
                 with st.spinner('Procesando envío seguro...'):
                     try:
@@ -567,7 +567,7 @@ def render():
                         
                         # 3. Enviar
                         db_conf = SessionLocal()
-                        emp_db = db_conf.query(Empresa).get(empresa_id)
+                        emp_db = db_conf.query(EmpresaModel).get(empresa_id)
                         smtp_conf = {
                             'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
                             'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
@@ -622,7 +622,7 @@ def render():
 
         if st.button("🚀 Iniciar Envío Masivo Seguro", use_container_width=True, type="primary"):
             from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
-            from infrastructure.database.models import LogEnvioBoleta
+            from infrastructure.database.models import LogEnvioBoleta, Empresa as EmpresaModel
             
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -648,7 +648,7 @@ def render():
                     pdf_enc = encriptar_pdf_en_memoria(pdf_orig, dni_envio)
                     
                     # 3. Enviar con configuración de la empresa
-                    emp_db = db_log.query(Empresa).get(empresa_id)
+                    emp_db = db_log.query(EmpresaModel).get(empresa_id)
                     smtp_conf = {
                         'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
                         'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
