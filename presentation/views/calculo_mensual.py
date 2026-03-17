@@ -912,6 +912,9 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
 
     st.caption(f"Tasa retención 4ta Cat.: **{tasa_4ta}%** | Tope mínimo para retener: **S/ {tope_4ta:,.2f}**")
 
+    # El rol 'consulta' (Auditor) no tiene acceso a botones de acción
+    es_auditor = st.session_state.get('usuario_rol') == 'consulta'
+
     if es_cerrada:
         st.error(f"🔒 Los honorarios del periodo **{periodo_key}** ya fueron CERRADOS.")
     elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True, disabled=es_auditor):

@@ -1,5 +1,6 @@
 import streamlit as st
 import hashlib
+import json
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Usuario, Empresa, UsuarioEmpresa
 
