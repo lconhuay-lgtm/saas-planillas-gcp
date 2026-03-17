@@ -531,7 +531,9 @@ def render():
             
             st.markdown(f"**Trabajador Seleccionado:** {nombre_sel}")
             
-            if st.button(f"📄 Generar Boleta de {nombre_sel}", type="primary"):
+            col_ind1, col_ind2 = st.columns(2)
+            
+            if col_ind1.button(f"📄 Generar Boleta de {nombre_sel}", type="primary", use_container_width=True):
                 df_individual = df_sin_totales[df_sin_totales['DNI'] == dni_sel]
                 
                 with st.spinner('Generando boleta...'):
@@ -543,6 +545,52 @@ def render():
                         mime="application/pdf",
                         use_container_width=True
                     )
+
+            # --- OPCIÓN DE ENVÍO INDIVIDUAL POR EMAIL ---
+            trab_email_row = df_trab[df_trab['Num. Doc.'] == dni_sel]
+            email_destino = trab_email_row.iloc[0]['correo_electronico'] if not trab_email_row.empty else ""
+
+            if col_ind2.button(f"📧 Enviar por Correo a {nombre_sel}", use_container_width=True, disabled=not email_destino):
+                from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
+                from infrastructure.database.models import LogEnvioBoleta, Trabajador as TrabajadorModel
+                
+                with st.spinner('Procesando envío seguro...'):
+                    try:
+                        # 1. Generar PDF
+                        df_ind_mail = df_sin_totales[df_sin_totales['DNI'] == dni_sel]
+                        pdf_orig_ind = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_ind_mail, df_trab, df_var, auditoria_data)
+                        
+                        # 2. Encriptar
+                        pdf_enc_ind = encriptar_pdf_en_memoria(pdf_orig_ind, dni_sel)
+                        
+                        # 3. Enviar
+                        res_mail = enviar_boleta_por_correo(email_destino, periodo_legible, pdf_enc_ind, nombre_sel, empresa_nombre)
+                        
+                        # 4. Registrar Log
+                        db_log_ind = SessionLocal()
+                        t_obj = db_log_ind.query(TrabajadorModel).filter_by(num_doc=dni_sel, empresa_id=empresa_id).first()
+                        
+                        log_ind = LogEnvioBoleta(
+                            empresa_id=empresa_id,
+                            trabajador_id=t_obj.id if t_obj else 0,
+                            periodo_key=periodo_key,
+                            correo_destino=email_destino,
+                            estado="ENVIADO" if res_mail is True else "ERROR",
+                            mensaje_error=None if res_mail is True else str(res_mail)
+                        )
+                        db_log_ind.add(log_ind)
+                        db_log_ind.commit()
+                        db_log_ind.close()
+
+                        if res_mail is True:
+                            st.success(f"✅ Boleta enviada correctamente a **{email_destino}**")
+                        else:
+                            st.error(f"❌ Error al enviar: {res_mail}")
+                    except Exception as e_ind:
+                        st.error(f"Error crítico: {e_ind}")
+            
+            if not email_destino:
+                st.caption("⚠️ El trabajador no tiene correo registrado. Configure su email en el Maestro de Personal para habilitar el envío.")
 
     with tab3:
         st.subheader("🚀 Envío Masivo de Boletas por Correo")
