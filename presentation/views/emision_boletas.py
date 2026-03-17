@@ -548,7 +548,9 @@ def render():
 
             # --- OPCIÓN DE ENVÍO INDIVIDUAL POR EMAIL ---
             trab_email_row = df_trab[df_trab['Num. Doc.'] == dni_sel]
-            email_destino = trab_email_row.iloc[0]['correo_electronico'] if not trab_email_row.empty else ""
+            email_destino = ""
+            if not trab_email_row.empty:
+                email_destino = trab_email_row.iloc[0].get('correo_electronico', "")
 
             if col_ind2.button(f"📧 Enviar por Correo a {nombre_sel}", use_container_width=True, disabled=not email_destino):
                 from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
@@ -596,8 +598,11 @@ def render():
         st.subheader("🚀 Envío Masivo de Boletas por Correo")
         st.info("Esta función enviará automáticamente las boletas encriptadas a los correos registrados.")
 
-        # Data Quality Check
-        df_emails = df_trab[df_trab['Num. Doc.'].isin(df_resultados['DNI'])]
+        # Data Quality Check - Asegurar existencia de la columna para evitar KeyError
+        df_emails = df_trab[df_trab['Num. Doc.'].isin(df_resultados['DNI'])].copy()
+        if 'correo_electronico' not in df_emails.columns:
+            df_emails['correo_electronico'] = ""
+
         sin_correo = df_emails[df_emails['correo_electronico'].isna() | (df_emails['correo_electronico'] == '')]
         con_correo = df_emails[~df_emails['Num. Doc.'].isin(sin_correo['Num. Doc.'])]
 
