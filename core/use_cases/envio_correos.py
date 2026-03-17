@@ -4,10 +4,7 @@ import io
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-try:
-    from PyPDF2 import PdfReader, PdfWriter
-except ImportError:
-    pass
+from PyPDF2 import PdfReader, PdfWriter
 
 def encriptar_pdf_en_memoria(buffer_pdf_original, password):
     """Encripta un PDF en memoria usando el DNI como contraseña."""
