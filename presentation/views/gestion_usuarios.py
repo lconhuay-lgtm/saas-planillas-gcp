@@ -158,5 +158,3 @@ def render():
 
     finally:
         db.close()
-    finally:
-        db.close()
