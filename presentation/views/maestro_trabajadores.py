@@ -160,6 +160,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
         suspension_4ta_val = bool(getattr(t, 'tiene_suspension_4ta', False) or False)
         dias_vac_val = getattr(t, 'dias_vacaciones_anuales', 30)
+        correo_val = getattr(t, 'correo_electronico', '') or ''
 
     # ── Tipo de Contratación ───────────────────────────────────────────────────
     opciones_contrato = ["Planilla (5ta Categoría)", "Locador de Servicio (4ta Categoría)"]
@@ -210,6 +211,11 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     nombres = r3.text_input("Nombres (sin apellidos)*", value=nombres_auto.upper(),
                             key=f"{key_prefix}_nombres")
+    
+    u_correo = st.text_input("Correo Electrónico Corporativo/Personal", 
+                             value=correo_val if t else "", 
+                             key=f"{key_prefix}_correo",
+                             placeholder="ejemplo@empresa.com")
 
     # Nombre completo para compatibilidad con el resto del sistema
     nombre_completo = f"{ap_pat} {ap_mat} {nombres}".strip()
@@ -354,6 +360,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "seguro_social": seguro_social,
             "tiene_suspension_4ta": tiene_suspension_4ta_val,
             "dias_vacaciones_anuales": dias_vac_input,
+            "correo_electronico": u_correo.lower().strip(),
         }
     return None
 
@@ -424,7 +431,13 @@ def render():
                 with st.container(border=True):
                     c1, c2, c3, c4, c_pdf, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.5, 0.5, 0.5])
                     tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
-                    c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
+                    
+                    # Alerta visual de correo faltante
+                    alerta_mail = ""
+                    if not getattr(t, 'correo_electronico', None):
+                        alerta_mail = " 🔴 `Sin Correo`"
+                        
+                    c1.markdown(f"**{t.nombres}** `{tipo_badge}`{alerta_mail}")
                     c2.markdown(f"Doc: `{t.num_doc}`")
                     c3.markdown(f"{t.cargo or '—'}")
                     c4.markdown(f"S/ {t.sueldo_base:,.2f}")

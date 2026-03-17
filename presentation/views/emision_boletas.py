@@ -484,7 +484,11 @@ def render():
     # --- PANEL DE DISTRIBUCIÓN MULTICANAL ---
     st.markdown("### 📄 Centro de Distribución de Documentos")
     
-    tab1, tab2 = st.tabs(["📚 Descarga Masiva (Para RRHH)", "👤 Emisión Individual (Por Trabajador)"])
+    tab1, tab2, tab3 = st.tabs([
+        "📚 Descarga Masiva (Para RRHH)", 
+        "👤 Emisión Individual (Por Trabajador)",
+        "📧 Distribución Digital (Email)"
+    ])
 
     with tab1:
         st.markdown("Elija el formato de descarga masiva para toda la planilla del mes:")
@@ -538,3 +542,75 @@ def render():
                         mime="application/pdf",
                         use_container_width=True
                     )
+
+    with tab3:
+        st.subheader("🚀 Envío Masivo de Boletas por Correo")
+        st.info("Esta función enviará automáticamente las boletas encriptadas a los correos registrados.")
+
+        # Data Quality Check
+        df_emails = df_trab[df_trab['Num. Doc.'].isin(df_resultados['DNI'])]
+        sin_correo = df_emails[df_emails['correo_electronico'].isna() | (df_emails['correo_electronico'] == '')]
+        con_correo = df_emails[~df_emails['Num. Doc.'].isin(sin_correo['Num. Doc.'])]
+
+        if not sin_correo.empty:
+            st.warning(f"⚠️ **Alerta de Cumplimiento:** {len(sin_correo)} trabajador(es) NO tienen correo registrado y no recibirán su boleta.")
+            with st.expander("Ver lista de trabajadores sin correo"):
+                st.write(sin_correo[['Num. Doc.', 'Nombres y Apellidos']])
+        
+        st.success(f"✅ {len(con_correo)} trabajador(es) listos para envío seguro.")
+
+        if st.button("🚀 Iniciar Envío Masivo Seguro", use_container_width=True, type="primary"):
+            from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
+            from infrastructure.database.models import LogEnvioBoleta
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            exitos = 0
+            errores = 0
+            
+            db_log = SessionLocal()
+            try:
+                total_envios = len(con_correo)
+                for i, (_, t_row) in enumerate(con_correo.iterrows()):
+                    dni_envio = str(t_row['Num. Doc.'])
+                    nombre_envio = t_row['Nombres y Apellidos']
+                    mail_destino = t_row['correo_electronico']
+                    
+                    status_text.text(f"Procesando ({i+1}/{total_envios}): {nombre_envio}")
+                    
+                    # 1. Generar PDF Individual
+                    df_ind = df_resultados[df_resultados['DNI'] == dni_envio]
+                    pdf_orig = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_ind, df_trab, df_var, auditoria_data)
+                    
+                    # 2. Encriptar con DNI
+                    pdf_enc = encriptar_pdf_en_memoria(pdf_orig, dni_envio)
+                    
+                    # 3. Enviar
+                    resultado = enviar_boleta_por_correo(mail_destino, periodo_legible, pdf_enc, nombre_envio, empresa_nombre)
+                    
+                    # 4. Log
+                    log = LogEnvioBoleta(
+                        empresa_id=empresa_id,
+                        trabajador_id=db_log.query(Trabajador).filter_by(num_doc=dni_envio, empresa_id=empresa_id).first().id,
+                        periodo_key=periodo_key,
+                        correo_destino=mail_destino,
+                        estado="ENVIADO" if resultado is True else "ERROR",
+                        mensaje_error=None if resultado is True else str(resultado)
+                    )
+                    db_log.add(log)
+                    db_log.commit()
+                    
+                    if resultado is True: exitos += 1
+                    else: errores += 1
+                    
+                    progress_bar.progress((i + 1) / total_envios)
+                
+                st.balloons()
+                st.success(f"🎊 Proceso terminado. Enviados: {exitos} | Errores: {errores}")
+                if errores > 0:
+                    st.error("Revise los logs de envío en la base de datos para ver los detalles de los errores.")
+            except Exception as e_proc:
+                st.error(f"Error crítico en proceso: {e_proc}")
+            finally:
+                db_log.close()

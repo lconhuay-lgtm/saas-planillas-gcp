@@ -78,6 +78,7 @@ class Trabajador(Base):
     apellido_paterno = Column(String(100), nullable=True)
     apellido_materno = Column(String(100), nullable=True)
     fecha_nac = Column(Date)
+    correo_electronico = Column(String(100), nullable=True)
     
     # Datos Laborales
     cargo = Column(String(100))
@@ -293,3 +294,14 @@ class RegistroVacaciones(Base):
     
     # Auditoría
     fecha_registro = Column(DateTime, default=datetime.now)
+
+class LogEnvioBoleta(Base):
+    __tablename__ = "log_envio_boletas"
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    periodo_key = Column(String(10), nullable=False)
+    correo_destino = Column(String(100), nullable=False)
+    estado = Column(String(20), default="ENVIADO") # ENVIADO | ERROR
+    mensaje_error = Column(Text, nullable=True)
+    fecha_envio = Column(DateTime, default=datetime.now)
