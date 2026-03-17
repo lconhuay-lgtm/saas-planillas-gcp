@@ -88,6 +88,10 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS correo_electronico VARCHAR(100)",
             "CREATE TABLE IF NOT EXISTS log_envio_boletas (id SERIAL PRIMARY KEY, empresa_id INTEGER NOT NULL REFERENCES empresas(id), trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id), periodo_key VARCHAR(10) NOT NULL, correo_destino VARCHAR(100) NOT NULL, estado VARCHAR(20) DEFAULT 'ENVIADO', mensaje_error TEXT, fecha_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS modulos_restringidos TEXT DEFAULT '[]'",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_host VARCHAR(100)",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_port INTEGER DEFAULT 587",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_user VARCHAR(100)",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_pass VARCHAR(100)",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

@@ -145,6 +145,13 @@ def render():
             correo = st.text_input("Correo Electrónico", value=emp.correo_electronico or "")
             domicilio = st.text_area("Domicilio Fiscal", value=emp.domicilio or "")
 
+            with st.expander("📧 Configuración de Correo Saliente (SMTP)"):
+                st.caption("Configure los datos para el envío de boletas digitales.")
+                s_host = st.text_input("Servidor SMTP", value=getattr(emp, 'smtp_host', '') or '', placeholder="smtp.gmail.com")
+                s_port = st.number_input("Puerto SMTP", value=int(getattr(emp, 'smtp_port', 587) or 587))
+                s_user = st.text_input("Usuario/Correo", value=getattr(emp, 'smtp_user', '') or '')
+                s_pass = st.text_input("Contraseña de Aplicación", value=getattr(emp, 'smtp_pass', '') or '', type="password")
+
             st.markdown("---")
             col_g, col_c = st.columns(2)
             if col_g.button("💾 Guardar Cambios", type="primary", use_container_width=True):
@@ -160,6 +167,10 @@ def render():
                         emp.representante_legal = representante
                         emp.correo_electronico = correo
                         emp.domicilio = domicilio
+                        emp.smtp_host = s_host
+                        emp.smtp_port = s_port
+                        emp.smtp_user = s_user
+                        emp.smtp_pass = s_pass
                         emp.cuenta_cargo_bcp = st.session_state.get('_edit_cta_cargo', emp.cuenta_cargo_bcp)
                         emp.factor_proyeccion_grati = _MAP_GRATI[pol_grati_sel]
                         db.commit()

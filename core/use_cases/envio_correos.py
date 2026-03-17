@@ -21,12 +21,18 @@ def encriptar_pdf_en_memoria(buffer_pdf_original, password):
     output_buffer.seek(0)
     return output_buffer
 
-def enviar_boleta_por_correo(correo_destino, mes_anio, pdf_buffer, nombre_trabajador, empresa_nombre):
+def enviar_boleta_por_correo(correo_destino, mes_anio, pdf_buffer, nombre_trabajador, empresa_nombre, config_smtp=None):
     """Envía la boleta por correo electrónico usando SMTP."""
-    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", 587))
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_password = os.getenv("SMTP_PASSWORD")
+    if config_smtp and config_smtp.get('user') and config_smtp.get('pass'):
+        smtp_server   = config_smtp.get('host', 'smtp.gmail.com')
+        smtp_port     = int(config_smtp.get('port', 587))
+        smtp_user     = config_smtp.get('user')
+        smtp_password = config_smtp.get('pass')
+    else:
+        smtp_server   = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port     = int(os.getenv("SMTP_PORT", 587))
+        smtp_user     = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
 
     if not smtp_user or not smtp_password:
         return "Configuración SMTP incompleta (Secrets)."

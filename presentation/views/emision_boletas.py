@@ -566,7 +566,14 @@ def render():
                         pdf_enc_ind = encriptar_pdf_en_memoria(pdf_orig_ind, dni_sel)
                         
                         # 3. Enviar
-                        res_mail = enviar_boleta_por_correo(email_destino, periodo_legible, pdf_enc_ind, nombre_sel, empresa_nombre)
+                        db_conf = SessionLocal()
+                        emp_db = db_conf.query(EmpresaModel).get(empresa_id)
+                        smtp_conf = {
+                            'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
+                            'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
+                        }
+                        res_mail = enviar_boleta_por_correo(email_destino, periodo_legible, pdf_enc_ind, nombre_sel, empresa_nombre, config_smtp=smtp_conf)
+                        db_conf.close()
                         
                         # 4. Registrar Log
                         db_log_ind = SessionLocal()
@@ -640,8 +647,13 @@ def render():
                     # 2. Encriptar con DNI
                     pdf_enc = encriptar_pdf_en_memoria(pdf_orig, dni_envio)
                     
-                    # 3. Enviar
-                    resultado = enviar_boleta_por_correo(mail_destino, periodo_legible, pdf_enc, nombre_envio, empresa_nombre)
+                    # 3. Enviar con configuración de la empresa
+                    emp_db = db_log.query(EmpresaModel).get(empresa_id)
+                    smtp_conf = {
+                        'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
+                        'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
+                    }
+                    resultado = enviar_boleta_por_correo(mail_destino, periodo_legible, pdf_enc, nombre_envio, empresa_nombre, config_smtp=smtp_conf)
                     
                     # 4. Log
                     log = LogEnvioBoleta(
