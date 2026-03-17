@@ -4,26 +4,29 @@ from datetime import datetime
 from infrastructure.database.connection import Base
 
 
-# TABLA INTERMEDIA PARA PERMISOS DE USUARIOS POR EMPRESA
+# TABLA INTERMEDIA PARA PERMISOS DE USUARIOS POR EMPRESA (Control de Accesos SAP Style)
 class UsuarioEmpresa(Base):
     __tablename__ = "usuario_empresa"
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), primary_key=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), primary_key=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), primary_key=True)
+    fecha_asignacion = Column(DateTime, default=datetime.now)
 
-# 0. TABLA DE USUARIOS DEL SISTEMA
+# 0. TABLA MAESTRA DE USUARIOS (Seguridad Centralizada)
 class Usuario(Base):
     __tablename__ = "usuarios"
 
     id               = Column(Integer, primary_key=True, index=True)
     username         = Column(String(50), unique=True, nullable=False, index=True)
-    password_hash    = Column(String(64), nullable=False)   # SHA-256 hex
-    rol              = Column(String(20), nullable=False)   # admin | analista | supervisor
+    password_hash    = Column(String(64), nullable=False)
+    rol              = Column(String(20), nullable=False)   # admin | supervisor | analista | consulta
     nombre_completo  = Column(String(100), nullable=True)
+    email            = Column(String(100), nullable=True)
     activo           = Column(Boolean, default=True)
-    acceso_total     = Column(Boolean, default=False)       # True: Ve todas las empresas
+    acceso_total     = Column(Boolean, default=False)       # Bypass de seguridad multi-empresa
+    ultimo_login     = Column(DateTime, nullable=True)
     fecha_registro   = Column(DateTime, default=datetime.now)
 
-    # Relación con empresas autorizadas
+    # Relación jerárquica con empresas (Control de Perímetros)
     empresas_asignadas = relationship("Empresa", secondary="usuario_empresa", backref="usuarios_autorizados")
 
 
