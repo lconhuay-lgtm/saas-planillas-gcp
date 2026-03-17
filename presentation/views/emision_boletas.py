@@ -52,6 +52,7 @@ def _cargar_planilla_periodo(db, empresa_id, periodo_key):
         'Sistema Pensión': t.sistema_pension or 'NO AFECTO',
         'CUSPP': t.cuspp or '',
         'Seguro Social': getattr(t, 'seguro_social', None) or 'ESSALUD',
+        'correo_electronico': getattr(t, 'correo_electronico', '') or '',
     } for t in trabajadores])
 
     # Variables del periodo (solo necesitamos horas extras para las boletas)
