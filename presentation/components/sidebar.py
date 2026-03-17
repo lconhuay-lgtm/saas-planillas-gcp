@@ -65,23 +65,31 @@ def render_sidebar():
 
         st.markdown("---")
 
+        import json as _json
+        restringidos = []
+        try:
+            # Recuperar restricciones del usuario desde la sesión o DB
+            from infrastructure.database.connection import SessionLocal
+            from infrastructure.database.models import Usuario
+            _db_s = SessionLocal()
+            _u_s = _db_s.query(Usuario).filter_by(username=st.session_state.get('usuario_logueado')).first()
+            if _u_s:
+                restringidos = _json.loads(_u_s.modulos_restringidos or '[]')
+            _db_s.close()
+        except:
+            restringidos = []
+
         if usuario_rol == 'asistente':
-            opciones = [
-                "Maestro de Personal"
-            ]
+            opciones_base = ["Maestro de Personal"]
         else:
-            opciones = [
-                "Dashboard Principal",
-                "Parámetros Legales",
-                "Maestro de Personal",
-                "Maestro de Conceptos",
-                "Ingreso de Asistencias",
-                "Kardex de Vacaciones",
-                "Cálculo de Planilla",
-                "Préstamos y Descuentos",
-                "Emisión de Boletas",
-                "Reportería",
+            opciones_base = [
+                "Dashboard Principal", "Parámetros Legales", "Maestro de Personal",
+                "Maestro de Conceptos", "Ingreso de Asistencias", "Kardex de Vacaciones",
+                "Cálculo de Planilla", "Préstamos y Descuentos", "Emisión de Boletas", "Reportería",
             ]
+        
+        # Filtrar módulos restringidos
+        opciones = [o for o in opciones_base if o not in restringidos]
 
         # Solo el rol 'admin' puede gestionar usuarios y permisos
         if usuario_rol == 'admin':

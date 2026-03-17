@@ -47,6 +47,7 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email VARCHAR(100)",
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_login TIMESTAMP",
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acceso_total BOOLEAN DEFAULT false",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS modulos_restringidos TEXT DEFAULT '[]'",
             "ALTER TABLE usuario_empresa ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             # Seguro social (lote anterior)
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",

@@ -116,6 +116,25 @@ def render():
                                            key=f"e_rol_{u.id}")
                         e_total = st.toggle("Acceso Global", value=u.acceso_total, key=f"e_tot_{u.id}")
                         e_activo = st.toggle("Cuenta Activa", value=u.activo, key=f"e_act_{u.id}")
+
+                        # Restricción de Módulos
+                        modulos_sistema = [
+                            "Dashboard Principal", "Parámetros Legales", "Maestro de Personal", 
+                            "Maestro de Conceptos", "Ingreso de Asistencias", "Kardex de Vacaciones", 
+                            "Cálculo de Planilla", "Préstamos y Descuentos", "Emisión de Boletas", "Reportería"
+                        ]
+                        try:
+                            restringidos_actual = json.loads(u.modulos_restringidos or '[]')
+                        except:
+                            restringidos_actual = []
+                        
+                        e_bloqueados = st.multiselect(
+                            "🚫 Restringir acceso a módulos:",
+                            options=modulos_sistema,
+                            default=restringidos_actual,
+                            key=f"e_bloq_{u.id}",
+                            help="Los módulos seleccionados no serán visibles para este usuario."
+                        )
                         
                         asignadas_ids = [e.id for e in u.empresas_asignadas]
                         todas_emp = db.query(Empresa).all()
@@ -130,9 +149,11 @@ def render():
                         )
                         
                         if st.button("💾 Guardar Cambios", key=f"btn_upd_{u.id}", use_container_width=True):
+                            import json as _json
                             u.rol = e_rol
                             u.acceso_total = e_total
                             u.activo = e_activo
+                            u.modulos_restringidos = _json.dumps(e_bloqueados)
                             # Reset y Reasignación
                             if not e_total:
                                 # Eliminar asignaciones actuales

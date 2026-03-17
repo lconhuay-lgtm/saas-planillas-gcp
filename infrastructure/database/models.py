@@ -23,6 +23,7 @@ class Usuario(Base):
     email            = Column(String(100), nullable=True)
     activo           = Column(Boolean, default=True)
     acceso_total     = Column(Boolean, default=False)       # Bypass de seguridad multi-empresa
+    modulos_restringidos = Column(Text, default='[]')       # JSON con lista de módulos bloqueados
     ultimo_login     = Column(DateTime, nullable=True)
     fecha_registro   = Column(DateTime, default=datetime.now)
 

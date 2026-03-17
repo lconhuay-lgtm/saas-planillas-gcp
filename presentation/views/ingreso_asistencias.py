@@ -125,8 +125,12 @@ def render():
         ).first()
         es_cerrada = planilla_estado is not None and getattr(planilla_estado, 'estado', 'ABIERTA') == 'CERRADA'
 
+        es_auditor = st.session_state.get('usuario_rol') == 'consulta'
+
         if es_cerrada:
             st.error(f"🔒 El periodo **{periodo_key}** está CERRADO. Los datos mostrados son de solo lectura. Solicite a un Supervisor que reabra la planilla si necesita hacer modificaciones.")
+        elif es_auditor:
+            st.warning("🧐 **Modo Auditoría:** No puede modificar las asistencias ni variables de este periodo.")
         elif variables_exist:
             st.info(f"Datos previos cargados para **{periodo_key}**.")
         else:
@@ -279,7 +283,7 @@ def render():
 
                 st.markdown("---")
 
-                if not es_cerrada and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
+                if not es_cerrada and not es_auditor and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
                     try:
                         for _, fila_t in df_t_edit.iterrows():
                             doc     = fila_t["Num. Doc."]

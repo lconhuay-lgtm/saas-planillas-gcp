@@ -693,8 +693,13 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
     except Exception:
         locadores_pendientes = False
 
+    # El rol 'consulta' (Auditor) no tiene acceso a botones de acción
+    es_auditor = st.session_state.get('usuario_rol') == 'consulta'
+
     if es_cerrada:
         st.error(f"🔒 La planilla del periodo **{periodo_key}** ya fue CERRADA y contabilizada. Vaya al final de la página para reabrirla si tiene permisos de Supervisor.")
+    elif es_auditor:
+        st.warning("🧐 **Modo Auditoría:** Usted tiene acceso de solo lectura. No puede ejecutar cálculos ni modificar datos.")
     else:
         if locadores_pendientes:
             st.warning(
@@ -703,7 +708,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 f"y guarde antes de ejecutar el motor de planilla."
             )
         st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")
-        if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
+        if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True, disabled=es_auditor):
             st.session_state['ultima_planilla_calculada'] = True
             
             # INICIALIZACIÓN GARANTIZADA
@@ -909,7 +914,7 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
 
     if es_cerrada:
         st.error(f"🔒 Los honorarios del periodo **{periodo_key}** ya fueron CERRADOS.")
-    elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True):
+    elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True, disabled=es_auditor):
         resultados_loc = []
         
         # Precargar cuotas de préstamos para locadores
