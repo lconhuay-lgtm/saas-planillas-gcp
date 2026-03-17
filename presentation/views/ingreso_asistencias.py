@@ -46,9 +46,28 @@ def render():
     st.title("Ingreso de Asistencias y Variables")
     st.markdown(f"**Empresa:** {empresa_nombre}")
 
+    # Determinar automáticamente el próximo periodo abierto
+    from datetime import datetime
+    default_mes_idx = datetime.now().month - 1
+    anio_default = datetime.now().year
+    
+    try:
+        db_auto = SessionLocal()
+        cerrados = db_auto.query(PlanillaMensual.periodo_key).filter_by(
+            empresa_id=empresa_id, estado='CERRADA'
+        ).all()
+        db_auto.close()
+        periodos_cerrados = [c[0] for c in cerrados]
+        for idx in range(12):
+            p_key = f"{(idx + 1):02d}-{anio_default}"
+            if p_key not in periodos_cerrados:
+                default_mes_idx = idx
+                break
+    except: pass
+
     col_m, col_a = st.columns([2, 1])
-    mes_sel  = col_m.selectbox("Mes", MESES, key="asis_mes")
-    anio_sel = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=1, key="asis_anio")
+    mes_sel  = col_m.selectbox("Mes", MESES, index=default_mes_idx, key="asis_mes")
+    anio_sel = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=[2025, 2026, 2027, 2028].index(anio_default), key="asis_anio")
     periodo_key = f"{mes_sel[:2]}-{anio_sel}"
     st.markdown("---")
 

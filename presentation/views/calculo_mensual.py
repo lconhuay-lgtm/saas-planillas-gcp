@@ -1387,9 +1387,29 @@ def render():
     empresa_id     = st.session_state.get('empresa_activa_id')
     empresa_nombre = st.session_state.get('empresa_activa_nombre')
 
+    # Determinar automáticamente el próximo periodo abierto
+    default_mes_idx = datetime.now().month - 1
+    anio_default = datetime.now().year
+    if empresa_id:
+        try:
+            db_auto = SessionLocal()
+            cerrados = db_auto.query(PlanillaMensual.periodo_key).filter_by(
+                empresa_id=empresa_id, estado='CERRADA'
+            ).all()
+            db_auto.close()
+            periodos_cerrados = [c[0] for c in cerrados]
+            
+            # Buscar el primer mes del año actual que no esté cerrado
+            for idx in range(12):
+                p_key = f"{(idx + 1):02d}-{anio_default}"
+                if p_key not in periodos_cerrados:
+                    default_mes_idx = idx
+                    break
+        except: pass
+
     col_m, col_a = st.columns([2, 1])
-    mes_seleccionado  = col_m.selectbox("Mes de Cálculo", MESES, key="calc_mes")
-    anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=1, key="calc_anio")
+    mes_seleccionado  = col_m.selectbox("Mes de Cálculo", MESES, index=default_mes_idx, key="calc_mes")
+    anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=[2025, 2026, 2027, 2028].index(anio_default), key="calc_anio")
     periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
 
     # Limpieza de estados si el usuario cambia de periodo para evitar contaminación de datos
