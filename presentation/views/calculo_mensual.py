@@ -769,8 +769,29 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             except Exception as e:
                 st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
 
-    # --- INTENTAR RECUPERAR PLANILLA GUARDADA EN NEON SI NO HAY EN SESSION ---
-    if not st.session_state.get('ultima_planilla_calculada', False):
+    # --- RECUPERACIÓN DE SNAPSHOT (Inmutabilidad para Periodos Cerrados) ---
+    # Si es un periodo CERRADO, forzamos la carga desde la base de datos y bloqueamos recálculos
+    if es_cerrada:
+        try:
+            db3 = SessionLocal()
+            df_rec, aud_rec = cargar_planilla_guardada(db3, empresa_id, periodo_key)
+            # Cargar también snapshot de honorarios
+            p_snap = db3.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            db3.close()
+            
+            if df_rec is not None and not df_rec.empty:
+                st.session_state['res_planilla'] = df_rec
+                st.session_state['auditoria_data'] = aud_rec
+                st.session_state['ultima_planilla_calculada'] = True
+                
+                # Sincronizar snapshot de honorarios si existe
+                if p_snap and p_snap.honorarios_json and p_snap.honorarios_json != '[]':
+                    st.session_state[f'res_honorarios_{periodo_key}'] = pd.read_json(io.StringIO(p_snap.honorarios_json), orient='records')
+        except Exception as e:
+            st.error(f"Error al cargar snapshot inmutable: {e}")
+    
+    # Para periodos ABIERTOS, intentar recuperar si no se ha calculado en esta sesión
+    elif not st.session_state.get('ultima_planilla_calculada', False):
         try:
             db3 = SessionLocal()
             df_rec, aud_rec = cargar_planilla_guardada(db3, empresa_id, periodo_key)
@@ -779,8 +800,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 st.session_state['res_planilla'] = df_rec
                 st.session_state['auditoria_data'] = aud_rec
                 st.session_state['ultima_planilla_calculada'] = True
-                if not es_cerrada:
-                    st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
+                st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
         except Exception:
             pass
 
@@ -1371,6 +1391,12 @@ def render():
     mes_seleccionado  = col_m.selectbox("Mes de Cálculo", MESES, key="calc_mes")
     anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=1, key="calc_anio")
     periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
+
+    # Limpieza de estados si el usuario cambia de periodo para evitar contaminación de datos
+    if st.session_state.get('_ultimo_periodo_visto') != periodo_key:
+        for key in ['res_planilla', 'auditoria_data', 'ultima_planilla_calculada']:
+            st.session_state.pop(key, None)
+        st.session_state['_ultimo_periodo_visto'] = periodo_key
     mes_idx = MESES.index(mes_seleccionado) + 1
 
     tab_plan, tab_hon = st.tabs(["📋 1. Planilla (5ta Categoría)", "🧾 2. Honorarios (4ta Categoría)"])
