@@ -43,7 +43,9 @@ if not st.session_state.get('_tablas_verificadas'):
         Base.metadata.create_all(bind=engine)
         # Migraciones incrementales: añaden columnas nuevas sin borrar datos
         _migraciones = [
-            # Usuarios y Accesos
+            # Usuarios y Accesos (Enterprise Pack)
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email VARCHAR(100)",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_login TIMESTAMP",
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acceso_total BOOLEAN DEFAULT false",
             # Seguro social (lote anterior)
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
