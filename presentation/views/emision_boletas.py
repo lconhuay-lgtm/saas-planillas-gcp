@@ -567,7 +567,7 @@ def render():
                         
                         # 3. Enviar
                         db_conf = SessionLocal()
-                        emp_db = db_conf.query(EmpresaModel).get(empresa_id)
+                        emp_db = db_conf.query(Empresa).get(empresa_id)
                         smtp_conf = {
                             'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
                             'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
@@ -648,7 +648,7 @@ def render():
                     pdf_enc = encriptar_pdf_en_memoria(pdf_orig, dni_envio)
                     
                     # 3. Enviar con configuración de la empresa
-                    emp_db = db_log.query(EmpresaModel).get(empresa_id)
+                    emp_db = db_log.query(Empresa).get(empresa_id)
                     smtp_conf = {
                         'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
                         'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
