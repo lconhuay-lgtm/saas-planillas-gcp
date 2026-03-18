@@ -37,10 +37,13 @@ def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
             h_ext = 0
             
         tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
+        # Limpieza de seguridad: eliminar espacios que puedan existir en la BD
+        num_doc_limpio = str(t.num_doc).replace(" ", "").strip()
+        
         # Validación de seguridad para CE/DNI
-        if len(str(t.num_doc)) > 8 and tipo_doc == '01':
+        if len(num_doc_limpio) > 8 and tipo_doc == '01':
             tipo_doc = '04' # Auto-corrección a Carnet de Extranjería si es largo
-        lineas.append(f"{tipo_doc}|{t.num_doc}|{h_ord}|0|{h_ext}|0|")
+        lineas.append(f"{tipo_doc}|{num_doc_limpio}|{h_ord}|0|{h_ext}|0|")
         
     return "\n".join(lineas)
 
@@ -57,6 +60,7 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
     for v in variables:
         t = v.trabajador
         tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
+        num_doc_limpio = str(t.num_doc).replace(" ", "").strip()
         try:
             susp_list = json.loads(v.suspensiones_json or '{}')
             # Si el JSON es un dict simple de código:días (estándar actual de la app)
@@ -66,9 +70,9 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
                         # Clasificación según catálogo SUNAT
                         # E15: 01, 02, 03, 04, 21, 22
                         if cod in ['01', '02', '03', '04', '21', '22']:
-                            txt_e15.append(f"{tipo_doc}|{t.num_doc}|{cod}|0|{dias}|")
+                            txt_e15.append(f"{tipo_doc}|{num_doc_limpio}|{cod}|0|{dias}|")
                         else:
-                            txt_e16.append(f"{tipo_doc}|{t.num_doc}|{cod}|{dias}|")
+                            txt_e16.append(f"{tipo_doc}|{num_doc_limpio}|{cod}|{dias}|")
         except:
             continue
             
@@ -93,6 +97,8 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     cod_map["Asignación Familiar"] = "0201"
     
     for dni, data in auditoria.items():
+        # Limpiar DNI de la auditoría por si acaso
+        dni_key = str(dni).replace(" ", "").strip()
         t = db.query(Trabajador).filter_by(num_doc=dni, empresa_id=empresa_id).first()
         
         # Omitir locadores si por error aparecen en la auditoría de planilla
@@ -111,7 +117,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             if not cod_sunat:
                 raise ValueError(f"El concepto '{c_nom}' no tiene un Código SUNAT asignado. Debe configurarlo en el Maestro de Conceptos antes de exportar.")
             
-            lineas.append(f"{tipo_doc}|{dni}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|")
+            lineas.append(f"{tipo_doc}|{dni_key}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|")
                 
     return "\n".join(lineas)
 

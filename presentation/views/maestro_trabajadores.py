@@ -187,8 +187,10 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     t_doc = c1.selectbox("Tipo Doc.", opciones_doc,
                          index=opciones_doc.index(t_doc_val),
                          key=f"{key_prefix}_tdoc", disabled=es_edicion)
-    n_doc = c2.text_input("Nro. Documento", value=n_doc_val, max_chars=12,
+    n_doc_input = c2.text_input("Nro. Documento", value=n_doc_val, max_chars=12,
                           key=f"{key_prefix}_ndoc", disabled=es_edicion)
+    # Limpieza inmediata de espacios para evitar errores de digitación
+    n_doc = n_doc_input.replace(" ", "").strip()
     f_nac = c5.date_input("Fecha Nacimiento*", value=f_nac_val,
                           min_value=datetime.date(1920, 1, 1),
                           max_value=datetime.date.today(),

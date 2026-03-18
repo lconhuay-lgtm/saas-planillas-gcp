@@ -93,6 +93,7 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_user VARCHAR(100)",
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_pass VARCHAR(100)",
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(2) DEFAULT '01'",
+            "UPDATE trabajadores SET num_doc = REPLACE(num_doc, ' ', '') WHERE num_doc LIKE '% %'",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
