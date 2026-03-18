@@ -79,7 +79,11 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
     return "\n".join(txt_e15), "\n".join(txt_e16)
 
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
-    """Genera archivo .REM (Remuneraciones)"""
+    """
+    Genera el archivo .REM (Remuneraciones, Tributos y Descuentos).
+    Aplica directrices de PLAME y mapeo retroactivo de códigos SUNAT 100% en memoria.
+    """
+    # 1. Consulta de solo lectura del histórico inmutable de la planilla
     planilla = db.query(PlanillaMensual).filter_by(
         empresa_id=empresa_id, periodo_key=periodo_key
     ).first()
@@ -87,37 +91,94 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     if not planilla:
         return ""
         
+    # Carga del JSON en memoria. No se altera la base de datos bajo ninguna circunstancia.
     auditoria = json.loads(planilla.auditoria_json or '{}')
     lineas = []
     
-    # Cargar mapa de códigos SUNAT de los conceptos de la empresa
-    conceptos = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
-    cod_map = {c.nombre: c.codigo_sunat for c in conceptos}
-    # Conceptos core obligatorios
-    cod_map["Asignación Familiar"] = "0201"
+    # 2. Creación del Diccionario Traductor Dinámico (Base de datos actual)
+    conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
+    # Normalizamos a mayúsculas y sin espacios a los extremos para cruce exacto
+    cod_map = {c.nombre.strip().upper(): c.codigo_sunat for c in conceptos_bd if c.codigo_sunat}
     
-    for dni, data in auditoria.items():
-        # Limpiar DNI de la auditoría por si acaso
-        dni_key = str(dni).replace(" ", "").strip()
-        t = db.query(Trabajador).filter_by(num_doc=dni, empresa_id=empresa_id).first()
+    # 3. Diccionario Fallback de Rescate (Para planillas históricas o conceptos del motor base)
+    fallback_map = {
+        "SUELDO BASE": "0121",
+        "ASIGNACIÓN FAMILIAR": "0201",
+        "ASIGNACION FAMILIAR": "0201",
+        "AFP - APORTE OBLIGATORIO": "0608",
+        "AFP APORTE OBLIGATORIO": "0608",
+        "AFP - COMISIÓN": "0601",
+        "AFP COMISION": "0601",
+        "AFP - PRIMA DE SEGURO": "0606",
+        "AFP PRIMA DE SEGURO": "0606",
+        "ONP - APORTE": "0607",
+        "ONP APORTE": "0607",
+        "RENTA 5TA CATEGORÍA": "0605",
+        "RENTA 5TA CATEGORIA": "0605",
+        "TARDANZAS": "0704"
+    }
+    
+    # 4. Iteración sobre cada trabajador en la planilla cerrada
+    for dni_original, data in auditoria.items():
+        # Limpieza del DNI en memoria para prevenir fallos de Foreign Key
+        dni_limpio = str(dni_original).replace(" ", "").strip()
         
-        # Omitir locadores si por error aparecen en la auditoría de planilla
+        # Búsqueda segura del trabajador usando el DNI sanitizado temporalmente
+        t = db.query(Trabajador).filter_by(num_doc=dni_limpio, empresa_id=empresa_id).first()
+        
+        # Se excluyen los locadores (Cuarta categoría se declara en otro archivo)
         if t and getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR':
             continue
-        tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
+            
+        tipo_doc = getattr(t, 'tipo_documento', '01') if t else '01'
+        # Auto-corrección robusta para CE (04) si el DNI es largo y estaba como '01'
+        if len(dni_limpio) > 8 and tipo_doc == '01':
+            tipo_doc = '04'
         
-        ingresos = data.get('ingresos', {})
-        for c_nom, monto in ingresos.items():
+        # 5. Consolidación de ingresos y descuentos en una sola lista iterativa
+        rubros_a_exportar = []
+        if 'ingresos' in data:
+            rubros_a_exportar.extend(data['ingresos'].items())
+        if 'descuentos' in data:
+            rubros_a_exportar.extend(data['descuentos'].items())
+            
+        # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
+        for nombre_concepto, monto in rubros_a_exportar:
+            try:
+                monto_float = float(monto)
+            except ValueError:
+                continue
+                
+            # Evitar enviar montos nulos o negativos a PLAME
+            if monto_float <= 0:
+                continue
+                
+            # Normalización del nombre del concepto para cruzarlo con los diccionarios
+            nombre_limpio = nombre_concepto.strip().upper()
+            
+            # Determinación del código SUNAT: Primero BD, luego Fallback
             cod_sunat = None
-            if c_nom.startswith("Sueldo Base"):
+            if nombre_limpio.startswith("SUELDO BASE"):
                 cod_sunat = "0121"
             else:
-                cod_sunat = cod_map.get(c_nom)
+                cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
-            if not cod_sunat:
-                raise ValueError(f"El concepto '{c_nom}' no tiene un Código SUNAT asignado. Debe configurarlo en el Maestro de Conceptos antes de exportar.")
-            
-            lineas.append(f"{tipo_doc}|{dni_key}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|")
+            # Formateo condicional según el código SUNAT resuelto
+            if cod_sunat:
+                cod_str = str(cod_sunat).strip()
+                
+                # Regla Estricta PLAME: Si el código pertenece a la serie 700 (Deducciones/Adelantos)
+                # el devengado DEBE ser obligatoriamente 0.00
+                if cod_str.startswith("07"):
+                    monto_devengado = 0.00
+                    monto_pagado = monto_float
+                else:
+                    # Para ingresos (100-500) y aportes (600) se envían ambos montos
+                    monto_devengado = monto_float
+                    monto_pagado = monto_float
+                    
+                # Ensamblado del string final separado por pipes (|) a 2 decimales
+                lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
     return "\n".join(lineas)
 
