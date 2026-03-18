@@ -1,48 +1,8 @@
-Actúa como un Arquitecto de Software y Experto en Bases de Datos con SQLAlchemy.
-URGENCIA CRÍTICA: En tu implementación anterior del módulo "Kardex de Vacaciones", creaste la lógica y las migraciones físicas en SQL, pero OMITISTE actualizar el modelo ORM. Esto ha roto la aplicación generando un `ImportError` y `AttributeError`.
-
-Necesito que corrijas esto INMEDIATAMENTE modificando un único archivo: `infrastructure/database/models.py`.
-
-Sigue rigurosamente estas instrucciones exactas:
-
-PASO 1: ABRIR EL ARCHIVO
-Abre el archivo `infrastructure/database/models.py`.
-
-PASO 2: ACTUALIZAR LA CLASE `Trabajador`
-Busca la clase `Trabajador(Base):`. 
-1. Ve al bloque de "Datos Laborales" (debajo de `tipo_contrato = Column(...)`) y añade este nuevo campo:
-    dias_vacaciones_anuales = Column(Integer, default=30)
-
-2. Ve al final de la clase `Trabajador`, en la sección "# Relación Inversa" o debajo de `empresa = relationship(...)`, y añade la relación hacia la nueva tabla de vacaciones:
-    vacaciones = relationship("RegistroVacaciones", backref="trabajador", cascade="all, delete-orphan")
-
-PASO 3: CREAR LA NUEVA CLASE `RegistroVacaciones`
-Ve al final del archivo `infrastructure/database/models.py` (después de la clase `CuotaPrestamo` o al fondo del documento) y pega EXACTAMENTE el siguiente bloque de código para mapear la tabla que ya creaste en SQL:
-
-# 8. TABLA DE KARDEX DE VACACIONES
-class RegistroVacaciones(Base):
-    __tablename__ = "registro_vacaciones"
-
-    id = Column(Integer, primary_key=True, index=True)
-    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
-    
-    # Rango de fechas
-    fecha_inicio = Column(Date, nullable=False)
-    fecha_fin = Column(Date, nullable=False)
-    
-    # Consumo
-    dias_gozados = Column(Integer, default=0)
-    dias_vendidos = Column(Integer, default=0)
-    
-    # Control
-    periodo_origen = Column(String(50), nullable=True) # Ej: '2024-2025'
-    estado = Column(String(20), default="APROBADO")    # APROBADO | ANULADO
-    observaciones = Column(Text, nullable=True)
-    
-    # Auditoría
-    fecha_registro = Column(DateTime, default=datetime.now)
-
-PASO 4: VERIFICAR IMPORTACIONES
-Asegúrate de que el archivo `models.py` ya tiene importados `Column, Integer, String, Date, ForeignKey, DateTime, Text` desde `sqlalchemy` y `relationship` desde `sqlalchemy.orm`. (Normalmente ya están en la cabecera, pero valídalo).
-
-No toques ningún otro archivo (ni presentation, ni core). Solo repara el ORM para que la aplicación vuelva a levantar y los imports funcionen correctamente. Confirma cuando hayas terminado.
+ModuleNotFoundError: No module named 'PyPDF2'
+Traceback:
+File "/app/presentation/app.py", line 156, in <module>
+    emision_boletas.render()
+File "/app/presentation/views/emision_boletas.py", line 556, in render
+    from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
+File "/app/core/use_cases/envio_correos.py", line 7, in <module>
+    from PyPDF2 import PdfReader, PdfWriter
