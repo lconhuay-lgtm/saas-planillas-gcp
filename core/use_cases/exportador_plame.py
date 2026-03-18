@@ -209,6 +209,9 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             
         # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
         for nombre_concepto, monto in rubros_a_exportar:
+            # Normalización del nombre del concepto para cruzarlo con los diccionarios
+            nombre_limpio = nombre_concepto.strip().upper()
+
             try:
                 monto_float = float(monto)
             except ValueError:
@@ -221,9 +224,6 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                         (nombre_limpio.startswith("APORTE") and "AFP" in nombre_limpio) or
                         "COMISIÓN" in nombre_limpio or "PRIMA" in nombre_limpio):
                     continue
-                
-            # Normalización del nombre del concepto para cruzarlo con los diccionarios
-            nombre_limpio = nombre_concepto.strip().upper()
             
             # Determinación del código SUNAT: Prioridad absoluta a mapeo de sistema para conceptos core
             cod_sunat = None
