@@ -276,33 +276,12 @@ def render():
                 buf_pdf = generar_pdf_cronograma(dp, empresa_nombre)
                 col_c.download_button("📄 PDF", data=buf_pdf, file_name=f"Cronograma_{dp['dni']}.pdf", use_container_width=True)
 
-                # Botón para cancelar el préstamo completo (solo supervisores)
-                if rol_usuario in ["supervisor", "admin"] and col_c.button(
-                    "🚫 Finalizar",
-                    key=f"cancel_prest_{dp['id']}",
-                    help="Marca el préstamo como finalizado/cancelado sin borrar datos.",
-                    use_container_width=True
-                ):
-                    db2 = SessionLocal()
-                    try:
-                        pr_obj = db2.query(Prestamo).get(dp['id'])
-                        if pr_obj:
-                            pr_obj.estado = "CANCELADO"
-                            db2.commit()
-                            st.success("Préstamo finalizado.")
-                            st.rerun()
-                    except Exception as e2:
-                        db2.rollback()
-                        st.error(f"Error: {e2}")
-                    finally:
-                        db2.close()
-
-                # Botón para ELIMINAR físicamente (SOLO ADMIN)
+                # Botón para ELIMINAR físicamente (ESTRICTAMENTE SOLO ADMIN)
                 if rol_usuario == "admin" and col_c.button(
-                    "🗑️ Eliminar",
+                    "🗑️ Eliminar Préstamo",
                     key=f"del_prest_{dp['id']}",
                     type="secondary",
-                    help="Borra el préstamo y sus cuotas de la base de datos.",
+                    help="Acceso exclusivo Admin: Borra el préstamo y sus cuotas de la base de datos.",
                     use_container_width=True
                 ):
                     db_del = SessionLocal()
@@ -342,7 +321,7 @@ def render():
                     )
                     c4.write(estado_badge)
 
-                    # Aplazamiento Dominó — solo supervisor + cuota PENDIENTE
+                    # Aplazamiento Dominó — solo supervisor (no admin) + cuota PENDIENTE
                     if (
                         rol_usuario == "supervisor"
                         and cuota['estado'] == 'PENDIENTE'
