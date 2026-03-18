@@ -28,12 +28,8 @@ def render():
     empresa_id     = st.session_state.get('empresa_activa_id')
     empresa_nombre = st.session_state.get('empresa_activa_nombre', '')
 
-    tab_internos, tab_plame = st.tabs(["📊 Reportes Internos", "🏛️ Exportación SUNAT (PLAME)"])
-
-    with tab_internos:
-        st.markdown("Consulta el historial completo de planillas procesadas y cerradas de la empresa activa.")
-        st.markdown("---")
-    empresa_nombre = st.session_state.get('empresa_activa_nombre', '')
+    st.markdown("Consulta el historial completo de planillas procesadas y cerradas de la empresa activa.")
+    st.markdown("---")
 
     if not empresa_id:
         st.error("Seleccione una empresa en el Dashboard para acceder a reportería.")
@@ -286,23 +282,19 @@ def render():
             col_p, col_a = st.columns(2)
 
             with col_p:
-                st.markdown("#### Archivos PLAME (T-REGISTRO)")
-                st.caption("Genera .REM · .JOR · .SNL comprimidos en un ZIP con nombre oficial SUNAT.")
-                if st.button("Generar ZIP PLAME", type="primary", use_container_width=True, key="btn_plame"):
+                st.markdown("#### Archivos PLAME (Estructura PDT)")
+                st.caption("Genera el paquete oficial (.rem, .jor, .sub, .not) con validación estricta de códigos SUNAT.")
+                if st.button("🚀 Generar ZIP PLAME Profesional", type="primary", use_container_width=True, key="btn_plame_v2"):
                     try:
-                        from core.use_cases.generador_interfaces import generar_archivos_plame
-                        buf_zip = generar_archivos_plame(
-                            empresa_ruc=empresa_ruc, anio=anio_num, mes=mes_num,
-                            df_planilla=df_planilla, auditoria_data=auditoria,
-                            df_trabajadores=df_trabajadores_rep,
-                            df_conceptos=df_conceptos_rep,
-                        )
-                        nombre_zip = f"0601{anio_num}{str(mes_num).zfill(2)}{empresa_ruc.zfill(11)}.zip"
-                        st.download_button(
-                            f"⬇️ Descargar {nombre_zip}", data=buf_zip,
-                            file_name=nombre_zip, mime="application/zip",
-                            use_container_width=True, key="dl_plame",
-                        )
+                        with st.spinner("Procesando histórico y validando conceptos..."):
+                            buf_zip = generar_zip_plame(empresa_id, mes_num, anio_num)
+                            nombre_zip = f"0601{anio_num}{str(mes_num).zfill(2)}{empresa_ruc.zfill(11)}.zip"
+                            st.success(f"✅ Archivo listo para declarar.")
+                            st.download_button(
+                                f"⬇️ Descargar {nombre_zip}", data=buf_zip,
+                                file_name=nombre_zip, mime="application/zip",
+                                use_container_width=True, key="dl_plame_v2",
+                            )
                     except ValueError as ve:
                         st.error(f"❌ {ve}")
                     except Exception as ex:
@@ -629,25 +621,3 @@ def render():
         except Exception as e_pers:
             st.error(f"Error generando Reporte Personalizado: {e_pers}")
 
-    with tab_plame:
-        st.subheader("Generador de Archivos .txt para PLAME")
-        st.info("Esta herramienta genera el paquete de archivos planos (.rem, .jor, .sub, .not) requeridos por el PDT Planilla Electrónica de SUNAT.")
-        
-        c_p1, c_p2 = st.columns(2)
-        p_mes = c_p1.selectbox("Mes de declaración:", range(1, 13), index=datetime.now().month - 1, key="plame_mes")
-        p_anio = c_p2.number_input("Año de declaración:", min_value=2024, max_value=2030, value=datetime.now().year, key="plame_anio")
-        
-        if st.button("🚀 Generar Archivos PLAME", type="primary", use_container_width=True):
-            with st.spinner("Procesando base de datos y empaquetando archivos..."):
-                try:
-                    zip_plame = generar_zip_plame(empresa_id, p_mes, p_anio)
-                    st.success(f"✅ Archivos PLAME para el periodo {str(p_mes).zfill(2)}-{p_anio} generados.")
-                    st.download_button(
-                        label="📥 Descargar ZIP para PDT PLAME",
-                        data=zip_plame,
-                        file_name=f"PLAME_{p_anio}_{str(p_mes).zfill(2)}.zip",
-                        mime="application/zip",
-                        use_container_width=True
-                    )
-                except Exception as e_plame:
-                    st.error(f"No se pudo generar el archivo: {e_plame}")
