@@ -189,22 +189,36 @@ def _cargar_t21() -> dict:
         if result:
             return result
 
-    # ── Fallback hardcoded ────────────────────────────────────────────────────
+    # ── Fallback hardcoded — Tabla 21 SUNAT (Suspensiones) ────────────────────
     return {
-        "07": "Inasistencia Injustificada",
-        "08": "Huelga",
-        "09": "Sanción Disciplinaria",
-        "16": "Licencia sin goce de haber",
-        "17": "Permiso o Licencia particular",
-        "20": "Descanso Médico (ESSALUD)",
-        "21": "Descanso Médico (EPS)",
-        "22": "Accidente de Trabajo / Enfermedad Profesional",
-        "23": "Vacaciones",
-        "24": "Descanso por Maternidad / Paternidad",
-        "25": "Licencia con goce de haber",
-        "26": "Licencia por Maternidad (pre/post natal)",
-        "27": "Licencia por Paternidad",
-        "28": "Comisión Sindical",
+        "01": "S.P. SANCIÓN DISCIPLINARIA",
+        "02": "S.P. EJERCICIO DERECHO HUELGA",
+        "03": "S.P. DETENCIÓN DEL TRABAJADOR",
+        "04": "S.P. INHAB. ADMINIST., JUDICIAL O PENA PRIVATIVA",
+        "05": "S.P. PERMISO, LICENCIA U OTROS SIN GOCE DE HABER",
+        "06": "S.P. CASO FORTUITO O FUERZA MAYOR",
+        "07": "S.P. FALTA NO JUSTIFICADA",
+        "08": "S.P. POR TEMPORADA O INTERMITENTE",
+        "09": "S.P. MATERNIDAD - PRE Y POST NATAL",
+        "10": "S.P. SENTENCIA TERR, NARC,CORRUP Y VIOLAC.",
+        "11": "S.P. IMPOSICIÓN MEDIDA CAUTELAR",
+        "12": "S.P. ENFERM. PADRE, CÓNYUGE O CONVIVIENTE",
+        "20": "S.I. ENFERM/ACCIDENTE (20 PRIMEROS DÍAS)",
+        "21": "S.I. INCAP TEMPORAL (SUBSIDIADO))",
+        "22": "S.I. MATERNIDAD - PRE Y POST NATAL",
+        "23": "S.I. DESCANSO VACACIONAL",
+        "24": "S.I. LIC DESEMP CARGO CÍVICO Y PARA SMO",
+        "25": "S.I. LIC DESEMPEÑO CARGOS SINDICALES",
+        "26": "S.I. LICENCIA U OTROS MOTIVOS CON GOCE DE HABER",
+        "27": "S.I. DÍAS COMPENS POR HORAS DE SOBRETIEMPO",
+        "28": "S.I. DÍAS LICENCIA POR PATERNIDAD",
+        "29": "S.I. DIAS LICENCIA POR ADOPCIÓN",
+        "30": "S.I. IMPOSICIÓN MEDIDA CAUTELAR",
+        "31": "S.I. CITAC. JUDICIAL, MILITAR, POLICIAL O ADMINIST.",
+        "32": "S.I. FALLECIMIENTO PADRES, HERMANOS, CÓNYUGE O HIJOS",
+        "33": "S.I. REPRESENT. DEL ESTADO EN EVENTOS",
+        "34": "S.I. DESC VACAC LIC POR ASISTE MÉDICA O TERAP REHAB",
+        "35": "S.I. ENFERM. GRAVE O TERMINAL O ACCIDENTE GRAVE DE FAM DIRECTO",
     }
 
 

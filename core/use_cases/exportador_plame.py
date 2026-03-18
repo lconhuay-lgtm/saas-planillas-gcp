@@ -239,6 +239,15 @@ def generar_zip_plame(empresa_id: int, mes: int, anio: int) -> io.BytesIO:
             zf.writestr(f"{prefijo}.sub", txt_sub)
             zf.writestr(f"{prefijo}.not", txt_not)
             zf.writestr(f"{prefijo}.rem", txt_rem)
+            # El archivo de suspensiones/días subsidiados para el PDT PLAME suele usar la extensión .snl
+            # Consolidamos txt_sub y txt_not si el validador lo requiere en un solo archivo .snl
+            txt_snl = ""
+            if txt_sub: txt_snl += txt_sub
+            if txt_not: 
+                if txt_snl: txt_snl += "\r\n"
+                txt_snl += txt_not
+            if txt_snl:
+                zf.writestr(f"{prefijo}.snl", txt_snl)
         
         buf.seek(0)
         return buf
