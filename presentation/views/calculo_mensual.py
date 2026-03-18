@@ -369,8 +369,14 @@ def _calcular_pension(
                 obs_trab.append(f"Prima AFP exonerada (Edad límite superada)")
 
             comis_afp = base_afp_onp * tasa_comision
-            total_afp_ind = aporte_afp + prima_afp + comis_afp
-            if total_afp_ind > 0: desglose_descuentos[f'Aporte {sistema}'] = round(total_afp_ind, 2)
+            
+            # Desglose detallado para PLAME profesional
+            if aporte_afp > 0:
+                desglose_descuentos[f'APORTE OBLIGATORIO {sistema}'] = round(aporte_afp, 2)
+            if prima_afp > 0:
+                desglose_descuentos[f'PRIMA DE SEGURO {sistema}'] = round(prima_afp, 2)
+            if comis_afp > 0:
+                desglose_descuentos[f'COMISIÓN {sistema}'] = round(comis_afp, 2)
 
     total_pension = dscto_onp + aporte_afp + prima_afp + comis_afp
     return {
