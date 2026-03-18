@@ -176,16 +176,15 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
             elif "APORTE" in nombre_limpio:
-                # Detectar AFP u ONP por palabra clave en el nombre generado por el motor
-                # NOTA: 0607 (ONP) se excluye de la exportación ya que el PLAME lo calcula solo
+                # NOTA: 0607 (ONP) se excluye ya que PLAME lo autocalcula
                 cod_sunat = "0608" if "AFP" in nombre_limpio else None
             elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio:
                 cod_sunat = "0601"
-            elif "PRIMA" in nombre_limpio or "AFP SEGURO" in nombre_limpio:
+            elif "PRIMA" in nombre_limpio or "AFP SEGURO" in nombre_limpio or "SEGURO" in nombre_limpio:
                 cod_sunat = "0606"
             elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
                 cod_sunat = "0605"
-            elif "PRÉSTAMO" in nombre_limpio or "PRESTAMO" in nombre_limpio:
+            elif "PRÉSTAMO" in nombre_limpio or "PRESTAMO" in nombre_limpio or "PREST." in nombre_limpio:
                 cod_sunat = "0706" # Otros descuentos no deducibles
             else:
                 # Si no es un concepto core del motor, buscar en el Maestro de Conceptos configurado por el usuario
@@ -205,16 +204,16 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 cod_str = str(cod_sunat).strip()
                 
                 # Regla Estricta PLAME: Si el código pertenece a la serie 700 (Deducciones/Adelantos)
-                # el devengado DEBE ser obligatoriamente 0.00
-                if cod_str.startswith("07"):
+                # o a la serie 600 de RETENCIONES (Pensiones/5ta), el devengado DEBE ser 0.00 para no inflar bases.
+                if cod_str.startswith("07") or cod_str.startswith("06"):
                     monto_devengado = 0.00
                     monto_pagado = monto_float
                 else:
-                    # Para ingresos (100-500) y aportes (600) se envían ambos montos
+                    # Para ingresos (series 01, 02, 03, 04, 05, 09) se envían ambos montos
                     monto_devengado = monto_float
                     monto_pagado = monto_float
                     
-                # Ensamblado del string final separado por pipes (|) a 2 decimales
+                # Ensamblado del string final con terminación CRLF
                 lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
     return "\r\n".join(lineas)

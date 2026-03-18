@@ -14,10 +14,10 @@ CONCEPTOS_FIJOS = {"SUELDO BASICO", "ASIGNACION FAMILIAR"}
 # Suspensiones que se muestran como columnas directas en la grilla de tiempos
 # Formato: (codigo_sunat, etiqueta_columna)
 SUSPENSIONES_GRILLA = [
-    ("07", "Faltas Injust. (07)"),
-    ("20", "Desc. Médico (20)"),
-    ("23", "Vacaciones (23)"),
-    ("16", "Lic. s/Haber (16)"),
+    ("07", "S.P. FALTA NO JUSTIFICADA (07)"),
+    ("20", "S.I. ENFERM/ACCIDENTE (20)"),
+    ("23", "S.I. DESCANSO VACACIONAL (23)"),
+    ("05", "S.P. PERMISO SIN GOCE (05)"),
 ]
 _COL_A_COD = {etq: cod for cod, etq in SUSPENSIONES_GRILLA}
 
