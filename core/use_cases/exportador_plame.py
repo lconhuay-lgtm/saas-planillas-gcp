@@ -156,12 +156,19 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             # Normalización del nombre del concepto para cruzarlo con los diccionarios
             nombre_limpio = nombre_concepto.strip().upper()
             
-            # Determinación del código SUNAT: Primero BD, luego Fallback
+            # Determinación del código SUNAT: Primero BD, luego Fallback de sistema
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE"):
                 cod_sunat = "0121"
             else:
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
+            
+            # Impedir la exportación si el concepto no está mapeado
+            if not cod_sunat:
+                raise ValueError(
+                    f"Error de Integridad PLAME: El concepto '{nombre_concepto}' no tiene un código SUNAT "
+                    f"asignado. Por favor, vincúlelo en el Maestro de Conceptos antes de volver a intentar la exportación."
+                )
             
             # Formateo condicional según el código SUNAT resuelto
             if cod_sunat:
