@@ -3,7 +3,7 @@ import zipfile
 import json
 import pandas as pd
 from sqlalchemy.orm import Session
-from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto
+from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto, ParametroLegal
 
 def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
     """Genera archivo .JOR (Jornada Laboral)"""
