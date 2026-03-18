@@ -295,10 +295,11 @@ def generar_excel_afpnet(
     if df_trabajadores.empty:
         raise ValueError("No hay datos de trabajadores para generar el archivo AFPnet.")
 
-    # Mapa doc → trabajador
+    # Mapa doc → trabajador (Limpiando espacios en las llaves del mapa)
     trab_map: dict = {}
     for _, tr in df_trabajadores.iterrows():
-        trab_map[str(tr.get("Num. Doc.", ""))] = tr
+        dni_t = "".join(str(tr.get("Num. Doc.", "")).split())
+        trab_map[dni_t] = tr
 
     df_data = df_planilla[df_planilla["Apellidos y Nombres"] != "TOTALES"]
 
@@ -309,7 +310,8 @@ def generar_excel_afpnet(
         if "AFP" not in sistema:
             continue  # Ignorar ONP y NO AFECTO
 
-        dni  = str(row["DNI"])
+        # Limpieza agresiva del DNI para asegurar el cruce con el mapa
+        dni = "".join(str(row["DNI"]).split())
         trab = trab_map.get(dni, pd.Series(dtype=object))
         aud  = auditoria_data.get(dni, {})
 
