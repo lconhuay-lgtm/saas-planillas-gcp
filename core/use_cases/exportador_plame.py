@@ -177,10 +177,11 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 cod_sunat = "0121"
             elif "APORTE" in nombre_limpio:
                 # Detectar AFP u ONP por palabra clave en el nombre generado por el motor
-                cod_sunat = "0608" if "AFP" in nombre_limpio else ("0607" if "ONP" in nombre_limpio else None)
+                # NOTA: 0607 (ONP) se excluye de la exportación ya que el PLAME lo calcula solo
+                cod_sunat = "0608" if "AFP" in nombre_limpio else None
             elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio:
                 cod_sunat = "0601"
-            elif "PRIMA" in nombre_limpio:
+            elif "PRIMA" in nombre_limpio or "AFP SEGURO" in nombre_limpio:
                 cod_sunat = "0606"
             elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
                 cod_sunat = "0605"
@@ -190,8 +191,10 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 # Si no es un concepto core del motor, buscar en el Maestro de Conceptos configurado por el usuario
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
-            # Impedir la exportación si el concepto no está mapeado
+            # Impedir la exportación si el concepto no está mapeado (excepto ONP que se ignora a propósito)
             if not cod_sunat:
+                if "ONP" in nombre_limpio:
+                    continue
                 raise ValueError(
                     f"Error de Integridad PLAME: El concepto '{nombre_concepto}' no tiene un código SUNAT "
                     f"asignado. Por favor, vincúlelo en el Maestro de Conceptos antes de volver a intentar la exportación."
