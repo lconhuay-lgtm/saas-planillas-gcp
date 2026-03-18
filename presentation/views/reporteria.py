@@ -7,6 +7,7 @@ from datetime import datetime
 import calendar as _cal
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import PlanillaMensual, Trabajador, VariablesMes, ParametroLegal
+from core.use_cases.exportador_plame import generar_zip_plame
 
 _MESES_ES = {
     "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
@@ -23,10 +24,15 @@ def _periodo_legible(periodo_key: str) -> str:
 
 def render():
     st.title("📊 Reportería de Planillas")
-    st.markdown("Consulta el historial completo de planillas procesadas y cerradas de la empresa activa.")
-    st.markdown("---")
-
+    
     empresa_id     = st.session_state.get('empresa_activa_id')
+    empresa_nombre = st.session_state.get('empresa_activa_nombre', '')
+
+    tab_internos, tab_plame = st.tabs(["📊 Reportes Internos", "🏛️ Exportación SUNAT (PLAME)"])
+
+    with tab_internos:
+        st.markdown("Consulta el historial completo de planillas procesadas y cerradas de la empresa activa.")
+        st.markdown("---")
     empresa_nombre = st.session_state.get('empresa_activa_nombre', '')
 
     if not empresa_id:
@@ -622,3 +628,26 @@ def render():
                     st.warning("Seleccione al menos una columna.")
         except Exception as e_pers:
             st.error(f"Error generando Reporte Personalizado: {e_pers}")
+
+    with tab_plame:
+        st.subheader("Generador de Archivos .txt para PLAME")
+        st.info("Esta herramienta genera el paquete de archivos planos (.rem, .jor, .sub, .not) requeridos por el PDT Planilla Electrónica de SUNAT.")
+        
+        c_p1, c_p2 = st.columns(2)
+        p_mes = c_p1.selectbox("Mes de declaración:", range(1, 13), index=datetime.now().month - 1, key="plame_mes")
+        p_anio = c_p2.number_input("Año de declaración:", min_value=2024, max_value=2030, value=datetime.now().year, key="plame_anio")
+        
+        if st.button("🚀 Generar Archivos PLAME", type="primary", use_container_width=True):
+            with st.spinner("Procesando base de datos y empaquetando archivos..."):
+                try:
+                    zip_plame = generar_zip_plame(empresa_id, p_mes, p_anio)
+                    st.success(f"✅ Archivos PLAME para el periodo {str(p_mes).zfill(2)}-{p_anio} generados.")
+                    st.download_button(
+                        label="📥 Descargar ZIP para PDT PLAME",
+                        data=zip_plame,
+                        file_name=f"PLAME_{p_anio}_{str(p_mes).zfill(2)}.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                except Exception as e_plame:
+                    st.error(f"No se pudo generar el archivo: {e_plame}")
