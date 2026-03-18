@@ -140,11 +140,16 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         if 'ingresos' in data:
             rubros_a_exportar.extend(data['ingresos'].items())
         
-        # Inyectar explícitamente conceptos de pensión si no están en la lista de descuentos
+        # Inyectar explícitamente conceptos de pensión y quinta si no están en la lista de descuentos
         # Estos vienen del desglose interno del motor de cálculo guardado en el snapshot
         if 'descuentos' in data:
-            # Filtrar descuentos para no duplicar si ya están mapeados por nombre
             rubros_a_exportar.extend(data['descuentos'].items())
+        
+        # Rescate de Quinta Categoría si viene en una llave separada del JSON (según la estructura del motor)
+        if 'quinta' in data and isinstance(data['quinta'], dict):
+            monto_q = data['quinta'].get('retencion', 0)
+            if monto_q > 0:
+                rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
             
         # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
         for nombre_concepto, monto in rubros_a_exportar:
@@ -170,6 +175,8 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 cod_sunat = "0601"
             elif "PRIMA DE SEGURO" in nombre_limpio or "PRIMA" in nombre_limpio:
                 cod_sunat = "0606"
+            elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
+                cod_sunat = "0605"
             else:
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
