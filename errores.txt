@@ -1,8 +1,18 @@
-ModuleNotFoundError: No module named 'PyPDF2'
-Traceback:
-File "/app/presentation/app.py", line 156, in <module>
-    emision_boletas.render()
-File "/app/presentation/views/emision_boletas.py", line 556, in render
-    from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
-File "/app/core/use_cases/envio_correos.py", line 7, in <module>
-    from PyPDF2 import PdfReader, PdfWriter
+01|71186449|224|0|0|0|
+01| 08436443|224|0|0|0|
+01| 47479539|224|0|0|0|
+01| 08883818|224|0|0|0|
+01| 08404789|224|0|0|0|
+01| 48790911|224|0|0|0|
+01| 08762421|224|0|0|0|
+01| 09379727|224|0|0|0|
+01| 10319306|224|0|0|0|
+01| 07763893|224|0|0|0|
+01| 10760510|224|0|0|0|
+01| 09310444|224|0|0|0|
+01|10025940|224|0|0|0|
+01|73663253|80|0|0|0|
+01| 003714647|224|0|0|0|
+01| 76431781|224|0|0|0|
+01|73663257|80|0|0|0|
+01| 08490331|224|0|0|0|
