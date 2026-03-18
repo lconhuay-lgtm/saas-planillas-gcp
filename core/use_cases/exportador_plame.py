@@ -167,7 +167,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             
             # Determinación del código SUNAT: Primero BD, luego Fallback de sistema
             cod_sunat = None
-            if nombre_limpio.startswith("SUELDO BASE"):
+            if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
             elif "APORTE OBLIGATORIO" in nombre_limpio or "APORTE ONP" in nombre_limpio:
                 cod_sunat = fallback_map.get("AFP - APORTE OBLIGATORIO") if "AFP" in nombre_limpio else "0607"
