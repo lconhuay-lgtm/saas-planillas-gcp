@@ -175,11 +175,12 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
-            elif "APORTE OBLIGATORIO" in nombre_limpio or "APORTE ONP" in nombre_limpio:
-                cod_sunat = "0608" if "AFP" in nombre_limpio else "0607"
+            elif "APORTE" in nombre_limpio:
+                # Detectar AFP u ONP por palabra clave en el nombre generado por el motor
+                cod_sunat = "0608" if "AFP" in nombre_limpio else ("0607" if "ONP" in nombre_limpio else None)
             elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio:
                 cod_sunat = "0601"
-            elif "PRIMA DE SEGURO" in nombre_limpio or "PRIMA" in nombre_limpio:
+            elif "PRIMA" in nombre_limpio:
                 cod_sunat = "0606"
             elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
                 cod_sunat = "0605"
