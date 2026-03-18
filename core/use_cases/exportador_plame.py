@@ -38,7 +38,7 @@ def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
             
         tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
         # Limpieza de seguridad: eliminar espacios que puedan existir en la BD
-        num_doc_limpio = str(t.num_doc).replace(" ", "").strip()
+        num_doc_limpio = "".join(str(t.num_doc).split())
         
         # Validación de seguridad para CE/DNI
         if len(num_doc_limpio) > 8 and tipo_doc == '01':
@@ -60,7 +60,7 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
     for v in variables:
         t = v.trabajador
         tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
-        num_doc_limpio = str(t.num_doc).replace(" ", "").strip()
+        num_doc_limpio = "".join(str(t.num_doc).split())
         try:
             susp_list = json.loads(v.suspensiones_json or '{}')
             # Si el JSON es un dict simple de código:días (estándar actual de la app)
@@ -120,8 +120,8 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     
     # 4. Iteración sobre cada trabajador en la planilla cerrada
     for dni_original, data in auditoria.items():
-        # Limpieza del DNI en memoria para prevenir fallos de Foreign Key
-        dni_limpio = str(dni_original).replace(" ", "").strip()
+        # Limpieza AGRESIVA del DNI en memoria (reemplaza cualquier espacio, no solo extremos)
+        dni_limpio = "".join(str(dni_original).split())
         
         # Búsqueda segura del trabajador usando el DNI sanitizado temporalmente
         t = db.query(Trabajador).filter_by(num_doc=dni_limpio, empresa_id=empresa_id).first()
@@ -139,7 +139,11 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         rubros_a_exportar = []
         if 'ingresos' in data:
             rubros_a_exportar.extend(data['ingresos'].items())
+        
+        # Inyectar explícitamente conceptos de pensión si no están en la lista de descuentos
+        # Estos vienen del desglose interno del motor de cálculo guardado en el snapshot
         if 'descuentos' in data:
+            # Filtrar descuentos para no duplicar si ya están mapeados por nombre
             rubros_a_exportar.extend(data['descuentos'].items())
             
         # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
@@ -160,6 +164,12 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE"):
                 cod_sunat = "0121"
+            elif "APORTE OBLIGATORIO" in nombre_limpio or "APORTE ONP" in nombre_limpio:
+                cod_sunat = fallback_map.get("AFP - APORTE OBLIGATORIO") if "AFP" in nombre_limpio else "0607"
+            elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio:
+                cod_sunat = "0601"
+            elif "PRIMA DE SEGURO" in nombre_limpio or "PRIMA" in nombre_limpio:
+                cod_sunat = "0606"
             else:
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
