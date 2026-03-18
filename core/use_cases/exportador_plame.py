@@ -11,7 +11,12 @@ def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
     empresa = db.query(Empresa).filter_by(id=empresa_id).first()
     horas_base_diaria = getattr(empresa, 'horas_jornada_diaria', 8.0) or 8.0
     
-    trabajadores = db.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO').all()
+    # Filtrar solo trabajadores de PLANILLA (No Locadores)
+    trabajadores = db.query(Trabajador).filter_by(
+        empresa_id=empresa_id, 
+        situacion='ACTIVO',
+        tipo_contrato='PLANILLA'
+    ).all()
     lineas = []
     
     for t in trabajadores:
@@ -83,12 +88,16 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     
     # Cargar mapa de códigos SUNAT de los conceptos de la empresa
     conceptos = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
-    cod_map = {c.nombre: c.codigo_sunat for c in conceptos if c.codigo_sunat}
-    # Conceptos core
+    cod_map = {c.nombre: c.codigo_sunat for c in conceptos}
+    # Conceptos core obligatorios
     cod_map["Asignación Familiar"] = "0201"
     
     for dni, data in auditoria.items():
         t = db.query(Trabajador).filter_by(num_doc=dni, empresa_id=empresa_id).first()
+        
+        # Omitir locadores si por error aparecen en la auditoría de planilla
+        if t and getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR':
+            continue
         tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
         
         ingresos = data.get('ingresos', {})
@@ -100,7 +109,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 cod_sunat = cod_map.get(c_nom)
             
             if not cod_sunat:
-                cod_sunat = "0903" # Fallback a 'Bonificaciones no afectas' para evitar rechazo SUNAT
+                raise ValueError(f"El concepto '{c_nom}' no tiene un Código SUNAT asignado. Debe configurarlo en el Maestro de Conceptos antes de exportar.")
             
             lineas.append(f"{tipo_doc}|{dni}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|")
                 
