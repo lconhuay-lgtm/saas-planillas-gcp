@@ -115,7 +115,9 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         "ONP APORTE": "0607",
         "RENTA 5TA CATEGORÍA": "0605",
         "RENTA 5TA CATEGORIA": "0605",
-        "TARDANZAS": "0704"
+        "TARDANZAS": "0704",
+        "PRÉSTAMO PERSONAL": "0706",
+        "ADELANTO DE SUELDO": "0701"
     }
     
     # 4. Iteración sobre cada trabajador en la planilla cerrada
@@ -181,6 +183,8 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 cod_sunat = "0606"
             elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
                 cod_sunat = "0605"
+            elif "PRÉSTAMO" in nombre_limpio or "PRESTAMO" in nombre_limpio:
+                cod_sunat = "0706" # Otros descuentos no deducibles
             else:
                 # Si no es un concepto core del motor, buscar en el Maestro de Conceptos configurado por el usuario
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)

@@ -277,9 +277,10 @@ def render():
                 col_c.download_button("📄 PDF", data=buf_pdf, file_name=f"Cronograma_{dp['dni']}.pdf", use_container_width=True)
 
                 # Botón para cancelar el préstamo completo (solo supervisores)
-                if rol_usuario == "supervisor" and col_c.button(
-                    "🗑️ Cancelar",
+                if rol_usuario in ["supervisor", "admin"] and col_c.button(
+                    "🚫 Finalizar",
                     key=f"cancel_prest_{dp['id']}",
+                    help="Marca el préstamo como finalizado/cancelado sin borrar datos.",
                     use_container_width=True
                 ):
                     db2 = SessionLocal()
@@ -288,13 +289,35 @@ def render():
                         if pr_obj:
                             pr_obj.estado = "CANCELADO"
                             db2.commit()
-                            st.success("Préstamo cancelado.")
+                            st.success("Préstamo finalizado.")
                             st.rerun()
                     except Exception as e2:
                         db2.rollback()
                         st.error(f"Error: {e2}")
                     finally:
                         db2.close()
+
+                # Botón para ELIMINAR físicamente (SOLO ADMIN)
+                if rol_usuario == "admin" and col_c.button(
+                    "🗑️ Eliminar",
+                    key=f"del_prest_{dp['id']}",
+                    type="secondary",
+                    help="Borra el préstamo y sus cuotas de la base de datos.",
+                    use_container_width=True
+                ):
+                    db_del = SessionLocal()
+                    try:
+                        pr_obj = db_del.query(Prestamo).get(dp['id'])
+                        if pr_obj:
+                            db_del.delete(pr_obj)
+                            db_del.commit()
+                            st.success("Préstamo eliminado físicamente.")
+                            st.rerun()
+                    except Exception as e_del:
+                        db_del.rollback()
+                        st.error(f"Error al eliminar: {e_del}")
+                    finally:
+                        db_del.close()
 
                 st.markdown("---")
                 # Tabla de cuotas
