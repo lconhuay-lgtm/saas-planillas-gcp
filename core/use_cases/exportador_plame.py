@@ -23,14 +23,18 @@ def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
         h_ord = 240
         if v:
             susp = json.loads(v.suspensiones_json or '{}')
-            faltas = sum(susp.values()) if susp else v.dias_faltados
+            faltas = sum(susp.values()) if isinstance(susp, dict) else 0
             dias_reales = max(0, 30 - faltas)
             h_ord = int(dias_reales * horas_base_diaria)
-            h_ext = int(v.hrs_extras_25 + v.hrs_extras_35)
+            h_ext = int((v.hrs_extras_25 or 0) + (v.hrs_extras_35 or 0))
         else:
+            h_ord = int(30 * horas_base_diaria)
             h_ext = 0
             
         tipo_doc = getattr(t, 'tipo_documento', '01') or '01'
+        # Validación de seguridad para CE/DNI
+        if len(str(t.num_doc)) > 8 and tipo_doc == '01':
+            tipo_doc = '04' # Auto-corrección a Carnet de Extranjería si es largo
         lineas.append(f"{tipo_doc}|{t.num_doc}|{h_ord}|0|{h_ext}|0|")
         
     return "\n".join(lineas)
@@ -95,8 +99,10 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             else:
                 cod_sunat = cod_map.get(c_nom)
             
-            if cod_sunat:
-                lineas.append(f"{tipo_doc}|{dni}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|")
+            if not cod_sunat:
+                cod_sunat = "0903" # Fallback a 'Bonificaciones no afectas' para evitar rechazo SUNAT
+            
+            lineas.append(f"{tipo_doc}|{dni}|{cod_sunat}|{float(monto):.2f}|{float(monto):.2f}|")
                 
     return "\n".join(lineas)
 

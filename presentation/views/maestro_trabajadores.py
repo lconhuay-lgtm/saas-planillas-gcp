@@ -361,6 +361,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "tiene_suspension_4ta": tiene_suspension_4ta_val,
             "dias_vacaciones_anuales": dias_vac_input,
             "correo_electronico": u_correo.lower().strip(),
+            "tipo_documento": "04" if t_doc == "CE" else ("07" if t_doc == "PTP" else "01"),
         }
     return None
 
