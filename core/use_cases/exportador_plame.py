@@ -45,7 +45,7 @@ def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
             tipo_doc = '04' # Auto-corrección a Carnet de Extranjería si es largo
         lineas.append(f"{tipo_doc}|{num_doc_limpio}|{h_ord}|0|{h_ext}|0|")
         
-    return "\n".join(lineas)
+    return "\r\n".join(lineas)
 
 def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
     """Genera archivos .SUB y .NOT (Suspensiones)"""
@@ -76,7 +76,7 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
         except:
             continue
             
-    return "\n".join(txt_e15), "\n".join(txt_e16)
+    return "\r\n".join(txt_e15), "\r\n".join(txt_e16)
 
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     """
@@ -214,7 +214,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 # Ensamblado del string final separado por pipes (|) a 2 decimales
                 lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
-    return "\n".join(lineas)
+    return "\r\n".join(lineas)
 
 def generar_zip_plame(empresa_id: int, mes: int, anio: int) -> io.BytesIO:
     """Orquestador principal de PLAME"""
