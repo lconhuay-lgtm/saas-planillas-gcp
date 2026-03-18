@@ -136,20 +136,24 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             tipo_doc = '04'
         
         # 5. Consolidación de ingresos y descuentos en una sola lista iterativa
-        rubros_a_exportar = []
+        # Usamos un diccionario temporal para evitar duplicidad si el usuario creó el concepto manualmente
+        consolidado_conceptos = {}
+        
         if 'ingresos' in data:
-            rubros_a_exportar.extend(data['ingresos'].items())
+            for n, m in data['ingresos'].items():
+                consolidado_conceptos[n.strip().upper()] = m
         
-        # Inyectar explícitamente conceptos de pensión y quinta si no están en la lista de descuentos
-        # Estos vienen del desglose interno del motor de cálculo guardado en el snapshot
         if 'descuentos' in data:
-            rubros_a_exportar.extend(data['descuentos'].items())
+            for n, m in data['descuentos'].items():
+                consolidado_conceptos[n.strip().upper()] = m
         
-        # Rescate de Quinta Categoría si viene en una llave separada del JSON (según la estructura del motor)
+        # Rescate de Quinta Categoría desde su propia llave del motor (Snapshot)
         if 'quinta' in data and isinstance(data['quinta'], dict):
             monto_q = data['quinta'].get('retencion', 0)
             if monto_q > 0:
-                rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
+                consolidado_conceptos["RENTA 5TA CATEGORÍA"] = monto_q
+
+        rubros_a_exportar = list(consolidado_conceptos.items())
             
         # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
         for nombre_concepto, monto in rubros_a_exportar:
