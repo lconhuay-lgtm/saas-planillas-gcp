@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from infrastructure.database.connection import SessionLocal
-from infrastructure.database.models import Concepto
+from infrastructure.database.models import Concepto, PlanillaMensual
 from core.domain.catalogos_sunat import CATALOGO_T22_INGRESOS
+import json
 
 # Codigos SUNAT de conceptos obligatorios por Ley
 _CODIGO_SUELDO   = "0121"
@@ -240,6 +241,45 @@ def render():
                     except Exception as e:
                         db.rollback()
                         st.error(f"Error al actualizar: {e}")
+
+            st.markdown("---")
+            # ── Sección C: Eliminación con Candado de Seguridad ──────────────
+            with st.expander("🗑️ Eliminar Concepto", expanded=False):
+                st.warning("⚠️ Esta acción es permanente. No podrá eliminar conceptos que ya hayan sido utilizados en planillas cerradas.")
+                
+                conceptos_borrables = [c.nombre for c in conceptos_db if c.nombre not in NOMBRES_OBLIGATORIOS]
+                concepto_a_borrar = st.selectbox("Seleccione concepto a eliminar:", [""] + conceptos_borrables, key="sel_borrar")
+                
+                if concepto_a_borrar:
+                    if st.button(f"Confirmar Eliminación de {concepto_a_borrar}", type="secondary", use_container_width=True):
+                        try:
+                            # 🔒 CANDADO: Verificar uso en planillas cerradas
+                            planillas_historicas = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id).all()
+                            en_uso = False
+                            for p in planillas_historicas:
+                                try:
+                                    # Buscamos el nombre del concepto en el snapshot de auditoría
+                                    aud = json.loads(p.auditoria_json or '{}')
+                                    for dni in aud:
+                                        if concepto_a_borrar in aud[dni].get('ingresos', {}) or \
+                                           concepto_a_borrar in aud[dni].get('descuentos', {}):
+                                            en_uso = True
+                                            break
+                                    if en_uso: break
+                                except: continue
+                            
+                            if en_uso:
+                                st.error(f"🚫 No se puede eliminar '{concepto_a_borrar}': ya existen planillas calculadas o cerradas que utilizan este concepto. Se recomienda mantenerlo para integridad del histórico.")
+                            else:
+                                obj_del = db.query(Concepto).filter_by(empresa_id=empresa_id, nombre=concepto_a_borrar).first()
+                                if obj_del:
+                                    db.delete(obj_del)
+                                    db.commit()
+                                    st.session_state['msg_exito_concepto'] = f"🗑️ Concepto '{concepto_a_borrar}' eliminado correctamente."
+                                    st.rerun()
+                        except Exception as e_del:
+                            db.rollback()
+                            st.error(f"Error al eliminar: {e_del}")
 
         # ── TAB 2: NUEVO CONCEPTO ─────────────────────────────────────────────
         with tab2:
