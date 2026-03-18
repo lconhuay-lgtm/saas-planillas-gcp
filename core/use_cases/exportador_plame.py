@@ -193,6 +193,18 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             if monto_q > 0:
                 consolidado_conceptos["RENTA 5TA CATEGORÍA"] = monto_q
 
+        # INYECCIÓN OBLIGATORIA PARA PLAME: Conceptos AFP con monto 0.00 si no existen
+        # El PLAME exige declarar los códigos 0601, 0606 y 0608 si el trabajador está en AFP
+        sistema_p = str(data.get('sistema_pension', '')).upper()
+        if t:
+            sistema_p = str(t.sistema_pension).upper()
+
+        if "AFP" in sistema_p:
+            for concepto_afp in ["APORTE OBLIGATORIO", "PRIMA DE SEGURO", "COMISIÓN"]:
+                key_full = f"{concepto_afp} {sistema_p}"
+                if key_full not in consolidado_conceptos:
+                    consolidado_conceptos[key_full] = 0.00
+
         rubros_a_exportar = list(consolidado_conceptos.items())
             
         # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
@@ -202,9 +214,13 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             except ValueError:
                 continue
                 
-            # Evitar enviar montos nulos o negativos a PLAME
+            # Permitir montos 0.00 únicamente para conceptos de retenciones AFP (Serie 0600) 
+            # para satisfacer la validación del PDT PLAME
             if monto_float <= 0:
-                continue
+                if not (cod_map.get(nombre_limpio) in ["0601", "0606", "0608"] or 
+                        (nombre_limpio.startswith("APORTE") and "AFP" in nombre_limpio) or
+                        "COMISIÓN" in nombre_limpio or "PRIMA" in nombre_limpio):
+                    continue
                 
             # Normalización del nombre del concepto para cruzarlo con los diccionarios
             nombre_limpio = nombre_concepto.strip().upper()
@@ -232,10 +248,16 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             if not cod_sunat:
                 if "ONP" in nombre_limpio:
                     continue
-                raise ValueError(
-                    f"Error de Integridad PLAME: El concepto '{nombre_concepto}' no tiene un código SUNAT "
-                    f"asignado. Por favor, vincúlelo en el Maestro de Conceptos antes de volver a intentar la exportación."
-                )
+                # Si llegamos aquí y es una inyección de AFP con monto 0, le asignamos el código antes de morir
+                if "APORTE OBLIGATORIO" in nombre_limpio: cod_sunat = "0608"
+                elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio: cod_sunat = "0601"
+                elif "PRIMA" in nombre_limpio: cod_sunat = "0606"
+                
+                if not cod_sunat:
+                    raise ValueError(
+                        f"Error de Integridad PLAME: El concepto '{nombre_concepto}' no tiene un código SUNAT "
+                        f"asignado. Por favor, vincúlelo en el Maestro de Conceptos antes de volver a intentar la exportación."
+                    )
             
             # Formateo condicional según el código SUNAT resuelto
             if cod_sunat:
