@@ -90,7 +90,10 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     
     if not planilla:
         return ""
-        
+
+    # Cargar parámetros legales del periodo para reconstrucción de seguros en planillas antiguas
+    param = db.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+    
     # Carga del JSON en memoria. No se altera la base de datos bajo ninguna circunstancia.
     auditoria = json.loads(planilla.auditoria_json or '{}')
     lineas = []
@@ -147,7 +150,42 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         
         if 'descuentos' in data:
             for n, m in data['descuentos'].items():
-                consolidado_conceptos[n.strip().upper()] = m
+                nombre_d = n.strip().upper()
+                monto_d = float(m)
+                
+                # RECONSTRUCCIÓN DINÁMICA DE SEGURO PARA PLANILLAS ANTIGUAS
+                # Si el nombre empieza con "APORTE AFP" y no es un desglose ya existente
+                if nombre_d.startswith("APORTE AFP") and "OBLIGATORIO" not in nombre_d and param:
+                    sistema = nombre_d.replace("APORTE ", "") # "AFP INTEGRA"
+                    prefijo = ""
+                    if "HABITAT" in sistema: prefijo = "h_"
+                    elif "INTEGRA" in sistema: prefijo = "i_"
+                    elif "PRIMA" in sistema: prefijo = "p_"
+                    elif "PROFUTURO" in sistema: prefijo = "pr_"
+                    
+                    if prefijo:
+                        t_ap = getattr(param, prefijo + "ap", 10.0) / 100
+                        t_pr = getattr(param, prefijo + "pr", 1.84) / 100
+                        t_fl = getattr(param, prefijo + "fl", 1.55) / 100
+                        t_mx = getattr(param, prefijo + "mx", 0.0) / 100
+                        
+                        # Determinar si el trabajador usaba mixta o flujo (desde el snapshot si es posible)
+                        t_com = t_mx if data.get('comision_afp') == "MIXTA" else t_fl
+                        t_total_afp = t_ap + t_pr + t_com
+                        
+                        # Desglosar proporcionalmente basado en la base imponible guardada
+                        base_imponible = float(data.get('base_afp', 0) or (monto_d / t_total_afp if t_total_afp > 0 else 0))
+                        if base_imponible > 0:
+                            m_ap = round(base_imponible * t_ap, 2)
+                            m_pr = round(min(base_imponible, param.tope_afp or 999999) * t_pr, 2)
+                            m_co = round(monto_d - m_ap - m_pr, 2)
+                            
+                            consolidado_conceptos[f"APORTE OBLIGATORIO {sistema}"] = m_ap
+                            consolidado_conceptos[f"PRIMA DE SEGURO {sistema}"] = m_pr
+                            consolidado_conceptos[f"COMISIÓN {sistema}"] = m_co
+                            continue # Evitar agregar el consolidado original
+                
+                consolidado_conceptos[nombre_d] = monto_d
         
         # Rescate de Quinta Categoría desde su propia llave del motor (Snapshot)
         if 'quinta' in data and isinstance(data['quinta'], dict):
