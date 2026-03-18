@@ -165,12 +165,12 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             # Normalización del nombre del concepto para cruzarlo con los diccionarios
             nombre_limpio = nombre_concepto.strip().upper()
             
-            # Determinación del código SUNAT: Primero BD, luego Fallback de sistema
+            # Determinación del código SUNAT: Prioridad absoluta a mapeo de sistema para conceptos core
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
             elif "APORTE OBLIGATORIO" in nombre_limpio or "APORTE ONP" in nombre_limpio:
-                cod_sunat = fallback_map.get("AFP - APORTE OBLIGATORIO") if "AFP" in nombre_limpio else "0607"
+                cod_sunat = "0608" if "AFP" in nombre_limpio else "0607"
             elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio:
                 cod_sunat = "0601"
             elif "PRIMA DE SEGURO" in nombre_limpio or "PRIMA" in nombre_limpio:
@@ -178,6 +178,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
                 cod_sunat = "0605"
             else:
+                # Si no es un concepto core del motor, buscar en el Maestro de Conceptos configurado por el usuario
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
             # Impedir la exportación si el concepto no está mapeado
