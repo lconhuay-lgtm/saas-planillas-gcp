@@ -79,7 +79,7 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
     return "\r\n".join(txt_e15), "\r\n".join(txt_e16)
 
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
-    """Genera archivo .REM con asignación directa de códigos SUNAT para pensiones y 5ta."""
+    """Genera archivo .REM con asignación directa y tríada de AFP obligatoria en cero."""
     planilla = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
     if not planilla: return ""
         
@@ -104,10 +104,10 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         tipo_doc = getattr(t, 'tipo_documento', '01') if t else '01'
         if len(dni_limpio) > 8 and tipo_doc == '01': tipo_doc = '04'
         
-        # Estructura: (Nombre, Monto, Codigo_Sunat_Preasignado_O_None)
+        # Estructura: (Nombre, Monto, Codigo_Sunat_Preasignado)
         rubros_a_exportar = []
         
-        # 1. Ingresos y Descuentos Normales (Requieren búsqueda en diccionario)
+        # 1. Ingresos y Descuentos Normales
         for nombre, monto in data.get('ingresos', {}).items():
             rubros_a_exportar.append((nombre, monto, None))
         for nombre, monto in data.get('descuentos', {}).items():
@@ -144,7 +144,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             
             nombre_limpio = str(nombre_concepto).strip().upper()
             
-            # Resolver Código: Usar el preasignado, o buscar en diccionarios
+            # Resolver Código
             if cod_preasignado:
                 cod_sunat = cod_preasignado
             elif nombre_limpio.startswith("SUELDO BASE"):
@@ -158,8 +158,8 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             if cod_sunat:
                 cod_str = str(cod_sunat).strip()
                 
-                # Ignorar montos 0, EXCEPTO 0601 y 0605
-                if monto_float <= 0 and cod_str not in ["0601", "0605"]:
+                # Ignorar montos 0, EXCEPTO la tríada AFP y la 5ta
+                if monto_float <= 0 and cod_str not in ["0601", "0605", "0606", "0608"]:
                     continue
                     
                 codigos_procesados.add(cod_str)
@@ -174,13 +174,19 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                     
                 lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
-        # 5. Inyecciones obligatorias
+        # 5. INYECCIONES OBLIGATORIAS FINALES
+        # Renta de 5ta (0605) es obligatoria para todos
         if "0605" not in codigos_procesados:
             lineas.append(f"{tipo_doc}|{dni_limpio}|0605|0.00|0.00|")
             
+        # Tríada de AFP (0608, 0606, 0601) obligatoria si pertenece al Sistema Privado de Pensiones
         sistema_pension = str(getattr(t, 'sistema_pension', '')).upper() if t else ""
-        if "AFP" in sistema_pension and "0601" not in codigos_procesados:
-            lineas.append(f"{tipo_doc}|{dni_limpio}|0601|0.00|0.00|")
+        if "AFP" in sistema_pension:
+            for cod_afp in ["0608", "0606", "0601"]:
+                if cod_afp not in codigos_procesados:
+                    lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_afp}|0.00|0.00|")
+                
+    return "\r\n".join(lineas)
                 
     # Retorno con salto de línea estándar de Windows para lectura correcta en PLAME
     return "\r\n".join(lineas)
