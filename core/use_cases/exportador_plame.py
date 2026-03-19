@@ -3,7 +3,7 @@ import zipfile
 import json
 import pandas as pd
 from sqlalchemy.orm import Session
-from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto, ParametroLegal
+from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto
 
 def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
     """Genera archivo .JOR (Jornada Laboral)"""
@@ -81,7 +81,7 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     """
     Genera el archivo .REM (Remuneraciones, Tributos y Descuentos).
-    Aplica directrices de PLAME y mapeo retroactivo de códigos SUNAT 100% en memoria.
+    Lee estrictamente el snapshot de la planilla sin recalcular montos, garantizando inmutabilidad.
     """
     # 1. Consulta de solo lectura del histórico inmutable de la planilla
     planilla = db.query(PlanillaMensual).filter_by(
@@ -90,20 +90,16 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     
     if not planilla:
         return ""
-
-    # Cargar parámetros legales del periodo para reconstrucción de seguros en planillas antiguas
-    param = db.query(ParametroLegal).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-    
-    # Carga del JSON en memoria. No se altera la base de datos bajo ninguna circunstancia.
+        
+    # Carga del JSON en memoria.
     auditoria = json.loads(planilla.auditoria_json or '{}')
     lineas = []
     
-    # 2. Creación del Diccionario Traductor Dinámico (Base de datos actual)
+    # 2. Creación del Diccionario Traductor Dinámico
     conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
-    # Normalizamos a mayúsculas y sin espacios a los extremos para cruce exacto
     cod_map = {c.nombre.strip().upper(): c.codigo_sunat for c in conceptos_bd if c.codigo_sunat}
     
-    # 3. Diccionario Fallback de Rescate (Para planillas históricas o conceptos del motor base)
+    # 3. Diccionario Fallback de Rescate para mapear los conceptos generados por el motor de cálculo
     fallback_map = {
         "SUELDO BASE": "0121",
         "ASIGNACIÓN FAMILIAR": "0201",
@@ -120,160 +116,72 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         "RENTA 5TA CATEGORIA": "0605",
         "TARDANZAS": "0704",
         "PRÉSTAMO PERSONAL": "0706",
+        "PRESTAMO PERSONAL": "0706",
         "ADELANTO DE SUELDO": "0701"
     }
     
-    # 4. Iteración sobre cada trabajador en la planilla cerrada
+    # 4. Iteración sobre cada trabajador
     for dni_original, data in auditoria.items():
-        # Limpieza AGRESIVA del DNI en memoria (reemplaza cualquier espacio, no solo extremos)
+        # Limpieza AGRESIVA del DNI (reemplaza cualquier espacio)
         dni_limpio = "".join(str(dni_original).split())
         
-        # Búsqueda segura del trabajador usando el DNI sanitizado temporalmente
         t = db.query(Trabajador).filter_by(num_doc=dni_limpio, empresa_id=empresa_id).first()
         
-        # Se excluyen los locadores (Cuarta categoría se declara en otro archivo)
         if t and getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR':
             continue
             
         tipo_doc = getattr(t, 'tipo_documento', '01') if t else '01'
-        # Auto-corrección robusta para CE (04) si el DNI es largo y estaba como '01'
         if len(dni_limpio) > 8 and tipo_doc == '01':
             tipo_doc = '04'
         
-        # 5. Consolidación de ingresos y descuentos en una sola lista iterativa
-        # Usamos un diccionario temporal para evitar duplicidad si el usuario creó el concepto manualmente
-        consolidado_conceptos = {}
-        
+        # 5. Consolidación de ingresos y descuentos (Lectura directa, CERO recálculos)
+        rubros_a_exportar = []
         if 'ingresos' in data:
-            for n, m in data['ingresos'].items():
-                consolidado_conceptos[n.strip().upper()] = m
-        
+            rubros_a_exportar.extend(data['ingresos'].items())
         if 'descuentos' in data:
-            for n, m in data['descuentos'].items():
-                nombre_d = n.strip().upper()
-                monto_d = float(m)
-                
-                # RECONSTRUCCIÓN DINÁMICA DE SEGURO PARA PLANILLAS ANTIGUAS
-                # Si el nombre empieza con "APORTE AFP" y no es un desglose ya existente
-                if nombre_d.startswith("APORTE AFP") and "OBLIGATORIO" not in nombre_d and param:
-                    sistema = nombre_d.replace("APORTE ", "") # "AFP INTEGRA"
-                    prefijo = ""
-                    if "HABITAT" in sistema: prefijo = "h_"
-                    elif "INTEGRA" in sistema: prefijo = "i_"
-                    elif "PRIMA" in sistema: prefijo = "p_"
-                    elif "PROFUTURO" in sistema: prefijo = "pr_"
-                    
-                    if prefijo:
-                        t_ap = getattr(param, prefijo + "ap", 10.0) / 100
-                        t_pr = getattr(param, prefijo + "pr", 1.84) / 100
-                        t_fl = getattr(param, prefijo + "fl", 1.55) / 100
-                        t_mx = getattr(param, prefijo + "mx", 0.0) / 100
-                        
-                        # Determinar si el trabajador usaba mixta o flujo (desde el snapshot si es posible)
-                        t_com = t_mx if data.get('comision_afp') == "MIXTA" else t_fl
-                        t_total_afp = t_ap + t_pr + t_com
-                        
-                        # Desglosar proporcionalmente basado en la base imponible guardada
-                        base_imponible = float(data.get('base_afp', 0) or (monto_d / t_total_afp if t_total_afp > 0 else 0))
-                        if base_imponible > 0:
-                            m_ap = round(base_imponible * t_ap, 2)
-                            m_pr = round(min(base_imponible, param.tope_afp or 999999) * t_pr, 2)
-                            m_co = round(monto_d - m_ap - m_pr, 2)
-                            
-                            consolidado_conceptos[f"APORTE OBLIGATORIO {sistema}"] = m_ap
-                            consolidado_conceptos[f"PRIMA DE SEGURO {sistema}"] = m_pr
-                            consolidado_conceptos[f"COMISIÓN {sistema}"] = m_co
-                            continue # Evitar agregar el consolidado original
-                
-                consolidado_conceptos[nombre_d] = monto_d
-        
-        # Rescate de Quinta Categoría desde su propia llave del motor (Snapshot)
+            rubros_a_exportar.extend(data['descuentos'].items())
+            
+        # Incluir Quinta Categoría si el motor la guardó en su propio nodo
         if 'quinta' in data and isinstance(data['quinta'], dict):
             monto_q = data['quinta'].get('retencion', 0)
-            if monto_q > 0:
-                consolidado_conceptos["RENTA 5TA CATEGORÍA"] = monto_q
-
-        # INYECCIÓN OBLIGATORIA PARA PLAME: Conceptos AFP con monto 0.00 si no existen
-        # El PLAME exige declarar los códigos 0601, 0606 y 0608 si el trabajador está en AFP
-        sistema_p = str(data.get('sistema_pension', '')).upper()
-        if t:
-            sistema_p = str(t.sistema_pension).upper()
-
-        if "AFP" in sistema_p:
-            for concepto_afp in ["APORTE OBLIGATORIO", "PRIMA DE SEGURO", "COMISIÓN"]:
-                key_full = f"{concepto_afp} {sistema_p}"
-                if key_full not in consolidado_conceptos:
-                    consolidado_conceptos[key_full] = 0.00
-
-        rubros_a_exportar = list(consolidado_conceptos.items())
+            if float(monto_q) > 0:
+                rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
             
-        # 6. Procesamiento y aplicación de reglas matemáticas SUNAT
+        # 6. Procesamiento SUNAT
         for nombre_concepto, monto in rubros_a_exportar:
-            # Normalización del nombre del concepto para cruzarlo con los diccionarios
-            nombre_limpio = nombre_concepto.strip().upper()
+            nombre_limpio = str(nombre_concepto).strip().upper()
 
             try:
                 monto_float = float(monto)
             except ValueError:
                 continue
                 
-            # Permitir montos 0.00 únicamente para conceptos de retenciones AFP (Serie 0600) 
-            # para satisfacer la validación del PDT PLAME
+            # Evitamos enviar líneas en cero a PLAME
             if monto_float <= 0:
-                if not (cod_map.get(nombre_limpio) in ["0601", "0606", "0608"] or 
-                        (nombre_limpio.startswith("APORTE") and "AFP" in nombre_limpio) or
-                        "COMISIÓN" in nombre_limpio or "PRIMA" in nombre_limpio):
-                    continue
+                continue
             
-            # Determinación del código SUNAT: Prioridad absoluta a mapeo de sistema para conceptos core
+            # Determinación del código SUNAT
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
-            elif "APORTE" in nombre_limpio:
-                # NOTA: 0607 (ONP) se excluye ya que PLAME lo autocalcula
-                cod_sunat = "0608" if "AFP" in nombre_limpio else None
-            elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio:
-                cod_sunat = "0601"
-            elif "PRIMA" in nombre_limpio or "AFP SEGURO" in nombre_limpio or "SEGURO" in nombre_limpio:
-                cod_sunat = "0606"
-            elif "RENTA 5TA" in nombre_limpio or "RENTA DE QUINTA" in nombre_limpio or "RETENCION 5TA" in nombre_limpio:
-                cod_sunat = "0605"
-            elif "PRÉSTAMO" in nombre_limpio or "PRESTAMO" in nombre_limpio or "PREST." in nombre_limpio:
-                cod_sunat = "0706" # Otros descuentos no deducibles
             else:
-                # Si no es un concepto core del motor, buscar en el Maestro de Conceptos configurado por el usuario
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
-            # Impedir la exportación si el concepto no está mapeado (excepto ONP que se ignora a propósito)
-            if not cod_sunat:
-                if "ONP" in nombre_limpio:
-                    continue
-                # Si llegamos aquí y es una inyección de AFP con monto 0, le asignamos el código antes de morir
-                if "APORTE OBLIGATORIO" in nombre_limpio: cod_sunat = "0608"
-                elif "COMISIÓN" in nombre_limpio or "COMISION" in nombre_limpio: cod_sunat = "0601"
-                elif "PRIMA" in nombre_limpio: cod_sunat = "0606"
-                
-                if not cod_sunat:
-                    raise ValueError(
-                        f"Error de Integridad PLAME: El concepto '{nombre_concepto}' no tiene un código SUNAT "
-                        f"asignado. Por favor, vincúlelo en el Maestro de Conceptos antes de volver a intentar la exportación."
-                    )
+            # Regla de Exclusión: PLAME autocalcula ONP, por lo que el código 0607 se omite obligatoriamente
+            if cod_sunat == "0607":
+                continue
             
-            # Formateo condicional según el código SUNAT resuelto
             if cod_sunat:
                 cod_str = str(cod_sunat).strip()
                 
-                # Regla Estricta PLAME: Si el código pertenece a la serie 700 (Deducciones/Adelantos)
-                # o a la serie 600 de RETENCIONES (Pensiones/5ta), el devengado DEBE ser 0.00 para no inflar bases.
+                # Regla PLAME: Retenciones (06) y Deducciones (07) van con devengado 0.00
                 if cod_str.startswith("07") or cod_str.startswith("06"):
                     monto_devengado = 0.00
                     monto_pagado = monto_float
                 else:
-                    # Para ingresos (series 01, 02, 03, 04, 05, 09) se envían ambos montos
                     monto_devengado = monto_float
                     monto_pagado = monto_float
                     
-                # Ensamblado del string final con terminación CRLF
                 lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
     return "\r\n".join(lineas)
