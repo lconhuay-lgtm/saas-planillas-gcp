@@ -130,17 +130,38 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         if len(dni_limpio) > 8 and tipo_doc == '01':
             tipo_doc = '04'
         
-        # 3. Consolidación de ingresos y descuentos
+        # 3. Consolidación de ingresos y descuentos (Unificación de nodos del JSON)
         rubros_a_exportar = []
         if 'ingresos' in data:
             rubros_a_exportar.extend(data['ingresos'].items())
         if 'descuentos' in data:
             rubros_a_exportar.extend(data['descuentos'].items())
             
+        # EXTRAER PENSIONES (AFP/ONP) DESDE EL NODO ESPECÍFICO DEL JSON
+        pensiones = data.get('detalle_pensiones', {})
+        if pensiones:
+            tipo_pen = pensiones.get('tipo', '')
+            desglose = pensiones.get('desglose', {})
+            if tipo_pen == 'AFP':
+                if 'aporte' in desglose:
+                    rubros_a_exportar.append(("AFP - APORTE OBLIGATORIO", desglose['aporte']))
+                if 'comision' in desglose:
+                    rubros_a_exportar.append(("AFP - COMISIÓN", desglose['comision']))
+                if 'prima' in desglose:
+                    rubros_a_exportar.append(("AFP - PRIMA DE SEGURO", desglose['prima']))
+            elif tipo_pen == 'ONP':
+                if 'aporte' in desglose:
+                    rubros_a_exportar.append(("ONP - APORTE", desglose['aporte']))
+                    
+        # EXTRAER QUINTA CATEGORÍA DESDE SU NODO ESPECÍFICO (COMPATIBILIDAD HISTÓRICA)
+        monto_q = 0
         if 'quinta' in data and isinstance(data['quinta'], dict):
             monto_q = data['quinta'].get('retencion', 0)
-            if float(monto_q) > 0:
-                rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
+        elif 'retencion_5ta' in data:
+            monto_q = data['retencion_5ta']
+            
+        if float(monto_q) > 0:
+            rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
                 
         # Rastreador de códigos procesados para inyecciones obligatorias
         codigos_procesados = set()
