@@ -81,9 +81,9 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     """
     Genera el archivo .REM (Remuneraciones, Tributos y Descuentos).
-    Lee estrictamente el snapshot de la planilla sin recalcular montos, garantizando inmutabilidad.
+    Lee el snapshot de la planilla, aplica regla de devengados 0.00 para series 06 y 07,
+    e inyecta obligatoriamente 0605 y 0601 si están ausentes.
     """
-    # 1. Consulta de solo lectura del histórico inmutable de la planilla
     planilla = db.query(PlanillaMensual).filter_by(
         empresa_id=empresa_id, periodo_key=periodo_key
     ).first()
@@ -91,15 +91,13 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     if not planilla:
         return ""
         
-    # Carga del JSON en memoria.
     auditoria = json.loads(planilla.auditoria_json or '{}')
     lineas = []
     
-    # 2. Creación del Diccionario Traductor Dinámico
+    # 1. Diccionarios de Mapeo
     conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
     cod_map = {c.nombre.strip().upper(): c.codigo_sunat for c in conceptos_bd if c.codigo_sunat}
     
-    # 3. Diccionario Fallback de Rescate para mapear los conceptos generados por el motor de cálculo
     fallback_map = {
         "SUELDO BASE": "0121",
         "ASIGNACIÓN FAMILIAR": "0201",
@@ -120,11 +118,9 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         "ADELANTO DE SUELDO": "0701"
     }
     
-    # 4. Iteración sobre cada trabajador
+    # 2. Iteración sobre trabajadores del snapshot
     for dni_original, data in auditoria.items():
-        # Limpieza AGRESIVA del DNI (reemplaza cualquier espacio)
         dni_limpio = "".join(str(dni_original).split())
-        
         t = db.query(Trabajador).filter_by(num_doc=dni_limpio, empresa_id=empresa_id).first()
         
         if t and getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR':
@@ -134,20 +130,21 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         if len(dni_limpio) > 8 and tipo_doc == '01':
             tipo_doc = '04'
         
-        # 5. Consolidación de ingresos y descuentos (Lectura directa, CERO recálculos)
+        # 3. Consolidación de ingresos y descuentos
         rubros_a_exportar = []
         if 'ingresos' in data:
             rubros_a_exportar.extend(data['ingresos'].items())
         if 'descuentos' in data:
             rubros_a_exportar.extend(data['descuentos'].items())
             
-        # Incluir Quinta Categoría si el motor la guardó en su propio nodo
         if 'quinta' in data and isinstance(data['quinta'], dict):
             monto_q = data['quinta'].get('retencion', 0)
             if float(monto_q) > 0:
                 rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
+                
+        # Rastreador de códigos procesados para inyecciones obligatorias
+        codigos_procesados = set()
             
-        # 6. Procesamiento SUNAT
         for nombre_concepto, monto in rubros_a_exportar:
             nombre_limpio = str(nombre_concepto).strip().upper()
 
@@ -155,35 +152,49 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 monto_float = float(monto)
             except ValueError:
                 continue
-                
-            # Evitamos enviar líneas en cero a PLAME
-            if monto_float <= 0:
-                continue
             
-            # Determinación del código SUNAT
+            # Asignación de código SUNAT
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
             else:
                 cod_sunat = cod_map.get(nombre_limpio) or fallback_map.get(nombre_limpio)
             
-            # Regla de Exclusión: PLAME autocalcula ONP, por lo que el código 0607 se omite obligatoriamente
+            # PLAME autocalcula ONP, se omite de la exportación
             if cod_sunat == "0607":
                 continue
             
             if cod_sunat:
                 cod_str = str(cod_sunat).strip()
                 
-                # Regla PLAME: Retenciones (06) y Deducciones (07) van con devengado 0.00
+                # Ignorar montos <= 0 EXCEPTO para 0601 y 0605 que PLAME exige reportar obligatoriamente
+                if monto_float <= 0 and cod_str not in ["0601", "0605"]:
+                    continue
+                    
+                codigos_procesados.add(cod_str)
+                
+                # REGLA ESTRICTA: Series 0600 (Retenciones) y 0700 (Deducciones) llevan devengado 0.00
                 if cod_str.startswith("07") or cod_str.startswith("06"):
                     monto_devengado = 0.00
                     monto_pagado = monto_float
                 else:
+                    # Ingresos (Serie 100-500)
                     monto_devengado = monto_float
                     monto_pagado = monto_float
                     
                 lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
+        # 4. INYECCIÓN POST-PROCESAMIENTO PARA PLAME
+        # Renta de 5ta (0605) es obligatoria para todos
+        if "0605" not in codigos_procesados:
+            lineas.append(f"{tipo_doc}|{dni_limpio}|0605|0.00|0.00|")
+            
+        # Comisión AFP (0601) es obligatoria SOLO si el trabajador pertenece al Sistema Privado de Pensiones
+        sistema_pension = str(getattr(t, 'sistema_pension', '')).upper() if t else ""
+        if "AFP" in sistema_pension and "0601" not in codigos_procesados:
+            lineas.append(f"{tipo_doc}|{dni_limpio}|0601|0.00|0.00|")
+                
+    # Retorno con salto de línea estándar de Windows para lectura correcta en PLAME
     return "\r\n".join(lineas)
 
 def generar_zip_plame(empresa_id: int, mes: int, anio: int) -> io.BytesIO:
