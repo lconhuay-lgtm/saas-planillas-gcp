@@ -1,26 +1,21 @@
-Actúa como un Ingeniero de Software Senior. Debemos ajustar la función generar_txt_e18 en el archivo core/use_cases/exportador_plame.py para cumplir con las validaciones estrictas de SUNAT respecto a los montos en cero y la estructura de devengados/pagados para las retenciones.
+Actúa como un Ingeniero de Software Senior. Debemos ajustar la función generar_txt_e18 en el archivo core/use_cases/exportador_plame.py para corregir la omisión de los conceptos de AFP y 5ta Categoría originada por la estructura jerárquica del JSON de auditoría.
 
-Reglas de Negocio Estrictas a Implementar:
-
-Regla de Devengados (Series 0600 y 0700): Por requisito del sistema y de SUNAT, todo concepto que sea un descuento o retención (códigos que empiecen con "06" o "07") debe tener obligatoriamente el monto devengado en 0.00, colocando el valor únicamente en la columna de monto pagado.
-
-Inyección de Ceros Obligatorios: El PLAME exige que el concepto 0605 (Renta 5ta) esté presente en el archivo .rem con 0.00 incluso si el trabajador no tuvo retención. De igual manera, exige el código 0601 (AFP Comisión) en 0.00 exclusivamente para los trabajadores afiliados a una AFP.
-
-Inmutabilidad de BD: Solo procesar en memoria (sin db.commit()), usando el auditoria_json histórico.
+El Problema:
+El motor de planillas guarda los conceptos de AFP/ONP y Quinta Categoría en nodos separados dentro del JSON (detalle_pensiones y retencion_5ta o quinta), y no dentro del nodo general de descuentos. La iteración actual solo lee descuentos, ignorando los montos discriminados de pensiones guardados históricamente.
 
 INSTRUCCIÓN EXACTA:
-Abre el archivo core/use_cases/exportador_plame.py y reemplaza ÚNICAMENTE la función generar_txt_e18 por este bloque de código. Asegúrate de mantener la terminación de línea \r\n para compatibilidad con Windows/PLAME:
+Abre el archivo core/use_cases/exportador_plame.py y reemplaza ÚNICAMENTE la función generar_txt_e18 por este código. Este bloque incorpora la extracción de los nodos específicos del JSON y los unifica con los rubros_a_exportar respetando todas las reglas SUNAT sin recalcular:
 
 Python
 import json
 from sqlalchemy.orm import Session
-from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Concepto, ParametroLegal
+from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Concepto
 
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     """
-    Genera el archivo .REM (Remuneraciones, Tributos y Descuentos).
-    Lee el snapshot de la planilla, aplica regla de devengados 0.00 para series 06 y 07,
-    e inyecta obligatoriamente 0605 y 0601 si están ausentes.
+    Genera el archivo .REM extrayendo los aportes previsionales y quinta categoría
+    desde sus propios nodos en el JSON, aplicando la regla de devengados 0.00 para 
+    series 06 y 07, e inyectando 0605 y 0601 si están ausentes.
     """
     planilla = db.query(PlanillaMensual).filter_by(
         empresa_id=empresa_id, periodo_key=periodo_key
@@ -32,7 +27,6 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     auditoria = json.loads(planilla.auditoria_json or '{}')
     lineas = []
     
-    # 1. Diccionarios de Mapeo
     conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
     cod_map = {c.nombre.strip().upper(): c.codigo_sunat for c in conceptos_bd if c.codigo_sunat}
     
@@ -56,7 +50,6 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         "ADELANTO DE SUELDO": "0701"
     }
     
-    # 2. Iteración sobre trabajadores del snapshot
     for dni_original, data in auditoria.items():
         dni_limpio = "".join(str(dni_original).split())
         t = db.query(Trabajador).filter_by(num_doc=dni_limpio, empresa_id=empresa_id).first()
@@ -68,19 +61,39 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         if len(dni_limpio) > 8 and tipo_doc == '01':
             tipo_doc = '04'
         
-        # 3. Consolidación de ingresos y descuentos
         rubros_a_exportar = []
         if 'ingresos' in data:
             rubros_a_exportar.extend(data['ingresos'].items())
         if 'descuentos' in data:
             rubros_a_exportar.extend(data['descuentos'].items())
             
+        # EXTRAER PENSIONES (AFP/ONP) DESDE EL NODO ESPECÍFICO DEL JSON
+        pensiones = data.get('detalle_pensiones', {})
+        if pensiones:
+            tipo_pen = pensiones.get('tipo', '')
+            desglose = pensiones.get('desglose', {})
+            if tipo_pen == 'AFP':
+                if 'aporte' in desglose:
+                    rubros_a_exportar.append(("AFP - APORTE OBLIGATORIO", desglose['aporte']))
+                if 'comision' in desglose:
+                    rubros_a_exportar.append(("AFP - COMISIÓN", desglose['comision']))
+                if 'prima' in desglose:
+                    rubros_a_exportar.append(("AFP - PRIMA DE SEGURO", desglose['prima']))
+            elif tipo_pen == 'ONP':
+                if 'aporte' in desglose:
+                    rubros_a_exportar.append(("ONP - APORTE", desglose['aporte']))
+                    
+        # EXTRAER QUINTA CATEGORÍA DESDE SU NODO ESPECÍFICO (COMPATIBILIDAD CON ESTRUCTURAS HISTÓRICAS)
+        monto_q = 0
         if 'quinta' in data and isinstance(data['quinta'], dict):
             monto_q = data['quinta'].get('retencion', 0)
-            if float(monto_q) > 0:
-                rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
+        elif 'retencion_5ta' in data:
+            monto_q = data['retencion_5ta']
+            
+        if float(monto_q) > 0:
+            rubros_a_exportar.append(("RENTA 5TA CATEGORÍA", monto_q))
                 
-        # Rastreador de códigos procesados para inyecciones obligatorias
+        # Rastreador de códigos procesados
         codigos_procesados = set()
             
         for nombre_concepto, monto in rubros_a_exportar:
@@ -91,7 +104,6 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             except ValueError:
                 continue
             
-            # Asignación de código SUNAT
             cod_sunat = None
             if nombre_limpio.startswith("SUELDO BASE") or "SUELDO BASICO" in nombre_limpio:
                 cod_sunat = "0121"
@@ -122,7 +134,7 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                     
                 lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_str}|{monto_devengado:.2f}|{monto_pagado:.2f}|")
                 
-        # 4. INYECCIÓN POST-PROCESAMIENTO PARA PLAME
+        # INYECCIÓN POST-PROCESAMIENTO PARA PLAME
         # Renta de 5ta (0605) es obligatoria para todos
         if "0605" not in codigos_procesados:
             lineas.append(f"{tipo_doc}|{dni_limpio}|0605|0.00|0.00|")
@@ -132,5 +144,4 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
         if "AFP" in sistema_pension and "0601" not in codigos_procesados:
             lineas.append(f"{tipo_doc}|{dni_limpio}|0601|0.00|0.00|")
                 
-    # Retorno con salto de línea estándar de Windows para lectura correcta en PLAME
     return "\r\n".join(lineas)
