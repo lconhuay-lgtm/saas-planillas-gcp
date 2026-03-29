@@ -71,6 +71,7 @@ class Trabajador(Base):
     
     # Datos Personales
     tipo_doc = Column(String(20))    # 01=DNI, 04=CE, 07=Pasaporte
+    tipo_documento = Column(String(2), default='01', server_default='01') # NUEVA COLUMNA PARA PLAME
     num_doc = Column(String(20), index=True, nullable=False)
     # Nombre completo (campo original — mantener para compat. con registros existentes)
     nombres = Column(String(200), nullable=False)
