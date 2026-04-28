@@ -208,6 +208,16 @@ def _calcular_haberes(
     pago_he_35 = float(row.get('Hrs Extras 35%', 0.0)) * (valor_hora * 1.35)
 
     ingresos_totales    = sueldo_computable + monto_asig_fam + pago_he_25 + pago_he_35
+
+    # Valorización de ausencias remuneradas: repone los días pagados que el sistema
+    # descontó de sueldo_computable porque el trabajador no los laboró físicamente.
+    # Códigos: 20=Descanso Médico, 23=Vacaciones, 25=Licencia con Goce.
+    monto_vacaciones    = int(susp_dict.get("23", 0)) * valor_dia
+    monto_descanso_med  = int(susp_dict.get("20", 0)) * valor_dia
+    monto_lic_goce      = int(susp_dict.get("25", 0)) * valor_dia
+    monto_ausencias_rem = monto_vacaciones + monto_descanso_med + monto_lic_goce
+    ingresos_totales   += monto_ausencias_rem
+
     # Solo tardanzas como descuento manual; las faltas ya reducen sueldo_computable
     descuentos_manuales = dscto_tardanzas
     desglose_descuentos = {}
@@ -249,6 +259,12 @@ def _calcular_haberes(
         desglose_ingresos["Horas Extras 25%"] = round(pago_he_25, 2)
     if pago_he_35 > 0:
         desglose_ingresos["Horas Extras 35%"] = round(pago_he_35, 2)
+    if monto_vacaciones > 0:
+        desglose_ingresos["Descanso Vacacional"] = round(monto_vacaciones, 2)
+    if monto_descanso_med > 0:
+        desglose_ingresos["Descanso Médico"] = round(monto_descanso_med, 2)
+    if monto_lic_goce > 0:
+        desglose_ingresos["Licencia con Goce"] = round(monto_lic_goce, 2)
 
     # --- CONCEPTOS DINÁMICOS Y GRATIFICACIONES ---
     monto_grati = float(row.get('GRATIFICACION (JUL/DIC)', 0.0))
@@ -314,6 +330,7 @@ def _calcular_haberes(
         'base_essalud':         base_essalud,
         'base_quinta_mes':      base_quinta_mes,
         'conceptos_recuperados_5ta': conceptos_recuperados_5ta,
+        'monto_ausencias_rem':  monto_ausencias_rem,
         'desglose_ingresos':    desglose_ingresos,
         'desglose_descuentos':  desglose_descuentos,
         'obs_trab':             obs_trab,
@@ -393,6 +410,7 @@ def _calcular_quinta(
     historico_quinta, dni_trabajador,
     sueldo_base_nominal, sueldo_computable, conceptos_recuperados_5ta,
     total_ausencias, ingreso_este_mes, factor_g,
+    monto_ausencias_rem=0.0,
 ) -> dict:
     """
     Calcula la retención de 5ta categoría con proyección anual (método PLAME).
@@ -403,10 +421,18 @@ def _calcular_quinta(
     hist_q = historico_quinta.get(str(dni_trabajador), {})
     rem_previa_historica = hist_q.get('rem_previa', 0.0)
     retencion_previa_historica = hist_q.get('ret_previa', 0.0)
-    # Proyección usa sueldo nominal completo: las ausencias son excepcionales
+    # Proyección usa sueldo nominal completo: las ausencias son excepcionales.
+    # Se resta monto_ausencias_rem para evitar doble conteo: esos días ya están
+    # en base_quinta_mes (valorizados en _calcular_haberes) y también aparecen
+    # en (sueldo_base_nominal - sueldo_computable).
     base_quinta_proyeccion = base_quinta_mes
     if total_ausencias > 0 or ingreso_este_mes:
-        base_quinta_proyeccion = round(base_quinta_mes + (sueldo_base_nominal - sueldo_computable) + conceptos_recuperados_5ta, 2)
+        base_quinta_proyeccion = round(
+            base_quinta_mes
+            + (sueldo_base_nominal - sueldo_computable)
+            - monto_ausencias_rem
+            + conceptos_recuperados_5ta, 2
+        )
     proyeccion_gratis = 0.0
     if mes_idx <= 6:
         proyeccion_gratis = base_quinta_proyeccion * 2 * factor_g * 1.09
@@ -495,6 +521,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         historico_quinta, dni_trabajador,
         h['sueldo_base_nominal'], h['sueldo_computable'], h['conceptos_recuperados_5ta'],
         h['total_ausencias'], h['ingreso_este_mes'], factor_g,
+        h['monto_ausencias_rem'],
     )
 
     # Desempaquetar variables mutables (se modifican en ajustes de auditoría)
@@ -569,7 +596,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         "Seg. Social": etiqueta_seguro,
         "Sueldo Base": round(h['sueldo_computable'], 2),
         "Asig. Fam.": round(h['monto_asig_fam'], 2),
-        "Otros Ingresos": round((h['pago_he_25'] + h['pago_he_35'] + h['monto_grati'] + h['otros_ingresos']), 2),
+        "Otros Ingresos": round((h['pago_he_25'] + h['pago_he_35'] + h['monto_grati'] + h['otros_ingresos'] + h['monto_ausencias_rem']), 2),
         "TOTAL BRUTO": round(h['ingresos_totales'], 2),
         "ONP (13%)": round(pen['dscto_onp'], 2),
         "AFP Aporte": round(pen['aporte_afp'], 2),
