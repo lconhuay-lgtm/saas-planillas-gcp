@@ -3,7 +3,8 @@ import pandas as pd
 import json
 import io
 from infrastructure.database.connection import SessionLocal
-from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Prestamo
+from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Prestamo, RegistroVacaciones
+from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 
 def render():
     empresa_id = st.session_state.get('empresa_activa_id')
@@ -102,12 +103,34 @@ def render():
         alert_col1, alert_col2 = st.columns(2)
         
         with alert_col1:
-            # Alerta de Documentos Vencidos (Simulado para BI)
-            st.markdown('<div style="background-color:#F8FAFC; padding:15px; border-radius:10px; border-left: 5px solid #1E4D8C;">'
-                        '<strong>Estado de Cumplimiento:</strong><br>'
-                        '✅ Todos los CUSPP están debidamente registrados.<br>'
-                        '✅ Parámetros de AFP actualizados para el mes vigente.'
-                        '</div>', unsafe_allow_html=True)
+            # Alerta de Riesgo Vacacional (D.L. 713)
+            planilleros = db.query(Trabajador).filter_by(
+                empresa_id=empresa_id, 
+                tipo_contrato='PLANILLA', 
+                situacion='ACTIVO'
+            ).all()
+            
+            alertas_vac = []
+            for t in planilleros:
+                res = calcular_saldo_vacacional(t, t.vacaciones)
+                if res['nivel_alerta'] in ["🔴 PELIGRO INMINENTE", "🟡 RIESGO MODERADO"]:
+                    alertas_vac.append({
+                        "nombre": t.nombres,
+                        "saldo": res['saldo'],
+                        "meses": res['meses_para_vencimiento'],
+                        "nivel": res['nivel_alerta']
+                    })
+            
+            if alertas_vac:
+                st.error("🚨 **Riesgo de Indemnización Vacacional**")
+                for a in alertas_vac:
+                    st.markdown(f"- **{a['nombre']}**: {a['saldo']} días pendientes. Vence en {a['meses']} meses. ({a['nivel']})")
+            else:
+                st.markdown('<div style="background-color:#F8FAFC; padding:15px; border-radius:10px; border-left: 5px solid #1E4D8C;">'
+                            '<strong>Estado de Cumplimiento:</strong><br>'
+                            '✅ Vacaciones: No se detectan riesgos de indemnización.<br>'
+                            '✅ Parámetros de AFP actualizados para el mes vigente.'
+                            '</div>', unsafe_allow_html=True)
         
         with alert_col2:
             # Alerta de Préstamos

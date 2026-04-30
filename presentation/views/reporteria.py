@@ -7,6 +7,7 @@ from datetime import datetime
 import calendar as _cal
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import PlanillaMensual, Trabajador, VariablesMes, ParametroLegal
+from core.use_cases.exportador_plame import generar_zip_plame
 
 _MESES_ES = {
     "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
@@ -23,11 +24,12 @@ def _periodo_legible(periodo_key: str) -> str:
 
 def render():
     st.title("📊 Reportería de Planillas")
-    st.markdown("Consulta el historial completo de planillas procesadas y cerradas de la empresa activa.")
-    st.markdown("---")
-
+    
     empresa_id     = st.session_state.get('empresa_activa_id')
     empresa_nombre = st.session_state.get('empresa_activa_nombre', '')
+
+    st.markdown("Consulta el historial completo de planillas procesadas y cerradas de la empresa activa.")
+    st.markdown("---")
 
     if not empresa_id:
         st.error("Seleccione una empresa en el Dashboard para acceder a reportería.")
@@ -123,6 +125,29 @@ def render():
     try:
         df_planilla = pd.read_json(io.StringIO(planilla_sel.resultado_json), orient='records')
         auditoria   = json.loads(planilla_sel.auditoria_json)
+
+        # Filtro de seguridad: Si el trabajador fue cesado ANTES de este periodo, 
+        # no debería visualizarse en el detalle, incluso si está en el JSON.
+        mes_p, anio_p = int(sel_key[:2]), int(sel_key[3:])
+        
+        # Recuperar trabajadores de la BD para verificar fecha de cese real
+        db_aux = SessionLocal()
+        trab_cesados = db_aux.query(Trabajador).filter(
+            Trabajador.empresa_id == empresa_id,
+            Trabajador.fecha_cese != None
+        ).all()
+        db_aux.close()
+
+        dnis_a_omitir = [
+            t.num_doc for t in trab_cesados 
+            if (t.fecha_cese.year < anio_p or (t.fecha_cese.year == anio_p and t.fecha_cese.month < mes_p))
+        ]
+
+        if dnis_a_omitir and not df_planilla.empty:
+            df_planilla = df_planilla[~df_planilla['DNI'].isin(dnis_a_omitir)]
+            # También limpiar la auditoría para consistencia
+            auditoria = {dni: info for dni, info in auditoria.items() if dni not in dnis_a_omitir}
+
     except Exception as e:
         st.error(f"No se pudo deserializar la planilla: {e}")
         return
@@ -257,23 +282,19 @@ def render():
             col_p, col_a = st.columns(2)
 
             with col_p:
-                st.markdown("#### Archivos PLAME (T-REGISTRO)")
-                st.caption("Genera .REM · .JOR · .SNL comprimidos en un ZIP con nombre oficial SUNAT.")
-                if st.button("Generar ZIP PLAME", type="primary", use_container_width=True, key="btn_plame"):
+                st.markdown("#### Archivos PLAME (Estructura PDT)")
+                st.caption("Genera el paquete oficial (.rem, .jor, .sub, .not) con validación estricta de códigos SUNAT.")
+                if st.button("🚀 Generar ZIP PLAME Profesional", type="primary", use_container_width=True, key="btn_plame_v2"):
                     try:
-                        from core.use_cases.generador_interfaces import generar_archivos_plame
-                        buf_zip = generar_archivos_plame(
-                            empresa_ruc=empresa_ruc, anio=anio_num, mes=mes_num,
-                            df_planilla=df_planilla, auditoria_data=auditoria,
-                            df_trabajadores=df_trabajadores_rep,
-                            df_conceptos=df_conceptos_rep,
-                        )
-                        nombre_zip = f"0601{anio_num}{str(mes_num).zfill(2)}{empresa_ruc.zfill(11)}.zip"
-                        st.download_button(
-                            f"⬇️ Descargar {nombre_zip}", data=buf_zip,
-                            file_name=nombre_zip, mime="application/zip",
-                            use_container_width=True, key="dl_plame",
-                        )
+                        with st.spinner("Procesando histórico y validando conceptos..."):
+                            buf_zip = generar_zip_plame(empresa_id, mes_num, anio_num)
+                            nombre_zip = f"0601{anio_num}{str(mes_num).zfill(2)}{empresa_ruc.zfill(11)}.zip"
+                            st.success(f"✅ Archivo listo para declarar.")
+                            st.download_button(
+                                f"⬇️ Descargar {nombre_zip}", data=buf_zip,
+                                file_name=nombre_zip, mime="application/zip",
+                                use_container_width=True, key="dl_plame_v2",
+                            )
                     except ValueError as ve:
                         st.error(f"❌ {ve}")
                     except Exception as ex:
@@ -311,6 +332,10 @@ def render():
         hon_json_str = getattr(planilla_sel, 'honorarios_json', '[]') or '[]'
         try:
             df_loc_rep = pd.read_json(io.StringIO(hon_json_str), orient='records')
+            
+            # Aplicar mismo filtro de seguridad para locadores cesados
+            if not df_loc_rep.empty and dnis_a_omitir:
+                df_loc_rep = df_loc_rep[~df_loc_rep['DNI'].isin(dnis_a_omitir)]
         except Exception:
             df_loc_rep = pd.DataFrame()
 
@@ -595,3 +620,4 @@ def render():
                     st.warning("Seleccione al menos una columna.")
         except Exception as e_pers:
             st.error(f"Error generando Reporte Personalizado: {e_pers}")
+

@@ -16,9 +16,11 @@ openpyxl>=3.1.0
 
 # Generación de PDFs
 reportlab>=4.1.0
+PyPDF2>=3.0.0
 
 # HTTP para integración con APIs externas (SUNAT/RENIEC)
 requests>=2.31.0
 
 # Pruebas automatizadas
 pytest>=8.1.1
+

@@ -22,13 +22,28 @@ def render():
         st.error("⚠️ Por favor, seleccione una empresa primero.")
         return
 
-    # 1. SELECTOR DE PERIODO
+    # 1. SELECTOR DE PERIODO (Auto-selección de próximo abierto)
     st.subheader("Selección de Periodo a Configurar")
-    col_m, col_a = st.columns([2, 1])
     
-    mes_actual_idx = date.today().month - 1
-    mes_seleccionado = col_m.selectbox("Mes", MESES, index=mes_actual_idx)
-    anio_seleccionado = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=1)
+    default_mes_idx = date.today().month - 1
+    anio_default = date.today().year
+    
+    try:
+        from infrastructure.database.models import PlanillaMensual
+        cerrados = db.query(PlanillaMensual.periodo_key).filter_by(
+            empresa_id=empresa_id, estado='CERRADA'
+        ).all()
+        periodos_cerrados = [c[0] for c in cerrados]
+        for idx in range(12):
+            p_key = f"{(idx + 1):02d}-{anio_default}"
+            if p_key not in periodos_cerrados:
+                default_mes_idx = idx
+                break
+    except: pass
+
+    col_m, col_a = st.columns([2, 1])
+    mes_seleccionado = col_m.selectbox("Mes", MESES, index=default_mes_idx)
+    anio_seleccionado = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=[2025, 2026, 2027, 2028].index(anio_default))
     
     periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
     

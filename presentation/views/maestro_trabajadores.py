@@ -119,6 +119,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         ap_pat_val, ap_mat_val, nombres_val = "", "", ""
         f_nac_val = datetime.date(1990, 1, 1)
         cargo_val, f_ingreso_val = "", datetime.date.today()
+        f_cese_val = None
         s_base_val, situacion_val = 1025.0, "ACTIVO"
         s_pension_val, t_comision_val, cuspp_val = "ONP", "FLUJO", ""
         banco_val, n_cuenta_val, cci_val = "BCP", "", ""
@@ -126,6 +127,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         seguro_social_val = "ESSALUD"
         tipo_contrato_val = "PLANILLA"
         suspension_4ta_val = False
+        # Default según régimen para nuevos ingresos
+        dias_vac_val = 15 if "Micro" in regimen_empresa or "Pequeña" in regimen_empresa else 30
     else:
         opciones_doc = ["DNI", "CE", "PTP"]
         t_doc_val = t.tipo_doc if t.tipo_doc in opciones_doc else "DNI"
@@ -146,6 +149,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         situacion_val = t.situacion or "ACTIVO"
         s_pension_val = t.sistema_pension or "ONP"
         t_comision_val = t.comision_afp or "FLUJO"
+        f_cese_val = getattr(t, 'fecha_cese', None)
         cuspp_val = t.cuspp or ""
         banco_val = t.banco or "BCP"
         n_cuenta_val = t.cuenta_bancaria or ""
@@ -155,6 +159,8 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
         tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
         suspension_4ta_val = bool(getattr(t, 'tiene_suspension_4ta', False) or False)
+        dias_vac_val = getattr(t, 'dias_vacaciones_anuales', 30)
+        correo_val = getattr(t, 'correo_electronico', '') or ''
 
     # ── Tipo de Contratación ───────────────────────────────────────────────────
     opciones_contrato = ["Planilla (5ta Categoría)", "Locador de Servicio (4ta Categoría)"]
@@ -181,8 +187,10 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     t_doc = c1.selectbox("Tipo Doc.", opciones_doc,
                          index=opciones_doc.index(t_doc_val),
                          key=f"{key_prefix}_tdoc", disabled=es_edicion)
-    n_doc = c2.text_input("Nro. Documento", value=n_doc_val, max_chars=12,
+    n_doc_input = c2.text_input("Nro. Documento", value=n_doc_val, max_chars=12,
                           key=f"{key_prefix}_ndoc", disabled=es_edicion)
+    # Limpieza inmediata de espacios para evitar errores de digitación
+    n_doc = n_doc_input.replace(" ", "").strip()
     f_nac = c5.date_input("Fecha Nacimiento*", value=f_nac_val,
                           min_value=datetime.date(1920, 1, 1),
                           max_value=datetime.date.today(),
@@ -205,24 +213,38 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     nombres = r3.text_input("Nombres (sin apellidos)*", value=nombres_auto.upper(),
                             key=f"{key_prefix}_nombres")
+    
+    u_correo = st.text_input("Correo Electrónico Corporativo/Personal", 
+                             value=correo_val if t else "", 
+                             key=f"{key_prefix}_correo",
+                             placeholder="ejemplo@empresa.com")
 
     # Nombre completo para compatibilidad con el resto del sistema
     nombre_completo = f"{ap_pat} {ap_mat} {nombres}".strip()
 
     # ── Sección 2: Información Laboral ─────────────────────────────────────────
     st.markdown("##### 2. Información Laboral")
-    cl1, cl2, cl3, cl4 = st.columns(4)
+    cl1, cl2, cl3, cl4, cl5 = st.columns(5)
     cargo = cl1.text_input("Cargo / Puesto", value=cargo_val, key=f"{key_prefix}_cargo")
     f_ingreso = cl2.date_input("Fecha de Ingreso*", value=f_ingreso_val,
                                min_value=datetime.date(1960, 1, 1),
                                max_value=datetime.date.today(),
                                key=f"{key_prefix}_fingreso")
+    f_cese = cl3.date_input("Fecha de Cese", value=f_cese_val,
+                            min_value=datetime.date(1960, 1, 1),
+                            max_value=datetime.date(2050, 12, 31),
+                            key=f"{key_prefix}_fcese")
     label_sueldo = "Honorario Base Mensual (S/)*" if es_locador else "Sueldo Mensual (S/)*"
     min_sueldo = 0.01 if es_locador else 1025.0
-    s_base = cl3.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
+    s_base = cl4.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
                               value=max(min_sueldo, s_base_val), key=f"{key_prefix}_sbase")
+    
+    dias_vac_input = cl5.number_input("Días Vac. Año", min_value=0, max_value=60, 
+                                     value=dias_vac_val if not es_locador else 0,
+                                     disabled=es_locador, key=f"{key_prefix}_vac")
+
     opciones_sit = ["ACTIVO", "CESADO", "SUSPENDIDO"]
-    situacion = cl4.selectbox("Situación", opciones_sit,
+    situacion = cl5.selectbox("Situación", opciones_sit,
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
                               key=f"{key_prefix}_situacion")
 
@@ -354,6 +376,9 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "eps": eps_afecto,
             "seguro_social": seguro_social,
             "tiene_suspension_4ta": tiene_suspension_4ta_val,
+            "dias_vacaciones_anuales": dias_vac_input,
+            "correo_electronico": u_correo.lower().strip(),
+            "tipo_documento": "04" if t_doc == "CE" else ("07" if t_doc == "PTP" else "01"),
         }
     return None
 
@@ -391,7 +416,7 @@ def render():
         st.caption(f"DNI/CE: {t_edit.num_doc}  —  Solo se pueden editar datos laborales y de contacto.")
         st.markdown("---")
 
-        datos = _render_form_trabajador(t=t_edit, key_prefix="edit")
+        datos = _render_form_trabajador(t=t_edit, key_prefix=f"edit_{t_edit.id}")
         if datos:
             try:
                 campos_editables = {k: v for k, v in datos.items() if k not in ("tipo_doc", "num_doc")}
@@ -449,7 +474,13 @@ def render():
                 with st.container(border=True):
                     c1, c2, c3, c4, c_pdf, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.5, 0.5, 0.5])
                     tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
-                    c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
+                    
+                    # Alerta visual de correo faltante
+                    alerta_mail = ""
+                    if not getattr(t, 'correo_electronico', None):
+                        alerta_mail = " 🔴 `Sin Correo`"
+                        
+                    c1.markdown(f"**{t.nombres}** `{tipo_badge}`{alerta_mail}")
                     c2.markdown(f"Doc: `{t.num_doc}`")
                     c3.markdown(f"{t.cargo or '—'}")
                     c4.markdown(f"S/ {t.sueldo_base:,.2f}")

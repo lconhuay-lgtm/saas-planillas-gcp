@@ -84,7 +84,6 @@ def cargar_trabajadores_df(db, empresa_id, mes_calc: int = 0, anio_calc: int = 0
             )
             .all()
         )
-
     rows = []
     for t in trabajadores:
         rows.append({

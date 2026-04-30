@@ -401,8 +401,14 @@ def _calcular_pension(
                 obs_trab.append(f"Prima AFP exonerada (Edad límite superada)")
 
             comis_afp = base_afp_onp * tasa_comision
-            total_afp_ind = aporte_afp + prima_afp + comis_afp
-            if total_afp_ind > 0: desglose_descuentos[f'Aporte {sistema}'] = round(total_afp_ind, 2)
+            
+            # Desglose detallado para PLAME profesional
+            if aporte_afp > 0:
+                desglose_descuentos[f'APORTE OBLIGATORIO {sistema}'] = round(aporte_afp, 2)
+            if prima_afp > 0:
+                desglose_descuentos[f'PRIMA DE SEGURO {sistema}'] = round(prima_afp, 2)
+            if comis_afp > 0:
+                desglose_descuentos[f'COMISIÓN {sistema}'] = round(comis_afp, 2)
 
     total_pension = dscto_onp + aporte_afp + prima_afp + comis_afp
     return {
@@ -493,11 +499,17 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
                               historico_quinta, cuotas_del_mes, notas_gestion_map,
                               conceptos_empresa, factor_g):
     """Calcula los campos de planilla para un trabajador. Retorna (fila_dict, auditoria_dict) o None."""
-    # Filtro de fecha de ingreso para personal en planilla
+    # Filtro de fecha de ingreso y cese para personal en planilla
     try:
         fi_p = pd.to_datetime(row['Fecha Ingreso'])
         if fi_p.year > anio_calc or (fi_p.year == anio_calc and fi_p.month > mes_calc):
             return None
+        
+        # Si tiene fecha de cese y es anterior al mes de cálculo, omitir
+        if 'fecha_cese' in row and pd.notna(row['fecha_cese']):
+            fc_p = pd.to_datetime(row['fecha_cese'])
+            if fc_p.year < anio_calc or (fc_p.year == anio_calc and fc_p.month < mes_calc):
+                return None
     except: pass
 
     dni_trabajador = row['Num. Doc.']
@@ -731,61 +743,110 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
     except Exception:
         locadores_pendientes = False
 
+    # El rol 'consulta' (Auditor) no tiene acceso a botones de acción
+    es_auditor = st.session_state.get('usuario_rol') == 'consulta'
+
     if es_cerrada:
         st.error(f"🔒 La planilla del periodo **{periodo_key}** ya fue CERRADA y contabilizada. Vaya al final de la página para reabrirla si tiene permisos de Supervisor.")
-    elif locadores_pendientes:
-        st.warning(
-            f"⚠️ **CÁLCULO BLOQUEADO:** Hay locadores de servicio sin asistencia guardada para **{periodo_key}**. "
-            f"Vaya al módulo **'Ingreso de Asistencias'** → pestaña **'🧾 2. Valorización de Locadores'** "
-            f"y guarde antes de ejecutar el motor de planilla."
-        )
-    st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")
-    if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True):
-        st.session_state['ultima_planilla_calculada'] = True
-        resultados = []
-        auditoria_data = {}
-
-        mes_calc  = int(mes_seleccionado[:2])
-        anio_calc = int(anio_seleccionado)
-        contexto  = _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado)
-        seq_num   = 0
-        for index, row in df_planilla.iterrows():
-            resultado = _calcular_fila_trabajador(
-                row, p, horas_jornada, mes_calc, anio_calc, mes_idx, periodo_key,
-                contexto['historico_quinta'], contexto['cuotas_del_mes'],
-                contexto['notas_gestion_map'], conceptos_empresa, contexto['factor_g'],
+    elif es_auditor:
+        st.warning("🧐 **Modo Auditoría:** Usted tiene acceso de solo lectura. No puede ejecutar cálculos ni modificar datos.")
+    else:
+        if locadores_pendientes:
+            st.warning(
+                f"⚠️ **CÁLCULO BLOQUEADO:** Hay locadores de servicio sin asistencia guardada para **{periodo_key}**. "
+                f"Vaya al módulo **'Ingreso de Asistencias'** → pestaña **'🧾 2. Valorización de Locadores'** "
+                f"y guarde antes de ejecutar el motor de planilla."
             )
-            if resultado is not None:
-                seq_num += 1
-                fila, auditoria_row = resultado
-                fila['N°'] = seq_num
-                resultados.append(fila)
-                auditoria_data[fila['DNI']] = auditoria_row
-
-        df_resultados = pd.DataFrame(resultados).fillna(0.0)
-        
-        # --- FILA DE TOTALES DINÁMICA ---
-        cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI", "Observaciones"}
-        totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": "", "Observaciones": ""}
-        for col in df_resultados.columns:
-            if col not in cols_texto:
-                totales[col] = df_resultados[col].sum()
+        st.info("💡 **Novedad:** Ahora puedes configurar qué conceptos dinámicos (ej. Movilidad) se reducen automáticamente por faltas desde el **Maestro de Conceptos**.")
+        if st.button(f"🚀 Ejecutar Motor de Planilla - {periodo_key}", type="primary", use_container_width=True, disabled=es_auditor):
+            st.session_state['ultima_planilla_calculada'] = True
             
-        df_resultados = pd.concat([df_resultados, pd.DataFrame([totales])], ignore_index=True)
-        st.session_state['res_planilla'] = df_resultados
-        st.session_state['auditoria_data'] = auditoria_data
+            # INICIALIZACIÓN GARANTIZADA
+            resultados = []
+            auditoria_data = {}
 
-        # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
+            mes_calc  = int(mes_seleccionado[:2])
+            anio_calc = int(anio_seleccionado)
+            contexto  = _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado)
+            seq_num   = 0
+            for index, row in df_planilla.iterrows():
+                resultado = _calcular_fila_trabajador(
+                    row, p, horas_jornada, mes_calc, anio_calc, mes_idx, periodo_key,
+                    contexto['historico_quinta'], contexto['cuotas_del_mes'],
+                    contexto['notas_gestion_map'], conceptos_empresa, contexto['factor_g'],
+                )
+                if resultado is not None:
+                    seq_num += 1
+                    fila, auditoria_row = resultado
+                    fila['N°'] = seq_num
+                    resultados.append(fila)
+                    auditoria_data[fila['DNI']] = auditoria_row
+
+            df_resultados = pd.DataFrame(resultados).fillna(0.0)
+            
+            # --- FILA DE TOTALES DINÁMICA ---
+            cols_texto = {"N°", "DNI", "Apellidos y Nombres", "Sist. Pensión", "Seg. Social", "Banco", "N° Cuenta", "CCI", "Observaciones"}
+            totales = {"N°": "", "DNI": "", "Apellidos y Nombres": "TOTALES", "Sist. Pensión": "", "Seg. Social": "", "Banco": "", "N° Cuenta": "", "CCI": "", "Observaciones": ""}
+            for col in df_resultados.columns:
+                if col not in cols_texto:
+                    totales[col] = df_resultados[col].sum()
+                
+            df_resultados = pd.concat([df_resultados, pd.DataFrame([totales])], ignore_index=True)
+            st.session_state['res_planilla'] = df_resultados
+            st.session_state['auditoria_data'] = auditoria_data
+
+            # --- GUARDAR PLANILLA EN NEON (persistencia real) ---
+            try:
+                db2 = SessionLocal()
+                
+                # Validación Maestra Date-Aware: ¿Existen locadores activos para ESTE periodo?
+                _m_calc = int(periodo_key[:2])
+                _a_calc = int(periodo_key[3:])
+                _locs_all = db2.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR").all()
+                n_loc_periodo = len([
+                    l for l in _locs_all 
+                    if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_calc or (l.fecha_ingreso.year == _a_calc and l.fecha_ingreso.month > _m_calc)))
+                ])
+                
+                df_loc_to_save = st.session_state.get(f'res_honorarios_{periodo_key}')
+                
+                # Si el maestro dice 0, forzamos un DataFrame vacío para LIMPIAR el snapshot fantasma
+                if n_loc_periodo == 0:
+                    df_loc_to_save = pd.DataFrame()
+                elif df_loc_to_save is None:
+                    # Recuperar snapshot existente para no perderlo si el usuario solo calculó la 5ta categoría
+                    p_exist = db2.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+                    if p_exist and p_exist.honorarios_json and p_exist.honorarios_json != '[]':
+                        df_loc_to_save = pd.read_json(io.StringIO(p_exist.honorarios_json), orient='records')
+
+                guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_to_save)
+                db2.close()
+            except Exception as e:
+                st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
+
+    # --- RECUPERACIÓN DE SNAPSHOT (Inmutabilidad para Periodos Cerrados) ---
+    # Si es un periodo CERRADO, forzamos la carga desde la base de datos y bloqueamos recálculos
+    if es_cerrada:
         try:
-            db2 = SessionLocal()
-            df_loc_state = st.session_state.get(f'res_honorarios_{periodo_key}')
-            guardar_planilla(db2, empresa_id, periodo_key, df_resultados, auditoria_data, df_locadores=df_loc_state)
-            db2.close()
+            db3 = SessionLocal()
+            df_rec, aud_rec = cargar_planilla_guardada(db3, empresa_id, periodo_key)
+            # Cargar también snapshot de honorarios
+            p_snap = db3.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            db3.close()
+            
+            if df_rec is not None and not df_rec.empty:
+                st.session_state['res_planilla'] = df_rec
+                st.session_state['auditoria_data'] = aud_rec
+                st.session_state['ultima_planilla_calculada'] = True
+                
+                # Sincronizar snapshot de honorarios si existe
+                if p_snap and p_snap.honorarios_json and p_snap.honorarios_json != '[]':
+                    st.session_state[f'res_honorarios_{periodo_key}'] = pd.read_json(io.StringIO(p_snap.honorarios_json), orient='records')
         except Exception as e:
-            st.warning(f"Planilla calculada pero no se pudo guardar en la nube: {e}")
-
-    # --- INTENTAR RECUPERAR PLANILLA GUARDADA EN NEON SI NO HAY EN SESSION ---
-    if not st.session_state.get('ultima_planilla_calculada', False):
+            st.error(f"Error al cargar snapshot inmutable: {e}")
+    
+    # Para periodos ABIERTOS, intentar recuperar si no se ha calculado en esta sesión
+    elif not st.session_state.get('ultima_planilla_calculada', False):
         try:
             db3 = SessionLocal()
             df_rec, aud_rec = cargar_planilla_guardada(db3, empresa_id, periodo_key)
@@ -794,8 +855,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
                 st.session_state['res_planilla'] = df_rec
                 st.session_state['auditoria_data'] = aud_rec
                 st.session_state['ultima_planilla_calculada'] = True
-                if not es_cerrada:
-                    st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
+                st.info(f"📂 Planilla de **{periodo_key}** recuperada desde la nube.")
         except Exception:
             pass
 
@@ -854,10 +914,11 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
             .all()
         )
 
-        # Filtrar locadores que ya iniciaron labores en o antes del periodo de cálculo
+        # Filtrar locadores por fecha de ingreso y fecha de cese
         locadores = [
             l for l in locadores_db
             if not (l.fecha_ingreso and (l.fecha_ingreso.year > anio_int or (l.fecha_ingreso.year == anio_int and l.fecha_ingreso.month > mes_int)))
+            and not (getattr(l, 'fecha_cese', None) and (l.fecha_cese.year < anio_int or (l.fecha_cese.year == anio_int and l.fecha_cese.month < mes_int)))
         ]
 
         if not locadores:
@@ -901,9 +962,12 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
 
     st.caption(f"Tasa retención 4ta Cat.: **{tasa_4ta}%** | Tope mínimo para retener: **S/ {tope_4ta:,.2f}**")
 
+    # El rol 'consulta' (Auditor) no tiene acceso a botones de acción
+    es_auditor = st.session_state.get('usuario_rol') == 'consulta'
+
     if es_cerrada:
         st.error(f"🔒 Los honorarios del periodo **{periodo_key}** ya fueron CERRADOS.")
-    elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True):
+    elif st.button(f"🧮 Calcular Honorarios - {periodo_key}", type="primary", use_container_width=True, disabled=es_auditor):
         resultados_loc = []
         
         # Precargar cuotas de préstamos para locadores
@@ -1053,39 +1117,69 @@ def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
     df_loc_glob  = st.session_state.get(f'res_honorarios_{periodo_key}', pd.DataFrame())
     aud_glob  = st.session_state.get('auditoria_data', {})
 
+    # Rescate de snapshot en BD si la sesión está vacía (tras reapertura)
+    if df_loc_glob.empty:
+        try:
+            _db_s = SessionLocal()
+            _p_s = _db_s.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            if _p_s and _p_s.honorarios_json and _p_s.honorarios_json != '[]':
+                df_loc_glob = pd.read_json(io.StringIO(_p_s.honorarios_json), orient='records')
+                st.session_state[f'res_honorarios_{periodo_key}'] = df_loc_glob
+            _db_s.close()
+        except: pass
+
     if not df_plan_glob.empty or not df_loc_glob.empty:
         st.markdown("---")
         st.subheader("🏦 Gestión de Tesorería")
 
+        # Verificar estado de cierre
+        es_cerrada_teso = False
         try:
-            _db_chk = SessionLocal()
-            _n_loc_glob = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').count()
-            _db_chk.close()
-        except:
-            _n_loc_glob = 0
-        
-        if _n_loc_glob > 0 and df_loc_glob.empty:
-            st.warning("⚠️ Locadores detectados. Calcule Honorarios en la pestaña '🧾 2' para un reporte completo.")
-        
-        try:
-            buf_teso_f = generar_pdf_tesoreria(
-                df_planilla=df_plan_glob if not df_plan_glob.empty else None,
-                df_loc=df_loc_glob if not df_loc_glob.empty else None,
-                empresa_nombre=empresa_nombre,
-                periodo_key=periodo_key,
-                auditoria_data=aud_glob,
-                empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
-            )
-            st.download_button(
-                "🏦 Descargar Reporte de Tesorería (PDF)",
-                data=buf_teso_f,
-                file_name=f"TESORERIA_{periodo_key}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary",
-                key="btn_teso_global_v_final"
-            )
-        except Exception: pass
+            db_ct = SessionLocal()
+            plan_ct = db_ct.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+            if plan_ct and getattr(plan_ct, 'estado', 'ABIERTA') == 'CERRADA':
+                es_cerrada_teso = True
+            db_ct.close()
+        except: pass
+
+        if es_cerrada_teso:
+            st.info("ℹ️ **Periodo Cerrado:** Para obtener el reporte oficial de tesorería y archivos bancarios inmutables, debe ir al módulo **Reportería**, pestaña **🏦 Reporte Tesorería**.")
+        else:
+            try:
+                _db_chk = SessionLocal()
+                _m_t = int(periodo_key[:2])
+                _a_t = int(periodo_key[3:])
+                _locs_t = _db_chk.query(Trabajador).filter_by(empresa_id=empresa_id, situacion='ACTIVO', tipo_contrato='LOCADOR').all()
+                _n_loc_glob = len([
+                    l for l in _locs_t 
+                    if not (l.fecha_ingreso and (l.fecha_ingreso.year > _a_t or (l.fecha_ingreso.year == _a_t and l.fecha_ingreso.month > _m_t)))
+                ])
+                _db_chk.close()
+            except:
+                _n_loc_glob = 0
+            
+            if _n_loc_glob > 0 and df_loc_glob.empty:
+                st.warning("⚠️ **Reporte Bloqueado:** Se detectaron locadores activos en este periodo sin honorarios calculados. Calcule en la pestaña '🧾 2' para habilitar el reporte de tesorería.")
+            else:
+                try:
+                    buf_teso_f = generar_pdf_tesoreria(
+                        df_planilla=df_plan_glob if not df_plan_glob.empty else None,
+                        df_loc=df_loc_glob if not df_loc_glob.empty else None,
+                        empresa_nombre=empresa_nombre,
+                        periodo_key=periodo_key,
+                        auditoria_data=aud_glob,
+                        empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                    )
+                    st.download_button(
+                        "🏦 Descargar Reporte de Tesorería (PDF)",
+                        data=buf_teso_f,
+                        file_name=f"TESORERIA_{periodo_key}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary",
+                        key="btn_teso_global_v_final"
+                    )
+                except Exception: pass
 
         st.markdown("---")
         with st.expander("🔍 Panel de Auditoría Tributaria y Liquidaciones", expanded=False):
@@ -1260,12 +1354,18 @@ def _render_seccion_cierre(empresa_id, empresa_nombre, periodo_key):
                         ).first()
 
                         # ── VALIDACIÓN ENTERPRISE: ambos motores deben estar calculados ──────────
-                        _n_planilla = db_up.query(Trabajador).filter_by(
-                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="PLANILLA"
-                        ).count()
-                        _n_locs = db_up.query(Trabajador).filter_by(
-                            empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR"
-                        ).count()
+                        _m_c = int(periodo_key[:2])
+                        _a_c = int(periodo_key[3:])
+                        _trab_all = db_up.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO").all()
+                        
+                        _n_planilla = len([
+                            t for t in _trab_all 
+                            if t.tipo_contrato == "PLANILLA" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
+                        ])
+                        _n_locs = len([
+                            t for t in _trab_all 
+                            if t.tipo_contrato == "LOCADOR" and not (t.fecha_ingreso and (t.fecha_ingreso.year > _a_c or (t.fecha_ingreso.year == _a_c and t.fecha_ingreso.month > _m_c)))
+                        ])
 
                         _resultado_snap = (getattr(p, 'resultado_json', '[]') if p else '[]') or '[]'
                         _hon_snap       = (getattr(p, 'honorarios_json', '[]') if p else '[]') or '[]'
@@ -1345,10 +1445,36 @@ def render():
     empresa_id     = st.session_state.get('empresa_activa_id')
     empresa_nombre = st.session_state.get('empresa_activa_nombre')
 
+    # Determinar automáticamente el próximo periodo abierto
+    default_mes_idx = datetime.now().month - 1
+    anio_default = datetime.now().year
+    if empresa_id:
+        try:
+            db_auto = SessionLocal()
+            cerrados = db_auto.query(PlanillaMensual.periodo_key).filter_by(
+                empresa_id=empresa_id, estado='CERRADA'
+            ).all()
+            db_auto.close()
+            periodos_cerrados = [c[0] for c in cerrados]
+            
+            # Buscar el primer mes del año actual que no esté cerrado
+            for idx in range(12):
+                p_key = f"{(idx + 1):02d}-{anio_default}"
+                if p_key not in periodos_cerrados:
+                    default_mes_idx = idx
+                    break
+        except: pass
+
     col_m, col_a = st.columns([2, 1])
-    mes_seleccionado  = col_m.selectbox("Mes de Cálculo", MESES, key="calc_mes")
-    anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=1, key="calc_anio")
+    mes_seleccionado  = col_m.selectbox("Mes de Cálculo", MESES, index=default_mes_idx, key="calc_mes")
+    anio_seleccionado = col_a.selectbox("Año de Cálculo", [2025, 2026, 2027, 2028], index=[2025, 2026, 2027, 2028].index(anio_default), key="calc_anio")
     periodo_key = f"{mes_seleccionado[:2]}-{anio_seleccionado}"
+
+    # Limpieza de estados si el usuario cambia de periodo para evitar contaminación de datos
+    if st.session_state.get('_ultimo_periodo_visto') != periodo_key:
+        for key in ['res_planilla', 'auditoria_data', 'ultima_planilla_calculada']:
+            st.session_state.pop(key, None)
+        st.session_state['_ultimo_periodo_visto'] = periodo_key
     mes_idx = MESES.index(mes_seleccionado) + 1
 
     tab_plan, tab_hon = st.tabs(["📋 1. Planilla (5ta Categoría)", "🧾 2. Honorarios (4ta Categoría)"])

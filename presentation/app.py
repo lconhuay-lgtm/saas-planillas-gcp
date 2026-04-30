@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="Sistema de Planillas SaaS",
     page_icon="💼",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 from presentation.session_state import inicializar_estado
@@ -29,6 +29,7 @@ from presentation.views import parametros_legales
 from presentation.views import maestro_conceptos
 from presentation.views import emision_boletas
 from presentation.views import reporteria
+from presentation.views import kardex_vacaciones
 from presentation.views import login
 from presentation.views import prestamos
 from presentation.views import gestion_usuarios
@@ -43,8 +44,12 @@ if not st.session_state.get('_tablas_verificadas'):
         Base.metadata.create_all(bind=engine)
         # Migraciones incrementales: añaden columnas nuevas sin borrar datos
         _migraciones = [
-            # Usuarios y Accesos
+            # Usuarios y Accesos (Enterprise Pack)
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email VARCHAR(100)",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_login TIMESTAMP",
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acceso_total BOOLEAN DEFAULT false",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS modulos_restringidos TEXT DEFAULT '[]'",
+            "ALTER TABLE usuario_empresa ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             # Seguro social (lote anterior)
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
             # Cierre de planilla (lote anterior)
@@ -78,6 +83,18 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS prorrateable_por_asistencia BOOLEAN DEFAULT false",
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS factor_proyeccion_grati FLOAT",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS honorarios_json TEXT DEFAULT '[]'",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS fecha_cese DATE",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS dias_vacaciones_anuales INTEGER DEFAULT 30",
+            "CREATE TABLE IF NOT EXISTS registro_vacaciones (id SERIAL PRIMARY KEY, trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id), fecha_inicio DATE NOT NULL, fecha_fin DATE NOT NULL, dias_gozados INTEGER DEFAULT 0, dias_vendidos INTEGER DEFAULT 0, periodo_origen VARCHAR(50), estado VARCHAR(20) DEFAULT 'APROBADO', observaciones TEXT, fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS correo_electronico VARCHAR(100)",
+            "CREATE TABLE IF NOT EXISTS log_envio_boletas (id SERIAL PRIMARY KEY, empresa_id INTEGER NOT NULL REFERENCES empresas(id), trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id), periodo_key VARCHAR(10) NOT NULL, correo_destino VARCHAR(100) NOT NULL, estado VARCHAR(20) DEFAULT 'ENVIADO', mensaje_error TEXT, fecha_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS modulos_restringidos TEXT DEFAULT '[]'",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_host VARCHAR(100)",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_port INTEGER DEFAULT 587",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_user VARCHAR(100)",
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_pass VARCHAR(100)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(2) DEFAULT '01'",
+            "UPDATE trabajadores SET num_doc = REPLACE(num_doc, ' ', '') WHERE num_doc LIKE '% %'",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -95,7 +112,7 @@ st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
-        header {visibility: hidden;}
+        header[data-testid="stHeader"] { height: 0px; background: transparent; }
         .stButton>button {
             border-radius: 5px;
             font-weight: bold;
@@ -148,6 +165,9 @@ elif vista_actual == "Emisión de Boletas":
 
 elif vista_actual == "Reportería":
     reporteria.render()
+
+elif vista_actual == "Kardex de Vacaciones":
+    kardex_vacaciones.render()
 
 elif vista_actual == "Préstamos y Descuentos":
     prestamos.render()

@@ -14,10 +14,10 @@ CONCEPTOS_FIJOS = {"SUELDO BASICO", "ASIGNACION FAMILIAR"}
 # Suspensiones que se muestran como columnas directas en la grilla de tiempos
 # Formato: (codigo_sunat, etiqueta_columna)
 SUSPENSIONES_GRILLA = [
-    ("07", "Faltas Injust. (07)"),
-    ("20", "Desc. Médico (20)"),
-    ("23", "Vacaciones (23)"),
-    ("16", "Lic. s/Haber (16)"),
+    ("07", "S.P. FALTA NO JUSTIFICADA (07)"),
+    ("20", "S.I. ENFERM/ACCIDENTE (20)"),
+    ("23", "S.I. DESCANSO VACACIONAL (23)"),
+    ("05", "S.P. PERMISO SIN GOCE (05)"),
 ]
 _COL_A_COD = {etq: cod for cod, etq in SUSPENSIONES_GRILLA}
 
@@ -46,9 +46,28 @@ def render():
     st.title("Ingreso de Asistencias y Variables")
     st.markdown(f"**Empresa:** {empresa_nombre}")
 
+    # Determinar automáticamente el próximo periodo abierto
+    from datetime import datetime
+    default_mes_idx = datetime.now().month - 1
+    anio_default = datetime.now().year
+    
+    try:
+        db_auto = SessionLocal()
+        cerrados = db_auto.query(PlanillaMensual.periodo_key).filter_by(
+            empresa_id=empresa_id, estado='CERRADA'
+        ).all()
+        db_auto.close()
+        periodos_cerrados = [c[0] for c in cerrados]
+        for idx in range(12):
+            p_key = f"{(idx + 1):02d}-{anio_default}"
+            if p_key not in periodos_cerrados:
+                default_mes_idx = idx
+                break
+    except: pass
+
     col_m, col_a = st.columns([2, 1])
-    mes_sel  = col_m.selectbox("Mes", MESES, key="asis_mes")
-    anio_sel = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=1, key="asis_anio")
+    mes_sel  = col_m.selectbox("Mes", MESES, index=default_mes_idx, key="asis_mes")
+    anio_sel = col_a.selectbox("Año", [2025, 2026, 2027, 2028], index=[2025, 2026, 2027, 2028].index(anio_default), key="asis_anio")
     periodo_key = f"{mes_sel[:2]}-{anio_sel}"
     st.markdown("---")
 
@@ -75,7 +94,16 @@ def render():
             if not t.fecha_ingreso:
                 return True
             fi = t.fecha_ingreso
-            return not (fi.year > _anio_asis or (fi.year == _anio_asis and fi.month > _mes_asis))
+            # Validar ingreso posterior
+            ingreso_posterior = (fi.year > _anio_asis or (fi.year == _anio_asis and fi.month > _mes_asis))
+            
+            # Validar cese previo
+            cese_previo = False
+            fc = getattr(t, 'fecha_cese', None)
+            if fc:
+                cese_previo = (fc.year < _anio_asis or (fc.year == _anio_asis and fc.month < _mes_asis))
+            
+            return not (ingreso_posterior or cese_previo)
 
         planilleros = [t for t in planilleros if _activo_en_periodo(t)]
         locadores   = [t for t in locadores   if _activo_en_periodo(t)]
@@ -97,8 +125,12 @@ def render():
         ).first()
         es_cerrada = planilla_estado is not None and getattr(planilla_estado, 'estado', 'ABIERTA') == 'CERRADA'
 
+        es_auditor = st.session_state.get('usuario_rol') == 'consulta'
+
         if es_cerrada:
             st.error(f"🔒 El periodo **{periodo_key}** está CERRADO. Los datos mostrados son de solo lectura. Solicite a un Supervisor que reabra la planilla si necesita hacer modificaciones.")
+        elif es_auditor:
+            st.warning("🧐 **Modo Auditoría:** No puede modificar las asistencias ni variables de este periodo.")
         elif variables_exist:
             st.info(f"Datos previos cargados para **{periodo_key}**.")
         else:
@@ -251,7 +283,7 @@ def render():
 
                 st.markdown("---")
 
-                if not es_cerrada and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
+                if not es_cerrada and not es_auditor and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
                     try:
                         for _, fila_t in df_t_edit.iterrows():
                             doc     = fila_t["Num. Doc."]

@@ -4,26 +4,30 @@ from datetime import datetime
 from infrastructure.database.connection import Base
 
 
-# TABLA INTERMEDIA PARA PERMISOS DE USUARIOS POR EMPRESA
+# TABLA INTERMEDIA PARA PERMISOS DE USUARIOS POR EMPRESA (Control de Accesos SAP Style)
 class UsuarioEmpresa(Base):
     __tablename__ = "usuario_empresa"
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), primary_key=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), primary_key=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), primary_key=True)
+    fecha_asignacion = Column(DateTime, default=datetime.now)
 
-# 0. TABLA DE USUARIOS DEL SISTEMA
+# 0. TABLA MAESTRA DE USUARIOS (Seguridad Centralizada)
 class Usuario(Base):
     __tablename__ = "usuarios"
 
     id               = Column(Integer, primary_key=True, index=True)
     username         = Column(String(50), unique=True, nullable=False, index=True)
-    password_hash    = Column(String(64), nullable=False)   # SHA-256 hex
-    rol              = Column(String(20), nullable=False)   # admin | analista | supervisor
+    password_hash    = Column(String(64), nullable=False)
+    rol              = Column(String(20), nullable=False)   # admin | supervisor | analista | consulta
     nombre_completo  = Column(String(100), nullable=True)
+    email            = Column(String(100), nullable=True)
     activo           = Column(Boolean, default=True)
-    acceso_total     = Column(Boolean, default=False)       # True: Ve todas las empresas
+    acceso_total     = Column(Boolean, default=False)       # Bypass de seguridad multi-empresa
+    modulos_restringidos = Column(Text, default='[]')       # JSON con lista de módulos bloqueados
+    ultimo_login     = Column(DateTime, nullable=True)
     fecha_registro   = Column(DateTime, default=datetime.now)
 
-    # Relación con empresas autorizadas
+    # Relación jerárquica con empresas (Control de Perímetros)
     empresas_asignadas = relationship("Empresa", secondary="usuario_empresa", backref="usuarios_autorizados")
 
 
@@ -74,6 +78,7 @@ class Trabajador(Base):
     apellido_paterno = Column(String(100), nullable=True)
     apellido_materno = Column(String(100), nullable=True)
     fecha_nac = Column(Date)
+    correo_electronico = Column(String(100), nullable=True)
     
     # Datos Laborales
     cargo = Column(String(100))
@@ -83,6 +88,7 @@ class Trabajador(Base):
     sueldo_base = Column(Float, nullable=False)
     # Tipo de contratación: 'PLANILLA' (5ta Cat.) o 'LOCADOR' (4ta Cat.)
     tipo_contrato = Column(String(20), default='PLANILLA', nullable=False, server_default='PLANILLA')
+    dias_vacaciones_anuales = Column(Integer, default=30)
     
     # Datos Bancarios
     banco = Column(String(100))
@@ -102,6 +108,7 @@ class Trabajador(Base):
     
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="trabajadores")
+    vacaciones = relationship("RegistroVacaciones", backref="trabajador", cascade="all, delete-orphan")
 
 
 # 3. TABLA DE CONCEPTOS REMUNERATIVOS (Ingresos y Descuentos)
@@ -263,3 +270,38 @@ class CuotaPrestamo(Base):
     estado       = Column(String(20), default="PENDIENTE")  # PENDIENTE | PAGADA
 
     prestamo = relationship("Prestamo", back_populates="cuotas")
+
+
+# 8. TABLA DE KARDEX DE VACACIONES
+class RegistroVacaciones(Base):
+    __tablename__ = "registro_vacaciones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    
+    # Rango de fechas
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_fin = Column(Date, nullable=False)
+    
+    # Consumo
+    dias_gozados = Column(Integer, default=0)
+    dias_vendidos = Column(Integer, default=0)
+    
+    # Control
+    periodo_origen = Column(String(50), nullable=True) # Ej: '2024-2025'
+    estado = Column(String(20), default="APROBADO")    # APROBADO | ANULADO
+    observaciones = Column(Text, nullable=True)
+    
+    # Auditoría
+    fecha_registro = Column(DateTime, default=datetime.now)
+
+class LogEnvioBoleta(Base):
+    __tablename__ = "log_envio_boletas"
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+    periodo_key = Column(String(10), nullable=False)
+    correo_destino = Column(String(100), nullable=False)
+    estado = Column(String(20), default="ENVIADO") # ENVIADO | ERROR
+    mensaje_error = Column(Text, nullable=True)
+    fecha_envio = Column(DateTime, default=datetime.now)
