@@ -40,33 +40,57 @@ def cargar_parametros(db, empresa_id, periodo_key) -> dict | None:
     }
 
 
-def cargar_trabajadores_df(db, empresa_id, periodo_key=None) -> pd.DataFrame:
-    """Lee trabajadores activos de Neon y los devuelve como DataFrame compatible."""
-    query = db.query(Trabajador).filter_by(empresa_id=empresa_id, situacion="ACTIVO")
-    
-    query = query.filter(or_(
-        Trabajador.tipo_contrato == 'PLANILLA', 
+def cargar_trabajadores_df(db, empresa_id, mes_calc: int = 0, anio_calc: int = 0) -> pd.DataFrame:
+    """Lee trabajadores activos de Neon y los devuelve como DataFrame compatible.
+    Si se pasan mes_calc/anio_calc, incluye también trabajadores cesados cuya
+    fecha_cese caiga en ese período (para calcular su último mes proporcional).
+    """
+    import calendar as _cal
+    from datetime import date as _date
+    from sqlalchemy import and_
+
+    tipo_planilla = or_(
+        Trabajador.tipo_contrato == 'PLANILLA',
         Trabajador.tipo_contrato == None,
         Trabajador.tipo_contrato == ''
-    ))
-    
-    trabajadores = query.all()
+    )
 
-    # Filtrar por fecha de cese si se especifica el periodo
-    if periodo_key:
-        mes_p = int(periodo_key[:2])
-        anio_p = int(periodo_key[3:])
-        trabajadores = [
-            t for t in trabajadores
-            if not (t.fecha_cese and (t.fecha_cese.year < anio_p or (t.fecha_cese.year == anio_p and t.fecha_cese.month < mes_p)))
-        ]
+    if mes_calc and anio_calc:
+        primer_dia = _date(anio_calc, mes_calc, 1)
+        ultimo_dia = _date(anio_calc, mes_calc, _cal.monthrange(anio_calc, mes_calc)[1])
+        trabajadores = (
+            db.query(Trabajador)
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                tipo_planilla,
+                or_(
+                    Trabajador.situacion == "ACTIVO",
+                    and_(
+                        Trabajador.situacion == "CESADO",
+                        Trabajador.fecha_cese >= primer_dia,
+                        Trabajador.fecha_cese <= ultimo_dia,
+                    )
+                )
+            )
+            .all()
+        )
+    else:
+        trabajadores = (
+            db.query(Trabajador)
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                Trabajador.situacion == "ACTIVO",
+                tipo_planilla,
+            )
+            .all()
+        )
     rows = []
     for t in trabajadores:
         rows.append({
             "Num. Doc.": t.num_doc,
             "Nombres y Apellidos": t.nombres,
             "Fecha Ingreso": t.fecha_ingreso,
-            "fecha_cese": t.fecha_cese,
+            "Fecha Cese": getattr(t, 'fecha_cese', None),
             "Fecha Nacimiento": t.fecha_nac,
             "Sueldo Base": t.sueldo_base,
             "Sistema Pensión": t.sistema_pension or "NO AFECTO",

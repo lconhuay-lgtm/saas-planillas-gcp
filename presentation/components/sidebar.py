@@ -83,9 +83,17 @@ def render_sidebar():
             opciones_base = ["Maestro de Personal"]
         else:
             opciones_base = [
-                "Dashboard Principal", "Parámetros Legales", "Maestro de Personal",
-                "Maestro de Conceptos", "Ingreso de Asistencias", "Kardex de Vacaciones",
-                "Cálculo de Planilla", "Préstamos y Descuentos", "Emisión de Boletas", "Reportería",
+                "Dashboard Principal",
+                "Parámetros Legales",
+                "Maestro de Personal",
+                "Maestro de Conceptos",
+                "Ingreso de Asistencias",
+                "Kardex de Vacaciones",
+                "Cálculo de Planilla",
+                "Préstamos y Descuentos",
+                "Emisión de Boletas",
+                "Reportería",
+                "Liquidación por Cese",
             ]
         
         # Filtrar módulos restringidos

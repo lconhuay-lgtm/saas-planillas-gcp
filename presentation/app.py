@@ -33,6 +33,7 @@ from presentation.views import kardex_vacaciones
 from presentation.views import login
 from presentation.views import prestamos
 from presentation.views import gestion_usuarios
+from presentation.views import liquidacion_cese
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 if not st.session_state.get('_tablas_verificadas'):
@@ -173,3 +174,6 @@ elif vista_actual == "Préstamos y Descuentos":
 
 elif vista_actual == "Gestión de Usuarios":
     gestion_usuarios.render()
+
+elif vista_actual == "Liquidación por Cese":
+    liquidacion_cese.render()
