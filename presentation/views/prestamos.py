@@ -271,10 +271,12 @@ def render():
 
                 # Botones de descarga
                 buf_xl = generar_excel_cronograma(dp, empresa_nombre)
-                col_c.download_button("📊 Excel", data=buf_xl, file_name=f"Cronograma_{dp['dni']}.xlsx", use_container_width=True)
-                
+                col_c.download_button("📊 Excel", data=buf_xl, file_name=f"Cronograma_{dp['dni']}.xlsx",
+                                      key=f"xl_{dp['id']}", use_container_width=True)
+
                 buf_pdf = generar_pdf_cronograma(dp, empresa_nombre)
-                col_c.download_button("📄 PDF", data=buf_pdf, file_name=f"Cronograma_{dp['dni']}.pdf", use_container_width=True)
+                col_c.download_button("📄 PDF", data=buf_pdf, file_name=f"Cronograma_{dp['dni']}.pdf",
+                                      key=f"pdf_{dp['id']}", use_container_width=True)
 
                 # Botón para ELIMINAR físicamente (ESTRICTAMENTE SOLO ADMIN)
                 if rol_usuario == "admin" and col_c.button(
