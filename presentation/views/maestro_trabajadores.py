@@ -224,27 +224,23 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
 
     # ── Sección 2: Información Laboral ─────────────────────────────────────────
     st.markdown("##### 2. Información Laboral")
-    cl1, cl2, cl3, cl4, cl5 = st.columns(5)
+    cl1, cl2, cl3, cl4 = st.columns(4)
     cargo = cl1.text_input("Cargo / Puesto", value=cargo_val, key=f"{key_prefix}_cargo")
     f_ingreso = cl2.date_input("Fecha de Ingreso*", value=f_ingreso_val,
                                min_value=datetime.date(1960, 1, 1),
                                max_value=datetime.date.today(),
                                key=f"{key_prefix}_fingreso")
-    f_cese = cl3.date_input("Fecha de Cese", value=f_cese_val,
-                            min_value=datetime.date(1960, 1, 1),
-                            max_value=datetime.date(2050, 12, 31),
-                            key=f"{key_prefix}_fcese")
     label_sueldo = "Honorario Base Mensual (S/)*" if es_locador else "Sueldo Mensual (S/)*"
     min_sueldo = 0.01 if es_locador else 1025.0
-    s_base = cl4.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
+    s_base = cl3.number_input(label_sueldo, min_value=min_sueldo, step=50.0,
                               value=max(min_sueldo, s_base_val), key=f"{key_prefix}_sbase")
-    
-    dias_vac_input = cl5.number_input("Días Vac. Año", min_value=0, max_value=60, 
+
+    dias_vac_input = cl4.number_input("Días Vac. Año", min_value=0, max_value=60,
                                      value=dias_vac_val if not es_locador else 0,
                                      disabled=es_locador, key=f"{key_prefix}_vac")
 
     opciones_sit = ["ACTIVO", "CESADO", "SUSPENDIDO"]
-    situacion = cl5.selectbox("Situación", opciones_sit,
+    situacion = cl4.selectbox("Situación", opciones_sit,
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
                               key=f"{key_prefix}_situacion")
 
