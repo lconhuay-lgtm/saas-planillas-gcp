@@ -444,17 +444,21 @@ def render():
         if not cesados_db:
             st.info("No hay trabajadores cesados registrados.")
         else:
-            st.caption(f"{len(cesados_db)} trabajador(es) cesado(s) — solo lectura")
+            st.caption(f"{len(cesados_db)} trabajador(es) cesado(s)")
             for t in cesados_db:
                 with st.container(border=True):
-                    c1, c2, c3, c4, c5 = st.columns([2.5, 1.5, 1.5, 1.5, 1.5])
+                    c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.5, 1.5, 1.5, 1.0, 0.5])
                     tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
                     c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
                     c2.markdown(f"Doc: `{t.num_doc}`")
                     c3.markdown(f"{t.cargo or '—'}")
                     fi = t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else '—'
+                    fc = t.fecha_cese.strftime('%d/%m/%Y') if getattr(t, 'fecha_cese', None) else '—'
                     c4.markdown(f"Ingreso: {fi}")
-                    c5.markdown(f"🔴 **CESADO**")
+                    c5.markdown(f"Cese: {fc}")
+                    if c6.button("✏️", key=f"edit_ces_{t.id}", help="Editar trabajador cesado"):
+                        st.session_state['_editando_trabajador_id'] = t.id
+                        st.rerun()
 
     with tab_lista:
         trabajadores_db = db.query(Trabajador).filter(
