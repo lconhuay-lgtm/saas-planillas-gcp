@@ -321,9 +321,9 @@ def render():
                     )
                     c4.write(estado_badge)
 
-                    # Aplazamiento Dominó — solo supervisor (no admin) + cuota PENDIENTE
+                    # Aplazamiento Dominó — supervisor o admin + cuota PENDIENTE
                     if (
-                        rol_usuario == "supervisor"
+                        rol_usuario in ("supervisor", "admin")
                         and cuota['estado'] == 'PENDIENTE'
                     ):
                         if c5.button(
@@ -358,9 +358,9 @@ def render():
                     else:
                         c5.write("—")
 
-                # ── AJUSTE DE MONTOS POR CUOTA (solo supervisor) ──────────────
+                # ── AJUSTE DE MONTOS POR CUOTA (supervisor o admin) ───────────
                 cuotas_pend = [c for c in dp['cuotas'] if c['estado'] == 'PENDIENTE']
-                if rol_usuario == "supervisor" and cuotas_pend:
+                if rol_usuario in ("supervisor", "admin") and cuotas_pend:
                     with st.expander("✏️ Ajustar montos de cuotas pendientes"):
                         st.caption("Puedes redistribuir el saldo entre las cuotas pendientes. La suma total no puede cambiar.")
                         import pandas as _pd_pr
