@@ -80,6 +80,7 @@ def render_sidebar():
                 "Préstamos y Descuentos",
                 "Emisión de Boletas",
                 "Reportería",
+                "Liquidación por Cese",
             ]
 
         # Solo el rol 'admin' puede gestionar usuarios y permisos

@@ -146,6 +146,19 @@ def _calcular_haberes(
         dias_computables = 30
         ingreso_este_mes = False
 
+    # Proporcionalidad por cese: si el trabajador cesó en este mes,
+    # solo computa desde el día 1 hasta su fecha de cese.
+    cese_este_mes = False
+    fecha_cese_raw = row.get('Fecha Cese')
+    if fecha_cese_raw is not None and str(fecha_cese_raw) not in ('', 'NaT', 'None', 'nan'):
+        try:
+            fecha_cese = pd.to_datetime(fecha_cese_raw)
+            if fecha_cese.year == anio_calc and fecha_cese.month == mes_calc:
+                cese_este_mes = True
+                dias_computables = min(dias_computables, fecha_cese.day)
+        except Exception:
+            pass
+
     # Trabajador aún no ingresa en este periodo — omitir completamente
     if dias_computables == 0:
         return None
@@ -180,6 +193,8 @@ def _calcular_haberes(
     obs_trab = []
     if ingreso_este_mes:
         obs_trab.append(f"Ingresó el {fecha_ingreso.strftime('%d/%m/%Y')}")
+    if cese_este_mes:
+        obs_trab.append(f"Cese: {fecha_cese.strftime('%d/%m/%Y')} — sueldo proporcional")
 
     # Detalle de descuentos por ausencias para Tesorería
     monto_dscto_ausencias = round(sueldo_base_nominal - sueldo_computable, 2)
@@ -645,8 +660,8 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         empresa_obj = db.query(EmpresaModel).filter_by(id=empresa_id).first()
         horas_jornada = float(getattr(empresa_obj, 'horas_jornada_diaria', None) or 8.0)
 
-        # 2. Trabajadores activos
-        df_trab = cargar_trabajadores_df(db, empresa_id)
+        # 2. Trabajadores activos (+ cesados en su último mes)
+        df_trab = cargar_trabajadores_df(db, empresa_id, mes_calc=mes_calc, anio_calc=anio_calc)
         if df_trab.empty:
             st.warning("⚠️ No hay trabajadores activos registrados en el Maestro de Personal.")
             return

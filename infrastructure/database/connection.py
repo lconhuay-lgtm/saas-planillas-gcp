@@ -38,7 +38,24 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # 4. Crear la Clase Base de donde heredarán todas nuestras tablas
 Base = declarative_base()
 
-# 5. Función para obtener la sesión de BD de forma segura
+# 5. Migraciones de columnas nuevas (sin Alembic — idempotente)
+def _run_startup_migrations():
+    from sqlalchemy import text
+    migrations = [
+        "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS fecha_cese DATE",
+    ]
+    with engine.connect() as conn:
+        for stmt in migrations:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+_run_startup_migrations()
+
+
+# 6. Función para obtener la sesión de BD de forma segura
 def get_db():
     """Generador que abre una conexión y la cierra automáticamente al terminar"""
     db = SessionLocal()

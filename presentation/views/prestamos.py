@@ -355,3 +355,58 @@ def render():
                                 db3.close()
                     else:
                         c5.write("—")
+
+                # ── AJUSTE DE MONTOS POR CUOTA (solo supervisor) ──────────────
+                cuotas_pend = [c for c in dp['cuotas'] if c['estado'] == 'PENDIENTE']
+                if rol_usuario == "supervisor" and cuotas_pend:
+                    with st.expander("✏️ Ajustar montos de cuotas pendientes"):
+                        st.caption("Puedes redistribuir el saldo entre las cuotas pendientes. La suma total no puede cambiar.")
+                        import pandas as _pd_pr
+                        df_edit_cuotas = _pd_pr.DataFrame([{
+                            'N°':        c['numero_cuota'],
+                            'Periodo':   c['periodo_key'],
+                            'Monto (S/)': round(c['monto'], 2),
+                        } for c in cuotas_pend])
+
+                        df_mod_cuotas = st.data_editor(
+                            df_edit_cuotas,
+                            column_config={
+                                'N°':         st.column_config.NumberColumn(disabled=True),
+                                'Periodo':    st.column_config.TextColumn(disabled=True),
+                                'Monto (S/)': st.column_config.NumberColumn(
+                                    min_value=0.01, format="S/ %.2f", step=0.01
+                                ),
+                            },
+                            hide_index=True,
+                            key=f"edit_cuotas_{dp['id']}",
+                        )
+
+                        saldo_orig  = round(sum(c['monto'] for c in cuotas_pend), 2)
+                        saldo_nuevo = round(float(df_mod_cuotas['Monto (S/)'].sum()), 2)
+                        diferencia  = round(abs(saldo_nuevo - saldo_orig), 2)
+
+                        if diferencia > 0.01:
+                            st.warning(
+                                f"La suma ajustada (S/ {saldo_nuevo:,.2f}) difiere del saldo "
+                                f"pendiente (S/ {saldo_orig:,.2f}). Diferencia: S/ {diferencia:,.2f}"
+                            )
+                        else:
+                            if st.button("💾 Guardar ajuste de cuotas",
+                                         key=f"save_cuotas_{dp['id']}", type="primary"):
+                                db4 = SessionLocal()
+                                try:
+                                    for i, c in enumerate(cuotas_pend):
+                                        cuota_db = db4.query(CuotaPrestamo).get(c['id'])
+                                        if cuota_db:
+                                            cuota_db.monto = round(
+                                                float(df_mod_cuotas.iloc[i]['Monto (S/)']), 2
+                                            )
+                                    db4.commit()
+                                    st.success("✅ Montos de cuotas actualizados correctamente.")
+                                    st.rerun()
+                                except Exception as e4:
+                                    db4.rollback()
+                                    st.error(f"Error al guardar: {e4}")
+                                finally:
+                                    db4.close()
+

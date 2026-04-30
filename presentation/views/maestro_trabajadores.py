@@ -226,6 +226,21 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
                               index=opciones_sit.index(situacion_val) if situacion_val in opciones_sit else 0,
                               key=f"{key_prefix}_situacion")
 
+    # Fecha de cese: visible solo cuando la situación es CESADO
+    fecha_cese_val = getattr(t, 'fecha_cese', None) if t else None
+    fecha_cese = None
+    if situacion == "CESADO":
+        fc1, fc2 = st.columns([2, 4])
+        fecha_cese = fc1.date_input(
+            "Fecha de Cese*",
+            value=fecha_cese_val or datetime.date.today(),
+            min_value=datetime.date(2000, 1, 1),
+            max_value=datetime.date.today(),
+            key=f"{key_prefix}_fcese",
+            help="Último día efectivo de trabajo. Se usará para calcular el sueldo proporcional del mes de cese.",
+        )
+        fc2.info("El trabajador aparecerá en planilla solo durante el mes de su cese, con sueldo proporcional hasta esta fecha.")
+
     # ── Sección 3: Régimen Pensionario ─────────────────────────────────────────
     st.markdown("##### 3. Régimen Pensionario")
     if es_locador:
@@ -325,6 +340,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "fecha_nac": f_nac,
             "cargo": cargo,
             "fecha_ingreso": f_ingreso,
+            "fecha_cese": fecha_cese,
             "sueldo_base": s_base,
             "situacion": situacion,
             "tipo_contrato": "LOCADOR" if es_locador else "PLANILLA",
@@ -395,14 +411,39 @@ def render():
         return  # No renderizar las tabs en modo edición
 
     # ── MODO NORMAL: TABS ───────────────────────────────────────────────────────
-    tab_lista, tab_nuevo = st.tabs(["📋 Directorio de Personal", "➕ Alta de Trabajador"])
+    tab_lista, tab_cesados, tab_nuevo = st.tabs([
+        "📋 Personal Activo", "🗂️ Cesados / Inactivos", "➕ Alta de Trabajador"
+    ])
+
+    with tab_cesados:
+        cesados_db = db.query(Trabajador).filter(
+            Trabajador.empresa_id == empresa_id,
+            Trabajador.situacion == "CESADO"
+        ).order_by(Trabajador.nombres).all()
+        if not cesados_db:
+            st.info("No hay trabajadores cesados registrados.")
+        else:
+            st.caption(f"{len(cesados_db)} trabajador(es) cesado(s) — solo lectura")
+            for t in cesados_db:
+                with st.container(border=True):
+                    c1, c2, c3, c4, c5 = st.columns([2.5, 1.5, 1.5, 1.5, 1.5])
+                    tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
+                    c1.markdown(f"**{t.nombres}** `{tipo_badge}`")
+                    c2.markdown(f"Doc: `{t.num_doc}`")
+                    c3.markdown(f"{t.cargo or '—'}")
+                    fi = t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else '—'
+                    c4.markdown(f"Ingreso: {fi}")
+                    c5.markdown(f"🔴 **CESADO**")
 
     with tab_lista:
-        trabajadores_db = db.query(Trabajador).filter(Trabajador.empresa_id == empresa_id).all()
+        trabajadores_db = db.query(Trabajador).filter(
+            Trabajador.empresa_id == empresa_id,
+            Trabajador.situacion != "CESADO"
+        ).all()
         if not trabajadores_db:
-            st.info("No hay trabajadores registrados. Use la pestaña 'Alta de Trabajador'.")
+            st.info("No hay trabajadores activos registrados. Use la pestaña 'Alta de Trabajador'.")
         else:
-            st.caption(f"{len(trabajadores_db)} trabajador(es) registrado(s)")
+            st.caption(f"{len(trabajadores_db)} trabajador(es) activo(s)")
             for t in trabajadores_db:
                 determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
                 with st.container(border=True):
