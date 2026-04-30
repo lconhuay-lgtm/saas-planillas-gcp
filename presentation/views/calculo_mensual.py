@@ -552,11 +552,13 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
 
     if aj_quinta != 0:
         retencion_quinta = max(0.0, retencion_quinta + aj_quinta)
-        if retencion_quinta > 0:
-            desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
-        elif 'Retención 5ta Cat.' in desglose_descuentos:
-            del desglose_descuentos['Retención 5ta Cat.']
         obs_trab.append(f"Ajuste 5ta: S/ {aj_quinta:,.2f}")
+
+    # Siempre reflejar la retención final en el desglose (boleta y auditoría)
+    if retencion_quinta > 0:
+        desglose_descuentos['Retención 5ta Cat.'] = float(retencion_quinta)
+    elif 'Retención 5ta Cat.' in desglose_descuentos:
+        del desglose_descuentos['Retención 5ta Cat.']
 
     if aj_otros != 0:
         desglose_descuentos['Ajuste Varios (Audit)'] = round(aj_otros, 2)
