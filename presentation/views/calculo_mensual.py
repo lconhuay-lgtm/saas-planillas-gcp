@@ -684,13 +684,31 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
 
         # 4. Variables del periodo
         df_var = cargar_variables_df(db, empresa_id, periodo_key, conceptos_list)
-        if df_var.empty:
+
+        # Left join: incluye cesados del mes aunque no tengan registro de Asistencias
+        df_planilla = pd.merge(df_trab, df_var, on="Num. Doc.", how="left")
+        # Garantizar columnas mínimas de variables (ausentes cuando df_var está vacío
+        # o el trabajador no tiene asistencias registradas en este periodo)
+        _cols_default_cero = ["Días Faltados", "Min. Tardanza", "Hrs Extras 25%", "Hrs Extras 35%"]
+        _cols_default_json = ["conceptos_json", "suspensiones_json"]
+        for _c in _cols_default_cero:
+            if _c not in df_planilla.columns:
+                df_planilla[_c] = 0
+        for _c in _cols_default_json:
+            if _c not in df_planilla.columns:
+                df_planilla[_c] = "{}"
+        # Rellenar NaN para trabajadores sin registro de asistencias (cesados recientes)
+        for _c in df_planilla.columns:
+            if _c in set(_cols_default_json):
+                df_planilla[_c] = df_planilla[_c].fillna("{}")
+            elif df_planilla[_c].dtype in (float, "float64", int, "int64"):
+                df_planilla[_c] = df_planilla[_c].fillna(0)
+
+        # Sin trabajadores activos ni cesados en el periodo → no hay planilla
+        if df_planilla.empty:
             st.warning(f"⚠️ No se han ingresado Asistencias para **{periodo_key}**.")
             st.info("Vaya al módulo 'Ingreso de Asistencias' y guarde las variables del mes.")
             return
-
-        # Merge principal (igual que antes)
-        df_planilla = pd.merge(df_trab, df_var, on="Num. Doc.", how="inner")
 
         # Compatibilidad con emision_boletas.py (lee de session_state)
         st.session_state['trabajadores_mock'] = df_trab

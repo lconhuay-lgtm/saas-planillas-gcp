@@ -74,15 +74,43 @@ def render():
     db = SessionLocal()
     try:
         # ── Separar empleados de planilla y locadores ─────────────────────────
+        # Incluir CESADO cuyo cese ocurrió en el periodo actual (último mes proporcional)
+        from sqlalchemy import and_ as _and_
+        import calendar as _cal_a
+        import datetime as _dt_a
+        _primer = _dt_a.date(int(anio_sel), int(mes_sel[:2]), 1)
+        _ultimo = _dt_a.date(int(anio_sel), int(mes_sel[:2]),
+                             _cal_a.monthrange(int(anio_sel), int(mes_sel[:2]))[1])
         planilleros = (
             db.query(Trabajador)
-            .filter_by(empresa_id=empresa_id, situacion="ACTIVO")
-            .filter(or_(Trabajador.tipo_contrato == 'PLANILLA', Trabajador.tipo_contrato == None))
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                or_(Trabajador.tipo_contrato == 'PLANILLA', Trabajador.tipo_contrato == None),
+                or_(
+                    Trabajador.situacion == "ACTIVO",
+                    _and_(
+                        Trabajador.situacion == "CESADO",
+                        Trabajador.fecha_cese >= _primer,
+                        Trabajador.fecha_cese <= _ultimo,
+                    )
+                )
+            )
             .all()
         )
         locadores = (
             db.query(Trabajador)
-            .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato='LOCADOR')
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                Trabajador.tipo_contrato == 'LOCADOR',
+                or_(
+                    Trabajador.situacion == "ACTIVO",
+                    _and_(
+                        Trabajador.situacion == "CESADO",
+                        Trabajador.fecha_cese >= _primer,
+                        Trabajador.fecha_cese <= _ultimo,
+                    )
+                )
+            )
             .all()
         )
 
