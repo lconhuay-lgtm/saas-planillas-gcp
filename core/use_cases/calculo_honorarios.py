@@ -45,18 +45,28 @@ def calcular_recibo_honorarios(
     otros_pagos       = float(variables.get('otros_pagos', 0.0) or 0.0)
     otros_descuentos  = float(variables.get('otros_descuentos', 0.0) or 0.0)
 
-    # ── Mes Comercial Mixto (Base 30) con fecha_ingreso ─────────────────────
+    # ── Mes Comercial Mixto (Base 30) con fecha_ingreso / fecha_cese ────────
     fecha_ingreso_loc = getattr(locador, 'fecha_ingreso', None)
+    fecha_cese_loc    = getattr(locador, 'fecha_cese', None)
     ingreso_este_mes  = False
+    cese_este_mes     = False
     dias_vinculados   = 30  # base 30: mes completo por defecto
 
     if fecha_ingreso_loc and anio_calc and mes_calc:
         try:
-            fi = fecha_ingreso_loc  # datetime.date desde SQLAlchemy
+            fi = fecha_ingreso_loc
             ingreso_este_mes = (fi.year == anio_calc and fi.month == mes_calc)
             if ingreso_este_mes:
-                # Días desde la fecha de ingreso hasta fin del mes (sobre el calendario real)
                 dias_vinculados = dias_del_mes - fi.day + 1
+        except Exception:
+            pass
+
+    if fecha_cese_loc and anio_calc and mes_calc:
+        try:
+            fc = fecha_cese_loc
+            cese_este_mes = (fc.year == anio_calc and fc.month == mes_calc)
+            if cese_este_mes:
+                dias_vinculados = min(dias_vinculados, fc.day)
         except Exception:
             pass
 
@@ -64,8 +74,11 @@ def calcular_recibo_honorarios(
 
     # Descuento proporcional — Base 30 (Mes Comercial Mixto)
     monto_descuento = 0.0
-    if dias_no_prestados == 0 and (not ingreso_este_mes or dias_vinculados >= dias_del_mes):
-        # Trabajó todos los días disponibles (incluye ingreso día 1) → honorario íntegro
+    es_mes_completo = (dias_no_prestados == 0
+                       and not cese_este_mes
+                       and (not ingreso_este_mes or dias_vinculados >= dias_del_mes))
+    if es_mes_completo:
+        # Trabajó todos los días disponibles → honorario íntegro
         pass
     else:
         valor_dia = honorario_base / 30.0
@@ -87,6 +100,11 @@ def calcular_recibo_honorarios(
     if ingreso_este_mes and fecha_ingreso_loc:
         try:
             obs_loc.append(f"Ingresó a laborar el {fecha_ingreso_loc.strftime('%d/%m/%Y')}")
+        except Exception:
+            pass
+    if cese_este_mes and fecha_cese_loc:
+        try:
+            obs_loc.append(f"Cese: {fecha_cese_loc.strftime('%d/%m/%Y')} ({dias_vinculados} días)")
         except Exception:
             pass
     if dias_no_prestados > 0:
