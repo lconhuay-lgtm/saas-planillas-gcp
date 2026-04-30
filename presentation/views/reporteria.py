@@ -98,7 +98,7 @@ def render():
         return "background-color:#FFF8E1; color:#E65100; font-weight:bold"
 
     st.dataframe(
-        df_mostrar.drop(columns=['Periodo Key']).style.applymap(_color_estado, subset=['Estado']),
+        df_mostrar.drop(columns=['Periodo Key']).style.map(_color_estado, subset=['Estado']),
         use_container_width=True,
         hide_index=True,
     )

@@ -386,22 +386,26 @@ def render():
                             otros_pagos  = float(fila.get("Otros Pagos / Bonos", 0.0) or 0.0)
                             otros_dsctos = float(fila.get("Otros Descuentos / Penalidades", 0.0) or 0.0)
 
-                            conceptos_data: dict = {}
-                            if otros_pagos  > 0: conceptos_data['_otros_pagos_loc']      = otros_pagos
-                            if otros_dsctos > 0: conceptos_data['_otros_descuentos_loc'] = otros_dsctos
+                            # Siempre incluir ambas claves (aunque sean 0) para que
+                            # update() las sobreescriba y no queden valores huérfanos
+                            conceptos_data = {
+                                '_otros_pagos_loc':      otros_pagos,
+                                '_otros_descuentos_loc': otros_dsctos,
+                            }
 
                             v_exist = variables_exist.get(trab_id)
                             if v_exist:
                                 v_exist.dias_descuento_locador = dias
-                                
+
                                 # Fusión de conceptos: preservar ajustes de auditoría
                                 try:
                                     cj_actual = json.loads(v_exist.conceptos_json or '{}')
                                 except:
                                     cj_actual = {}
-                                
-                                # Actualizar solo campos de locadores
+
                                 cj_actual.update(conceptos_data)
+                                # Eliminar entradas en cero para mantener el JSON limpio
+                                cj_actual = {k: v for k, v in cj_actual.items() if v}
                                 v_exist.conceptos_json = json.dumps(cj_actual)
                             else:
                                 db.add(VariablesMes(
