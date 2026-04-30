@@ -673,7 +673,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
         horas_jornada = float(getattr(empresa_obj, 'horas_jornada_diaria', None) or 8.0)
 
         # 2. Trabajadores activos (+ cesados en su último mes)
-        df_trab = cargar_trabajadores_df(db, empresa_id, mes_calc=mes_calc, anio_calc=anio_calc)
+        df_trab = cargar_trabajadores_df(db, empresa_id, mes_calc=mes_seleccionado, anio_calc=anio_seleccionado)
         if df_trab.empty:
             st.warning("⚠️ No hay trabajadores activos registrados en el Maestro de Personal.")
             return
