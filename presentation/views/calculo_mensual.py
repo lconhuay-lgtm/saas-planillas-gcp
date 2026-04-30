@@ -926,9 +926,26 @@ def _render_honorarios_tab(empresa_id, empresa_nombre, periodo_key):
         mes_int  = int(periodo_key[:2])
         anio_int = int(periodo_key[3:])
 
+        # 2. Locadores activos + cesados cuyo cese ocurre en este periodo
+        import calendar as _cal_hn
+        import datetime as _dt_hn
+        from sqlalchemy import and_ as _and_hn, or_ as _or_hn
+        _prim_hn = _dt_hn.date(anio_int, mes_int, 1)
+        _ulti_hn = _dt_hn.date(anio_int, mes_int, _cal_hn.monthrange(anio_int, mes_int)[1])
         locadores_db = (
             db.query(Trabajador)
-            .filter_by(empresa_id=empresa_id, situacion="ACTIVO", tipo_contrato="LOCADOR")
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                Trabajador.tipo_contrato == "LOCADOR",
+                _or_hn(
+                    Trabajador.situacion == "ACTIVO",
+                    _and_hn(
+                        Trabajador.situacion == "CESADO",
+                        Trabajador.fecha_cese >= _prim_hn,
+                        Trabajador.fecha_cese <= _ulti_hn,
+                    )
+                )
+            )
             .all()
         )
 
