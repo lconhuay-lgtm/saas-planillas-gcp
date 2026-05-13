@@ -296,6 +296,33 @@ class RegistroVacaciones(Base):
     # Auditoría
     fecha_registro = Column(DateTime, default=datetime.now)
 
+# 9. TABLA DE DEPÓSITOS DE CTS
+class DepositoCTS(Base):
+    __tablename__ = 'depositos_cts'
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'trabajador_id', 'periodo_key_deposito', name='uq_deposito_cts'),
+    )
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    empresa_id           = Column(Integer, ForeignKey('empresas.id'), nullable=False)
+    trabajador_id        = Column(Integer, ForeignKey('trabajadores.id'), nullable=False)
+    periodo_label        = Column(String(30))          # "NOV 2025 – ABR 2026"
+    periodo_key_deposito = Column(String(10))          # "05-2026" (mes de depósito)
+    base_computable      = Column(Float, default=0.0)
+    sexto_grati          = Column(Float, default=0.0)  # 1/6 de grati aplicada en la base
+    meses_computados     = Column(Float, default=0.0)
+    factor               = Column(Float, default=1.0)
+    monto                = Column(Float, default=0.0)
+    estado               = Column(String(20), default='PENDIENTE')  # PENDIENTE | DEPOSITADO
+    fecha_deposito       = Column(Date, nullable=True)
+    banco_cts            = Column(String(100), nullable=True)
+    cuenta_cts           = Column(String(100), nullable=True)
+    fecha_registro       = Column(DateTime, default=datetime.now)
+
+    empresa    = relationship('Empresa')
+    trabajador = relationship('Trabajador', backref='depositos_cts')
+
+
 class LogEnvioBoleta(Base):
     __tablename__ = "log_envio_boletas"
     id = Column(Integer, primary_key=True, index=True)

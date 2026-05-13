@@ -34,6 +34,7 @@ from presentation.views import login
 from presentation.views import prestamos
 from presentation.views import gestion_usuarios
 from presentation.views import liquidacion_cese
+from presentation.views import gratificaciones_cts
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 if not st.session_state.get('_tablas_verificadas'):
@@ -95,6 +96,25 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS smtp_pass VARCHAR(100)",
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(2) DEFAULT '01'",
             "UPDATE trabajadores SET num_doc = REPLACE(num_doc, ' ', '') WHERE num_doc LIKE '% %'",
+            # Depósitos CTS (Beneficios Sociales)
+            """CREATE TABLE IF NOT EXISTS depositos_cts (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+                trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id),
+                periodo_label VARCHAR(30),
+                periodo_key_deposito VARCHAR(10),
+                base_computable FLOAT DEFAULT 0.0,
+                sexto_grati FLOAT DEFAULT 0.0,
+                meses_computados FLOAT DEFAULT 0.0,
+                factor FLOAT DEFAULT 1.0,
+                monto FLOAT DEFAULT 0.0,
+                estado VARCHAR(20) DEFAULT 'PENDIENTE',
+                fecha_deposito DATE,
+                banco_cts VARCHAR(100),
+                cuenta_cts VARCHAR(100),
+                fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(empresa_id, trabajador_id, periodo_key_deposito)
+            )""",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -177,3 +197,6 @@ elif vista_actual == "Gestión de Usuarios":
 
 elif vista_actual == "Liquidación por Cese":
     liquidacion_cese.render()
+
+elif vista_actual == "Gratificaciones y CTS":
+    gratificaciones_cts.render()
