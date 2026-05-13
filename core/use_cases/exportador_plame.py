@@ -89,11 +89,26 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
     cod_map = {c.nombre.strip().upper(): c.codigo_sunat for c in conceptos_bd if c.codigo_sunat}
     
+    # El código de gratificación depende del mes: Julio=0301, Diciembre=0302
+    _mes_plame = int(periodo_key[:2])
+    _cod_grati = "0301" if _mes_plame == 7 else ("0302" if _mes_plame == 12 else None)
+
     fallback_map = {
         "SUELDO BASE": "0121", "SUELDO BASICO": "0121",
         "ASIGNACIÓN FAMILIAR": "0201", "ASIGNACION FAMILIAR": "0201",
         "TARDANZAS": "0704", "PRÉSTAMO PERSONAL": "0706", "PRESTAMO PERSONAL": "0706",
-        "ADELANTO DE SUELDO": "0701"
+        "ADELANTO DE SUELDO": "0701",
+        # Gratificaciones (Ley 27735) — código según mes de pago
+        "GRATIFICACIÓN": _cod_grati, "GRATIFICACION": _cod_grati,
+        "GRATIFICACION (JUL/DIC)": _cod_grati,
+        # Bono Extraordinario 9% (Ley 29351)
+        "BONO EXT. 9%": "0303", "BONO EXTRAORDINARIO 9%": "0303",
+        "BONIFICACION EXT. 9% GRATI": "0303",
+        "BONIFICACIÓN EXTRAORDINARIA LEY 29351 (9%)": "0303",
+        # CTS (D.L. 650) — en meses 05 y 11 se reporta el depósito
+        "CTS": "0401", "DEPOSITO CTS": "0401",
+        # Gratificación trunca por cese
+        "GRATIFICACIÓN TRUNCA": "0305", "GRATIFICACION TRUNCA": "0305",
     }
     
     for dni_original, data in auditoria.items():
@@ -186,9 +201,29 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
                 if cod_afp not in codigos_procesados:
                     lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_afp}|0.00|0.00|")
                 
-    return "\r\n".join(lineas)
-                
-    # Retorno con salto de línea estándar de Windows para lectura correcta en PLAME
+    # ── CTS: en Mayo (05) y Noviembre (11) agregar líneas de depósito ────────
+    if _mes_plame in (5, 11):
+        try:
+            from infrastructure.database.models import DepositoCTS
+            deps_cts = db.query(DepositoCTS).filter_by(
+                empresa_id=empresa_id,
+                periodo_key_deposito=periodo_key,
+            ).all()
+            for dep in deps_cts:
+                if dep.monto and dep.monto > 0:
+                    t_dep = dep.trabajador
+                    if not t_dep:
+                        continue
+                    tipo_doc_dep = getattr(t_dep, 'tipo_documento', '01') or '01'
+                    dni_dep = "".join(str(t_dep.num_doc).split())
+                    if len(dni_dep) > 8 and tipo_doc_dep == '01':
+                        tipo_doc_dep = '04'
+                    lineas.append(
+                        f"{tipo_doc_dep}|{dni_dep}|0401|{dep.monto:.2f}|{dep.monto:.2f}|"
+                    )
+        except Exception:
+            pass
+
     return "\r\n".join(lineas)
 
 def generar_zip_plame(empresa_id: int, mes: int, anio: int) -> io.BytesIO:

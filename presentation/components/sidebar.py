@@ -94,6 +94,7 @@ def render_sidebar():
                 "Emisión de Boletas",
                 "Reportería",
                 "Liquidación por Cese",
+                "Gratificaciones y CTS",
             ]
         
         # Filtrar módulos restringidos
