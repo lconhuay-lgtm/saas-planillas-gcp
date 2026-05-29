@@ -136,6 +136,13 @@ def cargar_variables_df(db, empresa_id, periodo_key, conceptos) -> pd.DataFrame:
         # los ajustes de auditoría (_ajuste_afp, _ajuste_quinta, _ajuste_otros)
         row["conceptos_json"] = v.conceptos_json or '{}'
         rows.append(row)
+    if not rows:
+        cols_base = [
+            "Num. Doc.", "Nombres y Apellidos", "Días Faltados",
+            "suspensiones_json", "Min. Tardanza",
+            "Hrs Extras 25%", "Hrs Extras 35%",
+        ]
+        return pd.DataFrame(columns=cols_base + concepto_nombres + ["conceptos_json"])
     df = pd.DataFrame(rows)
     # fillna solo en columnas numéricas para no borrar el JSON de ajustes
     cols_num = [c for c in df.columns if c != "conceptos_json"]
