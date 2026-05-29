@@ -115,10 +115,10 @@ def render():
         # --- HABITAT ---
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
         c_nom.markdown("<br><span style='font-size: 14px; font-weight: 500;'>HABITAT</span>", unsafe_allow_html=True)
-        h_ap = c_ap.number_input("A", value=float(p_data.h_ap if p_data else 10.0), key="h1", label_visibility="collapsed")
-        h_pr = c_pr.number_input("P", value=float(p_data.h_pr if p_data else 1.84), key="h2", label_visibility="collapsed")
-        h_fl = c_fl.number_input("F", value=float(p_data.h_fl if p_data else 1.47), key="h3", label_visibility="collapsed")
-        h_mx = c_mx.number_input("M", value=float(p_data.h_mx if p_data else 0.23), key="h4", label_visibility="collapsed")
+        h_ap = c_ap.number_input("A", value=float(p_data.h_ap if p_data else 10.0), label_visibility="collapsed")
+        h_pr = c_pr.number_input("P", value=float(p_data.h_pr if p_data else 1.84), label_visibility="collapsed")
+        h_fl = c_fl.number_input("F", value=float(p_data.h_fl if p_data else 1.47), label_visibility="collapsed")
+        h_mx = c_mx.number_input("M", value=float(p_data.h_mx if p_data else 0.23), label_visibility="collapsed")
 
         # --- INTEGRA ---
         c_nom, c_ap, c_pr, c_fl, c_mx = st.columns([1.5, 1, 1, 1, 1])
