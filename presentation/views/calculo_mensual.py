@@ -178,7 +178,7 @@ def _calcular_haberes(
     valor_hora          = valor_dia / horas_jornada
 
     # Corrección Mes Comercial (Base 30 estricta para cálculo financiero):
-    if ingreso_este_mes and dias_computables < dias_del_mes:
+    if (ingreso_este_mes or cese_este_mes) and dias_computables < dias_del_mes:
         # Si el trabajador ingresó a mediados de mes: se le pagan los días calendario laborados
         dias_laborados = max(0, int(dias_computables) - int(total_ausencias))
         sueldo_computable = max(0.0, valor_dia * dias_laborados)
