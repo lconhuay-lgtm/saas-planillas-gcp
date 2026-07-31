@@ -66,7 +66,12 @@ def calcular_recibo_honorarios(
             fc = fecha_cese_loc
             cese_este_mes = (fc.year == anio_calc and fc.month == mes_calc)
             if cese_este_mes:
-                dias_vinculados = min(dias_vinculados, fc.day)
+                if ingreso_este_mes:
+                    # Ingreso y cese caen en el mismo mes: contar los días desde el
+                    # ingreso hasta el cese (inclusive), no el día-del-mes del cese.
+                    dias_vinculados = max(0, fc.day - fecha_ingreso_loc.day + 1)
+                else:
+                    dias_vinculados = min(dias_vinculados, fc.day)
         except Exception:
             pass
 

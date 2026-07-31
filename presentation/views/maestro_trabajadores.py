@@ -312,7 +312,27 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     # ── Sección 4: Información de Pago ────────────────────────────────────────
     st.markdown("##### 4. Información de Pago")
     b1, b2, b3 = st.columns(3)
-    opciones_banco = ["BCP", "BBVA", "INTERBANK", "SCOTIABANK", "BANBIF", "EFECTIVO/CHEQUE"]
+    # Entidades supervisadas por la SBS (bancos, financieras, cajas municipales y cajas
+    # rurales) habilitadas para recibir pago de haberes. Verificar periódicamente contra
+    # https://www.sbs.gob.pe (el sistema financiero peruano cambia con fusiones/liquidaciones).
+    opciones_banco = [
+        # Bancos
+        "BCP", "BBVA", "INTERBANK", "SCOTIABANK", "BANBIF", "MIBANCO",
+        "BANCO PICHINCHA", "BANCO SANTANDER", "BANCO FALABELLA", "BANCO RIPLEY",
+        "BANCO GNB", "CITIBANK", "BANCO ICBC", "BANK OF CHINA", "BANCO BCI",
+        "BANCO DE COMERCIO", "ALFIN BANCO",
+        # Financieras
+        "FINANCIERA COMPARTAMOS", "FINANCIERA CONFIANZA", "FINANCIERA EFECTIVA",
+        "FINANCIERA PROEMPRESA", "FINANCIERA QAPAQ", "FINANCIERA OH!", "FINANCIERA CREDINKA",
+        # Cajas Municipales (CMAC)
+        "CAJA AREQUIPA", "CAJA CUSCO", "CAJA HUANCAYO", "CAJA ICA", "CAJA MAYNAS",
+        "CAJA PAITA", "CAJA PIURA", "CAJA DEL SANTA", "CAJA SULLANA", "CAJA TACNA",
+        "CAJA TRUJILLO",
+        # Cajas Rurales (CRAC)
+        "CAJA RURAL LOS ANDES", "CAJA RURAL PRYMERA", "CAJA RURAL DEL CENTRO",
+        "CAJA RURAL RAÍZ", "CAJA RURAL INCASUR",
+        "EFECTIVO/CHEQUE",
+    ]
     banco = b1.selectbox("Banco", opciones_banco,
                          index=opciones_banco.index(banco_val) if banco_val in opciones_banco else 0,
                          key=f"{key_prefix}_banco")

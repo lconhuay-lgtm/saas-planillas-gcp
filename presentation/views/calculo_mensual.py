@@ -155,7 +155,12 @@ def _calcular_haberes(
             fecha_cese = pd.to_datetime(fecha_cese_raw)
             if fecha_cese.year == anio_calc and fecha_cese.month == mes_calc:
                 cese_este_mes = True
-                dias_computables = min(dias_computables, fecha_cese.day)
+                if ingreso_este_mes:
+                    # Ingreso y cese caen en el mismo mes: contar los días desde el
+                    # ingreso hasta el cese (inclusive), no el día-del-mes del cese.
+                    dias_computables = max(0, fecha_cese.day - fecha_ingreso.day + 1)
+                else:
+                    dias_computables = min(dias_computables, fecha_cese.day)
         except Exception:
             pass
 
