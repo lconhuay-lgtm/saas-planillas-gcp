@@ -12,10 +12,10 @@ _CODIGO_GRATI    = "0406"
 _CODIGO_BONO_9   = "0312"
 
 CONCEPTOS_OBLIGATORIOS = [
-    {"nombre": "SUELDO BASICO",                         "codigo": _CODIGO_SUELDO,   "tipo": "INGRESO",   "afp": True,  "5ta": True,  "ess": True,  "cts": True,  "gra": True},
-    {"nombre": "ASIGNACION FAMILIAR",                   "codigo": _CODIGO_ASIG_FAM, "tipo": "INGRESO",   "afp": True,  "5ta": True,  "ess": True,  "cts": True,  "gra": True},
-    {"nombre": "GRATIFICACION (JUL/DIC)",               "codigo": _CODIGO_GRATI,    "tipo": "INGRESO",   "afp": False, "5ta": True,  "ess": False, "cts": False, "gra": False},
-    {"nombre": "BONIFICACION EXTRAORDINARIA LEY 29351 (9%)", "codigo": _CODIGO_BONO_9, "tipo": "INGRESO", "afp": False, "5ta": True,  "ess": False, "cts": False, "gra": False},
+    {"nombre": "SUELDO BASICO",                         "codigo": _CODIGO_SUELDO,   "tipo": "INGRESO",   "afp": True,  "5ta": True,  "ess": True,  "cts": True,  "gra": True,  "rec": True},
+    {"nombre": "ASIGNACION FAMILIAR",                   "codigo": _CODIGO_ASIG_FAM, "tipo": "INGRESO",   "afp": True,  "5ta": True,  "ess": True,  "cts": True,  "gra": True,  "rec": True},
+    {"nombre": "GRATIFICACION (JUL/DIC)",               "codigo": _CODIGO_GRATI,    "tipo": "INGRESO",   "afp": False, "5ta": True,  "ess": False, "cts": False, "gra": False, "rec": False},
+    {"nombre": "BONIFICACION EXTRAORDINARIA LEY 29351 (9%)", "codigo": _CODIGO_BONO_9, "tipo": "INGRESO", "afp": False, "5ta": True,  "ess": False, "cts": False, "gra": False, "rec": False},
 ]
 NOMBRES_OBLIGATORIOS = {c["nombre"] for c in CONCEPTOS_OBLIGATORIOS}
 
@@ -41,6 +41,7 @@ def sembrar_conceptos_por_defecto(empresa_id: int, db):
             codigo_sunat=c["codigo"],
             afecto_afp=c["afp"], afecto_5ta=c["5ta"], afecto_essalud=c["ess"],
             computable_cts=c["cts"], computable_grati=c["gra"],
+            es_recurrente=c["rec"],
         ))
     db.commit()
 
@@ -100,13 +101,19 @@ def render():
                     "Computable Grati": c.computable_grati,
                     "Prorrateable (Asist.)": getattr(c, 'prorrateable_por_asistencia', False),
                     "No Remunerativo": getattr(c, 'no_remunerativo', False),
+                    "Recurrente": getattr(c, 'es_recurrente', True),
                 })
             df_c = pd.DataFrame(rows)
             df_v = df_c.drop(columns=["_id"])
 
             st.caption(
                 "💡 **No Remunerativo**: solo identifica el concepto en reportes (ej. "
-                "Movilidad, Alimentación). No cambia ninguna afectación tributaria."
+                "Movilidad, Alimentación). No cambia ninguna afectación tributaria.  \n"
+                "💡 **Recurrente**: indica si este ingreso se repite todos los meses (ej. sueldo) "
+                "o es un pago único/esporádico (ej. un bono especial). Solo afecta cómo se "
+                "*proyectan* los meses restantes del año para la retención de 5ta categoría — "
+                "no cambia el cálculo del mes actual. *Gratificación y Bonificación 9% siempre "
+                "se tratan como pago único por ley, sin importar esta casilla.*"
             )
             df_edit = st.data_editor(
                 df_v, num_rows="fixed", use_container_width=True, hide_index=True,
@@ -119,6 +126,7 @@ def render():
                     "Computable Grati": st.column_config.CheckboxColumn(),
                     "Prorrateable (Asist.)": st.column_config.CheckboxColumn(),
                     "No Remunerativo": st.column_config.CheckboxColumn(),
+                    "Recurrente": st.column_config.CheckboxColumn(),
                 },
                 key="editor_conceptos",
             )
@@ -136,6 +144,7 @@ def render():
                             c.computable_grati = bool(row["Computable Grati"])
                             c.prorrateable_por_asistencia = bool(row.get("Prorrateable (Asist.)", False))
                             c.no_remunerativo = bool(row.get("No Remunerativo", False))
+                            c.es_recurrente = bool(row.get("Recurrente", True))
                     db.commit()
                     st.session_state['msg_exito_concepto'] = "✅ Reglas tributarias actualizadas correctamente."
                     st.rerun()
@@ -223,6 +232,36 @@ def render():
                         help="Solo identifica el concepto en reportes — no cambia ninguna afectación tributaria.",
                     )
 
+                    _es_grati_bono = obj_editar.nombre in (
+                        "GRATIFICACION (JUL/DIC)", "BONIFICACION EXTRAORDINARIA LEY 29351 (9%)"
+                    )
+                    with st.expander("ℹ️ ¿Recurrente o Pago Único? — Cómo elegir"):
+                        st.markdown(
+                            "- **Recurrente**: se repite todos los meses (sueldo, bono fijo "
+                            "mensual, comisión regular). El sistema asume que este monto "
+                            "también se pagará en los meses que faltan del año, y lo usa para "
+                            "**proyectar** la retención de 5ta categoría.\n"
+                            "- **Pago Único / No Recurrente**: ocurre una sola vez o de forma "
+                            "esporádica (bono especial, utilidades, indemnización). El sistema "
+                            "lo suma **solo en el mes que se paga**, sin asumir que se repetirá, "
+                            "evitando que infle la proyección de los meses futuros.\n\n"
+                            "Esto **no cambia el cálculo del mes actual** — solo cómo se estima "
+                            "el resto del año para el Impuesto a la Renta de 5ta."
+                        )
+                    if _es_grati_bono:
+                        st.caption(
+                            "⚠️ Por ley, Gratificación y Bonificación 9% siempre se tratan como "
+                            "**pago único** en la proyección de 5ta categoría — este concepto no "
+                            "usa la casilla de abajo."
+                        )
+                        recurrente_edit = bool(getattr(obj_editar, 'es_recurrente', True))
+                    else:
+                        recurrente_edit = st.checkbox(
+                            "Recurrente (se repite todos los meses)",
+                            value=bool(getattr(obj_editar, 'es_recurrente', True)),
+                            key="e_cb_recurrente",
+                        )
+
                 if st.button("🔄 Actualizar Concepto", type="primary", use_container_width=True):
                     try:
                         nombre_final = (obj_editar.nombre if es_oblig
@@ -246,6 +285,7 @@ def render():
                         obj_editar.computable_grati = comp_grati_edit
                         obj_editar.prorrateable_por_asistencia = prorrateable_edit
                         obj_editar.no_remunerativo = no_remun_edit
+                        obj_editar.es_recurrente = recurrente_edit
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (
                             f"✅ Concepto **{nombre_final}** actualizado — "
@@ -337,6 +377,33 @@ def render():
                     help="Deje el nombre por defecto o personalícelo para su empresa.",
                 )
 
+            st.markdown("---")
+            st.markdown("**🔁 Recurrencia (para la proyección de 5ta categoría)**")
+            with st.expander("ℹ️ ¿Cómo elegir? — Léalo antes de continuar", expanded=True):
+                st.markdown(
+                    "- **Recurrente**: este ingreso se repite todos los meses (sueldo, bono fijo "
+                    "mensual, comisión regular). El sistema asumirá que también se pagará en los "
+                    "meses que faltan del año, y lo usará para **proyectar** la retención de "
+                    "Impuesto a la Renta de 5ta categoría.\n"
+                    "- **Pago Único / No Recurrente**: ocurre una sola vez o de forma esporádica "
+                    "(bono especial, utilidades, indemnización, gratificación extraordinaria "
+                    "propia de la empresa). El sistema lo sumará **solo en el mes en que se "
+                    "pague**, sin asumir que se repetirá — así no infla la proyección de los "
+                    "meses futuros.\n\n"
+                    "Elegir mal esta opción **no rompe nada del cálculo del mes actual**, pero sí "
+                    "puede sub/sobre-estimar la retención de 5ta categoría proyectada a futuro. "
+                    "Ante la duda: si el monto va a variar o no se repetirá el próximo mes, "
+                    "elija **Pago Único**."
+                )
+            recurrencia_sel = st.radio(
+                "¿Este concepto es recurrente o de pago único?",
+                options=["Recurrente (se repite todos los meses)", "Pago Único / No Recurrente"],
+                index=0,
+                key="radio_recurrente_nuevo",
+                horizontal=True,
+            )
+            comp_recurrente = recurrencia_sel.startswith("Recurrente")
+
             if st.button("➕ Crear Concepto", type="primary", use_container_width=True):
                 nombre_final = nombre_custom.strip().upper() or info_sel["desc"].upper()
                 existe = db.query(Concepto).filter_by(empresa_id=empresa_id, nombre=nombre_final).first()
@@ -351,6 +418,7 @@ def render():
                             computable_cts=comp_cts, computable_grati=comp_grati,
                             prorrateable_por_asistencia=comp_pror,
                             no_remunerativo=comp_norem,
+                            es_recurrente=comp_recurrente,
                         ))
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (

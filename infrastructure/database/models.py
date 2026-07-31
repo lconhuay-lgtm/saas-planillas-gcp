@@ -143,6 +143,13 @@ class Concepto(Base):
     # para identificarlos en reportes (ej. Reporte de Tesorería).
     no_remunerativo = Column(Boolean, default=False, server_default='false')
 
+    # Clasificación para la PROYECCIÓN de renta de 5ta categoría (no afecta el cálculo del
+    # mes en curso, solo cómo se proyectan los meses restantes del año): True = el motor
+    # asume que este monto se repetirá cada mes restante (ej. sueldo, bono mensual fijo).
+    # False = pago único/esporádico (ej. bono especial no recurrente) — se suma solo en el
+    # mes que se paga, sin multiplicarlo por los meses que faltan del año.
+    es_recurrente = Column(Boolean, default=True, server_default='true')
+
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="conceptos")
     

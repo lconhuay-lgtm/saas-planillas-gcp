@@ -120,6 +120,10 @@ if not st.session_state.get('_tablas_verificadas'):
             # Etiqueta "No Remunerativo" para conceptos (Movilidad, Alimentación, etc.) —
             # solo identifica en reportes, no altera afecto_afp/afecto_5ta/afecto_essalud/etc.
             "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS no_remunerativo BOOLEAN DEFAULT false",
+            # Clasificación Recurrente/No Recurrente para la PROYECCIÓN de 5ta categoría.
+            # Todos los conceptos ya creados quedan como Recurrente (true) por defecto —
+            # editable luego desde Maestro de Conceptos.
+            "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS es_recurrente BOOLEAN DEFAULT true",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

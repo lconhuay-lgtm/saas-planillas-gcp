@@ -165,6 +165,7 @@ def cargar_conceptos_df(db, empresa_id) -> pd.DataFrame:
             "Computable CTS": c.computable_cts,
             "Computable Grati": c.computable_grati,
             "Prorrateable": getattr(c, 'prorrateable_por_asistencia', False),
+            "Recurrente": getattr(c, 'es_recurrente', True),
         })
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 

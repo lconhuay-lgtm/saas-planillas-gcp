@@ -287,6 +287,11 @@ def _calcular_haberes(
         desglose_ingresos["Licencia con Goce"] = round(monto_lic_goce, 2)
 
     # --- CONCEPTOS DINÁMICOS Y GRATIFICACIONES ---
+    # monto_no_recurrente_5ta: parte de "base_quinta_mes" que corresponde a pagos únicos/
+    # esporádicos (no a sueldo recurrente). Se usa solo en _calcular_quinta() para EXCLUIR
+    # estos montos de la proyección de meses futuros — no afecta el cálculo del mes actual.
+    monto_no_recurrente_5ta = 0.0
+
     monto_grati = float(row.get('GRATIFICACION (JUL/DIC)', 0.0))
     if monto_grati > 0:
         monto_bono_9 = monto_grati * 0.09
@@ -294,6 +299,10 @@ def _calcular_haberes(
         desglose_ingresos['Bono Ext. 9%'] = round(monto_bono_9, 2)
         ingresos_totales += (monto_grati + monto_bono_9)
         base_quinta_mes += (monto_grati + monto_bono_9)
+        # Por ley, Gratificación y Bono 9% NUNCA son recurrentes (se pagan solo en jul/dic) —
+        # el sistema ya las proyecta aparte vía "proyeccion_gratis", así que jamás deben
+        # sumarse también como si fueran sueldo recurrente.
+        monto_no_recurrente_5ta += (monto_grati + monto_bono_9)
 
     conceptos_omitidos = ["SUELDO BASICO", "ASIGNACION FAMILIAR", "GRATIFICACION (JUL/DIC)", "BONIFICACION EXTRAORDINARIA LEY 29351 (9%)"]
     otros_ingresos = 0.0
@@ -311,19 +320,27 @@ def _calcular_haberes(
             else:
                 monto_concepto = monto_ingresado_nominal
 
+            es_recurrente_c = bool(concepto.get('Recurrente', True))
+
             if concepto['Tipo'] == "INGRESO":
                 desglose_ingresos[nombre_c] = round(monto_concepto, 2)
                 otros_ingresos += monto_concepto
                 ingresos_totales += monto_concepto
                 if concepto['Afecto AFP/ONP']: base_afp_onp += monto_concepto
                 if concepto['Afecto EsSalud']: base_essalud += monto_concepto
-                if concepto['Afecto 5ta Cat.']: base_quinta_mes += monto_concepto
+                if concepto['Afecto 5ta Cat.']:
+                    base_quinta_mes += monto_concepto
+                    if not es_recurrente_c:
+                        monto_no_recurrente_5ta += monto_concepto
             elif concepto['Tipo'] == "DESCUENTO":
                 desglose_descuentos[nombre_c] = round(monto_concepto, 2)
                 descuentos_manuales += monto_concepto
                 if concepto['Afecto AFP/ONP']: base_afp_onp -= monto_concepto
                 if concepto['Afecto EsSalud']: base_essalud -= monto_concepto
-                if concepto['Afecto 5ta Cat.']: base_quinta_mes -= monto_concepto
+                if concepto['Afecto 5ta Cat.']:
+                    base_quinta_mes -= monto_concepto
+                    if not es_recurrente_c:
+                        monto_no_recurrente_5ta -= monto_concepto
 
     base_afp_onp = max(0.0, base_afp_onp)
     base_essalud = max(0.0, base_essalud)
@@ -349,6 +366,7 @@ def _calcular_haberes(
         'base_afp_onp':         base_afp_onp,
         'base_essalud':         base_essalud,
         'base_quinta_mes':      base_quinta_mes,
+        'monto_no_recurrente_5ta': monto_no_recurrente_5ta,
         'conceptos_recuperados_5ta': conceptos_recuperados_5ta,
         'monto_ausencias_rem':  monto_ausencias_rem,
         'desglose_ingresos':    desglose_ingresos,
@@ -431,6 +449,7 @@ def _calcular_quinta(
     sueldo_base_nominal, sueldo_computable, conceptos_recuperados_5ta,
     total_ausencias, ingreso_este_mes, factor_g,
     monto_ausencias_rem=0.0,
+    monto_no_recurrente_5ta=0.0,
 ) -> dict:
     """
     Calcula la retención de 5ta categoría con proyección anual (método PLAME).
@@ -445,10 +464,16 @@ def _calcular_quinta(
     # Se resta monto_ausencias_rem para evitar doble conteo: esos días ya están
     # en base_quinta_mes (valorizados en _calcular_haberes) y también aparecen
     # en (sueldo_base_nominal - sueldo_computable).
-    base_quinta_proyeccion = base_quinta_mes
+    # También se resta "monto_no_recurrente_5ta" (gratificación, bono 9% y cualquier
+    # concepto marcado "Pago Único"): son montos reales de ESTE mes (ya están sumados en
+    # renta_bruta_anual vía base_quinta_mes más abajo), pero NO deben usarse como base para
+    # estimar los meses futuros ni la próxima gratificación — de lo contrario un pago único
+    # de este mes se proyectaría como si se repitiera cada mes restante del año.
+    base_quinta_proyeccion = base_quinta_mes - monto_no_recurrente_5ta
     if total_ausencias > 0 or ingreso_este_mes:
         base_quinta_proyeccion = round(
             base_quinta_mes
+            - monto_no_recurrente_5ta
             + (sueldo_base_nominal - sueldo_computable)
             - monto_ausencias_rem
             + conceptos_recuperados_5ta, 2
@@ -542,6 +567,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         h['sueldo_base_nominal'], h['sueldo_computable'], h['conceptos_recuperados_5ta'],
         h['total_ausencias'], h['ingreso_este_mes'], factor_g,
         h['monto_ausencias_rem'],
+        h['monto_no_recurrente_5ta'],
     )
 
     # Desempaquetar variables mutables (se modifican en ajustes de auditoría)
