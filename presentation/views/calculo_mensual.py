@@ -235,7 +235,12 @@ def _calcular_haberes(
 
     # Solo tardanzas como descuento manual; las faltas ya reducen sueldo_computable
     descuentos_manuales = dscto_tardanzas
+    # "desglose_descuentos" es informativo (usado por reportes como Tesorería formato
+    # "Detallado"); NO todas sus claves se suman a descuentos_manuales — "Faltas" es
+    # puramente informativa porque ese monto ya está reflejado en un "Sueldo Base" menor.
     desglose_descuentos = {}
+    if monto_dscto_ausencias > 0:
+        desglose_descuentos["Faltas"] = round(monto_dscto_ausencias, 2)
     if dscto_tardanzas > 0:
         desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
@@ -639,6 +644,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         "dias_computables": h['dias_computables'],  # base de proporcionalidad
         "observaciones": " | ".join(obs_trab),
         "rem_diaria": round(h['sueldo_base_nominal'] / 30.0, 2),
+        "sueldo_base_nominal": round(h['sueldo_base_nominal'], 2),  # para Tesorería formato "Detallado"
         "horas_ordinarias": h['horas_ordinarias'],  # para .JOR de PLAME
         "suspensiones": h['susp_dict'],             # para .SNL de PLAME
         "base_afp": round(h['base_afp_onp'], 2),   # para AFPnet
@@ -1196,7 +1202,23 @@ def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
             if _n_loc_glob > 0 and df_loc_glob.empty:
                 st.warning("⚠️ **Reporte Bloqueado:** Se detectaron locadores activos en este periodo sin honorarios calculados. Calcule en la pestaña '🧾 2' para habilitar el reporte de tesorería.")
             else:
+                _FMT_TESO_OPC = {"CLASICO": "Clásico", "DETALLADO": "Detallado (Préstamos/Adelantos, Faltas y Tardanzas, Otros)"}
+                _fmt_default = st.session_state.get('empresa_formato_reporte_tesoreria', 'CLASICO') or 'CLASICO'
+                fmt_teso_glob = st.selectbox(
+                    "Formato del reporte", options=list(_FMT_TESO_OPC.keys()),
+                    index=list(_FMT_TESO_OPC.keys()).index(_fmt_default) if _fmt_default in _FMT_TESO_OPC else 0,
+                    format_func=lambda x: _FMT_TESO_OPC[x],
+                    key="sel_fmt_teso_glob",
+                    help="Solo cambia cómo se presenta el reporte — no afecta ningún cálculo de planilla.",
+                )
                 try:
+                    _db_norem = SessionLocal()
+                    _conceptos_norem_glob = {
+                        c.nombre for c in _db_norem.query(Concepto).filter_by(
+                            empresa_id=empresa_id, tipo='INGRESO', no_remunerativo=True
+                        ).all()
+                    }
+                    _db_norem.close()
                     buf_teso_f = generar_pdf_tesoreria(
                         df_planilla=df_plan_glob if not df_plan_glob.empty else None,
                         df_loc=df_loc_glob if not df_loc_glob.empty else None,
@@ -1204,6 +1226,8 @@ def _render_seccion_tesoreria(empresa_id, empresa_nombre, periodo_key):
                         periodo_key=periodo_key,
                         auditoria_data=aud_glob,
                         empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                        formato=fmt_teso_glob,
+                        conceptos_no_remunerativos=_conceptos_norem_glob,
                     )
                     st.download_button(
                         "🏦 Descargar Reporte de Tesorería (PDF)",

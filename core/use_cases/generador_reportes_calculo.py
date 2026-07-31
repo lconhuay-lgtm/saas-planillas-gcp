@@ -782,8 +782,40 @@ def generar_pdf_combinado(df_planilla, df_loc, empresa_nombre, periodo_key, empr
     return buffer
 
 
-def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, auditoria_data=None, empresa_ruc=""):
-    """Genera PDF de Tesorería (Landscape Legal): planilla con columnas de ingresos dinámicas + locadores con datos bancarios."""
+_DSCTO_BUCKETS_ORDEN = ["Préstamos y Adelantos", "Faltas y Tardanzas", "Otros Descuentos"]
+
+
+def _bucket_descuentos_tesoreria(desglose_descuentos: dict) -> dict:
+    """Reparte el 'desglose_descuentos' que ya guarda el motor de cálculo (auditoria_data)
+    en 3 columnas de reporte, sin recalcular ni alterar ningún monto: la suma de las 3
+    columnas siempre es igual al total que hoy se muestra en "Otros Dsctos".
+    Usado únicamente por el formato "Detallado" del Reporte de Tesorería (presentación)."""
+    buckets = {k: 0.0 for k in _DSCTO_BUCKETS_ORDEN}
+    for nombre, monto in (desglose_descuentos or {}).items():
+        monto = float(monto or 0.0)
+        if nombre in ("Faltas", "Tardanzas"):
+            buckets["Faltas y Tardanzas"] += monto
+        else:
+            # Cuotas de préstamo (por su 'concepto') y cualquier Concepto dinámico tipo
+            # DESCUENTO (incluye "Adelanto de Sueldo" si la empresa lo tiene configurado).
+            buckets["Préstamos y Adelantos"] += monto
+    return {k: round(v, 2) for k, v in buckets.items()}
+
+
+def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, auditoria_data=None, empresa_ruc="", formato="CLASICO", conceptos_no_remunerativos=None):
+    """Genera PDF de Tesorería (Landscape Legal): planilla con columnas de ingresos dinámicas + locadores con datos bancarios.
+
+    formato: "CLASICO" (default, columna única "Otros Dsctos" — comportamiento histórico
+    sin cambios) o "DETALLADO" (desagrega "Otros Dsctos" en "Préstamos y Adelantos" /
+    "Faltas y Tardanzas" / "Otros Descuentos", usando el desglose ya calculado en
+    auditoria_data). NETO A PAGAR se sigue leyendo directo del DataFrame en ambos casos,
+    por lo que el formato elegido nunca puede alterar los montos pagados.
+
+    conceptos_no_remunerativos: set opcional con nombres de Concepto marcados como "No
+    Remunerativo" (ej. Movilidad, Alimentación) — solo agrega el sufijo "(No Remun.)" al
+    encabezado de su columna dinámica de ingreso. No cambia montos, totales ni columnas.
+    """
+    conceptos_no_remunerativos = conceptos_no_remunerativos or set()
     periodo_texto = _periodo_legible_calc(periodo_key)
     W_PAGE = 1008 - 24
 
@@ -833,11 +865,31 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         for inc_name in sorted(list(all_audit_incomes)):
             # Evitar duplicar Asig. Fam si ya se incluyó arriba
             if inc_name != "Asignación Familiar":
-                dynamic_income.append((inc_name, inc_name))
+                _dsp_name = f"{inc_name} (No Remun.)" if inc_name in conceptos_no_remunerativos else inc_name
+                dynamic_income.append((inc_name, _dsp_name))
 
         has_5ta   = "Ret. 5ta Cat."  in df_plan_data.columns and df_plan_data["Ret. 5ta Cat."].sum() > 0
         has_dscto = "Dsctos/Faltas"  in df_plan_data.columns and df_plan_data["Dsctos/Faltas"].sum() > 0
-        
+
+        # Formato "Detallado": repartir "Otros Dsctos" en columnas por origen (Préstamos y
+        # Adelantos / Faltas y Tardanzas / Otros Descuentos), usando el desglose que el motor
+        # de cálculo ya guarda en auditoria_data. No se recalcula ningún monto.
+        es_detallado = str(formato or "CLASICO").upper() == "DETALLADO"
+        dscto_por_dni = {}
+        dscto_buckets = []
+        if es_detallado and has_dscto and auditoria_data:
+            totales_bucket = {k: 0.0 for k in _DSCTO_BUCKETS_ORDEN}
+            for _dni_b, _info_b in auditoria_data.items():
+                _b = _bucket_descuentos_tesoreria(_info_b.get('descuentos', {}))
+                dscto_por_dni[str(_dni_b)] = _b
+                for _k, _v in _b.items():
+                    totales_bucket[_k] += _v
+            dscto_buckets = [k for k in _DSCTO_BUCKETS_ORDEN if totales_bucket.get(k, 0.0) > 0]
+            if not dscto_buckets:
+                # auditoria_data no trae desglose (p.ej. periodo cerrado antes de este cambio)
+                # — se conserva el comportamiento clásico en vez de mostrar columnas vacías.
+                es_detallado = False
+
         # Verificar si hay datos bancarios en planilla
         has_bank_p = df_plan_data["N° Cuenta"].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA).dropna().any() or \
                      df_plan_data["CCI"].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA).dropna().any()
@@ -848,7 +900,9 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         headers_p += ["TOTAL BRUTO", "Ret. Pensiones"]
         if has_5ta:
             headers_p.append("Ret. 5ta Cat.")
-        if has_dscto:
+        if es_detallado:
+            headers_p += dscto_buckets
+        elif has_dscto:
             headers_p.append("Otros Dsctos")
         headers_p += ["NETO A PAGAR", "Banco"]
         if has_bank_p:
@@ -861,6 +915,7 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
             "Gratificación": 58, "Bono Ext. 9%": 50,
             "TOTAL BRUTO": 62, "Ret. Pensiones": 62,
             "Ret. 5ta Cat.": 52, "Otros Dsctos": 52,
+            "Préstamos y Adelantos": 58, "Faltas y Tardanzas": 58, "Otros Descuentos": 52,
             "NETO A PAGAR": 62, "Banco": 55, "N° Cuenta": 72, "CCI": 82,
         }
         col_w_p = [col_w_map.get(h, 55) for h in headers_p]
@@ -892,7 +947,13 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
                 v5 = float(row.get("Ret. 5ta Cat.", 0.0) or 0.0)
                 fila.append(f"{v5:,.2f}")
                 tot_p["Ret. 5ta Cat."] = tot_p.get("Ret. 5ta Cat.", 0.0) + v5
-            if has_dscto:
+            if es_detallado:
+                _b_row = dscto_por_dni.get(str(row.get("DNI", "")), {})
+                for bcol in dscto_buckets:
+                    vb = float(_b_row.get(bcol, 0.0) or 0.0)
+                    fila.append(f"{vb:,.2f}")
+                    tot_p[bcol] = tot_p.get(bcol, 0.0) + vb
+            elif has_dscto:
                 vd = float(row.get("Dsctos/Faltas", 0.0) or 0.0)
                 fila.append(f"{vd:,.2f}")
                 tot_p["Otros Dsctos"] = tot_p.get("Otros Dsctos", 0.0) + vd
@@ -909,7 +970,10 @@ def generar_pdf_tesoreria(df_planilla, df_loc, empresa_nombre, periodo_key, audi
         tot_fila += [f"{tot_p.get('TOTAL BRUTO', 0.0):,.2f}", f"{tot_p.get('Ret. Pensiones', 0.0):,.2f}"]
         if has_5ta:
             tot_fila.append(f"{tot_p.get('Ret. 5ta Cat.', 0.0):,.2f}")
-        if has_dscto:
+        if es_detallado:
+            for bcol in dscto_buckets:
+                tot_fila.append(f"{tot_p.get(bcol, 0.0):,.2f}")
+        elif has_dscto:
             tot_fila.append(f"{tot_p.get('Otros Dsctos', 0.0):,.2f}")
         tot_fila += [f"{tot_p.get('NETO A PAGAR', 0.0):,.2f}", ""]
         if has_bank_p:

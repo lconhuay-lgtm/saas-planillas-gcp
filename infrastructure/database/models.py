@@ -55,6 +55,12 @@ class Empresa(Base):
     # --- POLÍTICAS DE PROYECCIÓN ---
     factor_proyeccion_grati = Column(Float, nullable=True)
 
+    # --- PREFERENCIAS DE REPORTES ---
+    # 'CLASICO' (columna única "Otros Dsctos") o 'DETALLADO' (Préstamos/Adelantos,
+    # Faltas y Tardanzas, Otros Descuentos en columnas separadas). Solo afecta
+    # presentación del PDF de Tesorería — no altera ningún cálculo de planilla.
+    formato_reporte_tesoreria = Column(String(20), default='CLASICO', nullable=False, server_default='CLASICO')
+
     fecha_registro = Column(DateTime, default=datetime.now)
 
     # Relaciones
@@ -130,7 +136,13 @@ class Concepto(Base):
     computable_cts = Column(Boolean, default=False)
     computable_grati = Column(Boolean, default=False)
     prorrateable_por_asistencia = Column(Boolean, default=False)
-    
+
+    # Etiqueta de reporte (NO afecta ningún cálculo tributario/de bases imponibles —
+    # esas siguen dependiendo únicamente de los flags "afecto_*"/"computable_*" de arriba).
+    # Marca ingresos como Movilidad o Alimentación que la empresa considera no remunerativos,
+    # para identificarlos en reportes (ej. Reporte de Tesorería).
+    no_remunerativo = Column(Boolean, default=False, server_default='false')
+
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="conceptos")
     

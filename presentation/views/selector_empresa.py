@@ -152,6 +152,21 @@ def render():
                 s_user = st.text_input("Usuario/Correo", value=getattr(emp, 'smtp_user', '') or '')
                 s_pass = st.text_input("Contraseña de Aplicación", value=getattr(emp, 'smtp_pass', '') or '', type="password")
 
+            with st.expander("🏦 Preferencia de Reporte de Tesorería"):
+                st.caption(
+                    "Formato por defecto al descargar el Reporte de Tesorería. Se puede "
+                    "cambiar en el momento de la descarga sin afectar esta preferencia ni "
+                    "ningún cálculo de planilla — es solo presentación."
+                )
+                _FMT_TESO = {"CLASICO": "Clásico (columna única 'Otros Dsctos')",
+                             "DETALLADO": "Detallado (Préstamos/Adelantos, Faltas y Tardanzas, Otros)"}
+                _fmt_actual = getattr(emp, 'formato_reporte_tesoreria', 'CLASICO') or 'CLASICO'
+                fmt_teso_sel = st.selectbox(
+                    "Formato preferido", options=list(_FMT_TESO.keys()),
+                    index=list(_FMT_TESO.keys()).index(_fmt_actual) if _fmt_actual in _FMT_TESO else 0,
+                    format_func=lambda x: _FMT_TESO[x],
+                )
+
             st.markdown("---")
             col_g, col_c = st.columns(2)
             if col_g.button("💾 Guardar Cambios", type="primary", use_container_width=True):
@@ -173,12 +188,14 @@ def render():
                         emp.smtp_pass = s_pass
                         emp.cuenta_cargo_bcp = st.session_state.get('_edit_cta_cargo', emp.cuenta_cargo_bcp)
                         emp.factor_proyeccion_grati = _MAP_GRATI[pol_grati_sel]
+                        emp.formato_reporte_tesoreria = fmt_teso_sel
                         db.commit()
                         # Actualizar session_state si es la empresa activa
                         if st.session_state.get('empresa_activa_id') == editando_id:
                             st.session_state['empresa_activa_nombre'] = razon_social
                             st.session_state['empresa_activa_regimen'] = regimen_sel
                             st.session_state['empresa_acogimiento'] = fecha_acogimiento_sel
+                            st.session_state['empresa_formato_reporte_tesoreria'] = fmt_teso_sel
                         st.session_state.pop('_editando_empresa_id', None)
                         st.session_state['_msg_empresa'] = f"✅ Empresa **{razon_social}** actualizada correctamente."
                         st.rerun()
@@ -244,4 +261,5 @@ def render():
                             st.session_state['empresa_activa_domicilio'] = emp.domicilio or ''
                             st.session_state['empresa_activa_representante'] = emp.representante_legal or ''
                             st.session_state['empresa_activa_correo'] = emp.correo_electronico or ''
+                            st.session_state['empresa_formato_reporte_tesoreria'] = getattr(emp, 'formato_reporte_tesoreria', 'CLASICO') or 'CLASICO'
                             st.rerun()

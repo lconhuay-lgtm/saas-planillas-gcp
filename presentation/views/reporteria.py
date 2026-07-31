@@ -460,9 +460,27 @@ def render():
                 kp2.metric("Total Neto Planilla",   f"S/ {df_plan_sin_tot['NETO A PAGAR'].sum():,.2f}")
 
             st.markdown("---")
+            _FMT_TESO_OPC = {"CLASICO": "Clásico", "DETALLADO": "Detallado (Préstamos/Adelantos, Faltas y Tardanzas, Otros)"}
+            _fmt_default = st.session_state.get('empresa_formato_reporte_tesoreria', 'CLASICO') or 'CLASICO'
+            fmt_teso_rep = st.selectbox(
+                "Formato del reporte", options=list(_FMT_TESO_OPC.keys()),
+                index=list(_FMT_TESO_OPC.keys()).index(_fmt_default) if _fmt_default in _FMT_TESO_OPC else 0,
+                format_func=lambda x: _FMT_TESO_OPC[x],
+                key="sel_fmt_teso_rep",
+                help="Solo cambia cómo se presenta el reporte — no afecta ningún cálculo de planilla.",
+            )
             # En reportería el DF ya incluye la fila de totales, debemos limpiarla antes de enviarla al PDF
             df_p_clean = df_planilla[df_planilla['Apellidos y Nombres'] != 'TOTALES'].copy()
-            
+
+            from infrastructure.database.models import Concepto as _ConceptoTeso
+            _db_norem = SessionLocal()
+            _conceptos_norem_rep = {
+                c.nombre for c in _db_norem.query(_ConceptoTeso).filter_by(
+                    empresa_id=empresa_id, tipo='INGRESO', no_remunerativo=True
+                ).all()
+            }
+            _db_norem.close()
+
             buf_teso = generar_pdf_tesoreria(
                 df_planilla=df_p_clean,
                 df_loc=df_loc_t if not df_loc_t.empty else None,
@@ -470,6 +488,8 @@ def render():
                 periodo_key=sel_key,
                 auditoria_data=auditoria,
                 empresa_ruc=st.session_state.get('empresa_activa_ruc', ''),
+                formato=fmt_teso_rep,
+                conceptos_no_remunerativos=_conceptos_norem_rep,
             )
             st.download_button(
                 "🏦 Descargar Reporte de Tesorería (PDF)",

@@ -99,10 +99,15 @@ def render():
                     "Computable CTS": c.computable_cts,
                     "Computable Grati": c.computable_grati,
                     "Prorrateable (Asist.)": getattr(c, 'prorrateable_por_asistencia', False),
+                    "No Remunerativo": getattr(c, 'no_remunerativo', False),
                 })
             df_c = pd.DataFrame(rows)
             df_v = df_c.drop(columns=["_id"])
 
+            st.caption(
+                "💡 **No Remunerativo**: solo identifica el concepto en reportes (ej. "
+                "Movilidad, Alimentación). No cambia ninguna afectación tributaria."
+            )
             df_edit = st.data_editor(
                 df_v, num_rows="fixed", use_container_width=True, hide_index=True,
                 disabled=["Cód. SUNAT", "Nombre del Concepto", "Tipo"],
@@ -113,6 +118,7 @@ def render():
                     "Computable CTS":   st.column_config.CheckboxColumn(),
                     "Computable Grati": st.column_config.CheckboxColumn(),
                     "Prorrateable (Asist.)": st.column_config.CheckboxColumn(),
+                    "No Remunerativo": st.column_config.CheckboxColumn(),
                 },
                 key="editor_conceptos",
             )
@@ -129,6 +135,7 @@ def render():
                             c.computable_cts   = bool(row["Computable CTS"])
                             c.computable_grati = bool(row["Computable Grati"])
                             c.prorrateable_por_asistencia = bool(row.get("Prorrateable (Asist.)", False))
+                            c.no_remunerativo = bool(row.get("No Remunerativo", False))
                     db.commit()
                     st.session_state['msg_exito_concepto'] = "✅ Reglas tributarias actualizadas correctamente."
                     st.rerun()
@@ -205,9 +212,15 @@ def render():
                         key="e_cb_gra",
                     )
                     prorrateable_edit = st.checkbox(
-                        "Prorrateable por asistencia", 
-                        value=bool(getattr(obj_editar, 'prorrateable_por_asistencia', False)), 
+                        "Prorrateable por asistencia",
+                        value=bool(getattr(obj_editar, 'prorrateable_por_asistencia', False)),
                         key="e_cb_pror"
+                    )
+                    no_remun_edit = st.checkbox(
+                        "No Remunerativo (Movilidad, Alimentación, etc.)",
+                        value=bool(getattr(obj_editar, 'no_remunerativo', False)),
+                        key="e_cb_norem",
+                        help="Solo identifica el concepto en reportes — no cambia ninguna afectación tributaria.",
                     )
 
                 if st.button("🔄 Actualizar Concepto", type="primary", use_container_width=True):
@@ -232,6 +245,7 @@ def render():
                         obj_editar.computable_cts   = comp_cts_edit
                         obj_editar.computable_grati = comp_grati_edit
                         obj_editar.prorrateable_por_asistencia = prorrateable_edit
+                        obj_editar.no_remunerativo = no_remun_edit
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (
                             f"✅ Concepto **{nombre_final}** actualizado — "
@@ -312,6 +326,10 @@ def render():
                 comp_cts   = st.checkbox("Computable para CTS",         value=False, key="cb_cts")
                 comp_grati = st.checkbox("Computable para Gratificación", value=False, key="cb_gra")
                 comp_pror = st.checkbox("Prorrateable por asistencia", value=False, key="cb_pror")
+                comp_norem = st.checkbox(
+                    "No Remunerativo (Movilidad, Alimentación, etc.)", value=False, key="cb_norem",
+                    help="Solo identifica el concepto en reportes — no cambia ninguna afectación tributaria.",
+                )
                 nombre_custom = st.text_input(
                     "Nombre personalizado (opcional)",
                     value=info_sel["desc"].upper(),
@@ -331,7 +349,8 @@ def render():
                             tipo=tipo_val, codigo_sunat=cod_sel,
                             afecto_afp=afp_val, afecto_5ta=q_val, afecto_essalud=ess_val,
                             computable_cts=comp_cts, computable_grati=comp_grati,
-                            prorrateable_por_asistencia=comp_pror
+                            prorrateable_por_asistencia=comp_pror,
+                            no_remunerativo=comp_norem,
                         ))
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (

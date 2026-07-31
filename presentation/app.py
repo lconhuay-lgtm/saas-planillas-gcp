@@ -115,6 +115,11 @@ if not st.session_state.get('_tablas_verificadas'):
                 fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(empresa_id, trabajador_id, periodo_key_deposito)
             )""",
+            # Formato de Reporte de Tesorería (Clásico / Detallado) — solo presentación
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS formato_reporte_tesoreria VARCHAR(20) DEFAULT 'CLASICO'",
+            # Etiqueta "No Remunerativo" para conceptos (Movilidad, Alimentación, etc.) —
+            # solo identifica en reportes, no altera afecto_afp/afecto_5ta/afecto_essalud/etc.
+            "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS no_remunerativo BOOLEAN DEFAULT false",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
