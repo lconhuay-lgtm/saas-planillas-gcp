@@ -163,7 +163,11 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
         ingresos_dict  = data_aud.get('ingresos', {})
         descuentos_dict = data_aud.get('descuentos', {})
         ing_list  = [(k, v) for k, v in ingresos_dict.items()  if v > 0]
-        desc_list = [(k, v) for k, v in descuentos_dict.items() if v > 0]
+        # "Faltas" es informativo (usado por el Reporte de Tesorería formato Detallado): el
+        # monto ya está reflejado en un "Sueldo Base"/"Descanso Médico" más bajo, NO es un
+        # descuento adicional real (no se resta del NETO). Mostrarlo en la boleta duplicaba
+        # visualmente ese monto y no cuadraba contra "TOTAL DESCUENTOS", generando confusión.
+        desc_list = [(k, v) for k, v in descuentos_dict.items() if v > 0 and k != "Faltas"]
 
         tot_ing  = float(row.get('TOTAL BRUTO', 0.0))
         tot_desc = tot_ing - float(row.get('NETO A PAGAR', 0.0))
