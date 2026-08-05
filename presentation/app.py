@@ -35,6 +35,7 @@ from presentation.views import prestamos
 from presentation.views import gestion_usuarios
 from presentation.views import liquidacion_cese
 from presentation.views import gratificaciones_cts
+from presentation.views import autorizacion_boletas
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 if not st.session_state.get('_tablas_verificadas'):
@@ -124,6 +125,10 @@ if not st.session_state.get('_tablas_verificadas'):
             # Todos los conceptos ya creados quedan como Recurrente (true) por defecto —
             # editable luego desde Maestro de Conceptos.
             "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS es_recurrente BOOLEAN DEFAULT true",
+            # Autorización obligatoria de envío de boletas (compuerta antes de enviar por correo)
+            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS boletas_autorizado BOOLEAN DEFAULT false",
+            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS boletas_autorizado_por VARCHAR(100)",
+            "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS boletas_fecha_autorizacion TIMESTAMP",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -166,6 +171,17 @@ if not st.session_state.get('usuario_logueado'):
 
 # 4. Sidebar y enrutador (solo si está autenticado)
 vista_actual = render_sidebar()
+
+# ── COMPUERTA DE AUTORIZACIÓN DE BOLETAS ────────────────────────────────────────
+# Bloquea la navegación a cualquier módulo operativo si la empresa activa tiene
+# boletas de un periodo cerrado (desde 07-2026) pendientes de autorizar. No aplica
+# al Selector de Empresa ni a Gestión de Usuarios, para no dejar a nadie sin salida.
+_empresa_activa_gate = st.session_state.get('empresa_activa_id')
+if _empresa_activa_gate and vista_actual not in ("Selector de Empresa", "Gestión de Usuarios", None):
+    if autorizacion_boletas.hay_pendientes(_empresa_activa_gate):
+        autorizacion_boletas.render()
+        st.stop()
+# ─────────────────────────────────────────────────────────────────────────────────
 
 # 5. Enrutador Principal
 if vista_actual == "Selector de Empresa" or vista_actual is None:

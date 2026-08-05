@@ -258,6 +258,11 @@ class PlanillaMensual(Base):
     cerrada_por = Column(String(100), nullable=True)
     fecha_cierre = Column(DateTime, nullable=True)
 
+    # Autorización obligatoria de envío de boletas (solo aplica a partir de 07-2026)
+    boletas_autorizado          = Column(Boolean, default=False, server_default='false')
+    boletas_autorizado_por      = Column(String(100), nullable=True)
+    boletas_fecha_autorizacion  = Column(DateTime, nullable=True)
+
     empresa = relationship("Empresa", backref="planillas")
 
 

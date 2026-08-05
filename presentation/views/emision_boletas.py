@@ -404,6 +404,66 @@ def generar_zip_boletas(empresa_info, periodo, df_resultados, df_trabajadores, d
     return zip_buffer
 
 
+def enviar_boletas_periodo(empresa_id, empresa_nombre, empresa_info, periodo_key, periodo_legible,
+                            df_resultados, df_trab, df_var, auditoria_data, con_correo):
+    """
+    Envía por correo las boletas de todos los trabajadores en `con_correo` (DataFrame con
+    'Num. Doc.', 'Nombres y Apellidos', 'correo_electronico'). Reutilizable tanto desde el
+    envío manual (pestaña Distribución Digital) como desde la compuerta de autorización.
+    Retorna (exitos, errores).
+    """
+    from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
+    from infrastructure.database.models import LogEnvioBoleta
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    exitos = 0
+    errores = 0
+
+    db_log = SessionLocal()
+    try:
+        total_envios = len(con_correo)
+        for i, (_, t_row) in enumerate(con_correo.iterrows()):
+            dni_envio = str(t_row['Num. Doc.'])
+            nombre_envio = t_row['Nombres y Apellidos']
+            mail_destino = t_row['correo_electronico']
+
+            status_text.text(f"Procesando ({i+1}/{total_envios}): {nombre_envio}")
+
+            # 1. Generar PDF Individual
+            df_ind = df_resultados[df_resultados['DNI'] == dni_envio]
+            pdf_orig = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_ind, df_trab, df_var, auditoria_data)
+
+            # 2. Encriptar con DNI
+            pdf_enc = encriptar_pdf_en_memoria(pdf_orig, dni_envio)
+
+            # 3. Enviar (correo institucional único — configurado por variables de entorno)
+            resultado = enviar_boleta_por_correo(mail_destino, periodo_legible, pdf_enc, nombre_envio, empresa_nombre)
+
+            # 4. Log
+            trab_obj = db_log.query(Trabajador).filter_by(num_doc=dni_envio, empresa_id=empresa_id).first()
+            log = LogEnvioBoleta(
+                empresa_id=empresa_id,
+                trabajador_id=trab_obj.id if trab_obj else 0,
+                periodo_key=periodo_key,
+                correo_destino=mail_destino,
+                estado="ENVIADO" if resultado is True else "ERROR",
+                mensaje_error=None if resultado is True else str(resultado)
+            )
+            db_log.add(log)
+            db_log.commit()
+
+            if resultado is True: exitos += 1
+            else: errores += 1
+
+            progress_bar.progress((i + 1) / total_envios)
+    finally:
+        db_log.close()
+
+    return exitos, errores
+
+
 def render():
     st.title("🖨️ Emisión de Boletas de Pago")
     st.markdown("---")
@@ -558,27 +618,20 @@ def render():
 
             if col_ind2.button(f"📧 Enviar por Correo a {nombre_sel}", use_container_width=True, disabled=not email_destino):
                 from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
-                from infrastructure.database.models import LogEnvioBoleta, Trabajador as TrabajadorModel, Empresa as EmpresaModel
-                
+                from infrastructure.database.models import LogEnvioBoleta, Trabajador as TrabajadorModel
+
                 with st.spinner('Procesando envío seguro...'):
                     try:
                         # 1. Generar PDF
                         df_ind_mail = df_sin_totales[df_sin_totales['DNI'] == dni_sel]
                         pdf_orig_ind = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_ind_mail, df_trab, df_var, auditoria_data)
-                        
+
                         # 2. Encriptar
                         pdf_enc_ind = encriptar_pdf_en_memoria(pdf_orig_ind, dni_sel)
-                        
-                        # 3. Enviar
-                        db_conf = SessionLocal()
-                        emp_db = db_conf.query(EmpresaModel).get(empresa_id)
-                        smtp_conf = {
-                            'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
-                            'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
-                        }
-                        res_mail = enviar_boleta_por_correo(email_destino, periodo_legible, pdf_enc_ind, nombre_sel, empresa_nombre, config_smtp=smtp_conf)
-                        db_conf.close()
-                        
+
+                        # 3. Enviar (correo institucional único — configurado por variables de entorno)
+                        res_mail = enviar_boleta_por_correo(email_destino, periodo_legible, pdf_enc_ind, nombre_sel, empresa_nombre)
+
                         # 4. Registrar Log
                         db_log_ind = SessionLocal()
                         t_obj = db_log_ind.query(TrabajadorModel).filter_by(num_doc=dni_sel, empresa_id=empresa_id).first()
@@ -625,62 +678,14 @@ def render():
         st.success(f"✅ {len(con_correo)} trabajador(es) listos para envío seguro.")
 
         if st.button("🚀 Iniciar Envío Masivo Seguro", use_container_width=True, type="primary"):
-            from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
-            from infrastructure.database.models import LogEnvioBoleta, Empresa as EmpresaModel
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            exitos = 0
-            errores = 0
-            
-            db_log = SessionLocal()
             try:
-                total_envios = len(con_correo)
-                for i, (_, t_row) in enumerate(con_correo.iterrows()):
-                    dni_envio = str(t_row['Num. Doc.'])
-                    nombre_envio = t_row['Nombres y Apellidos']
-                    mail_destino = t_row['correo_electronico']
-                    
-                    status_text.text(f"Procesando ({i+1}/{total_envios}): {nombre_envio}")
-                    
-                    # 1. Generar PDF Individual
-                    df_ind = df_resultados[df_resultados['DNI'] == dni_envio]
-                    pdf_orig = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_ind, df_trab, df_var, auditoria_data)
-                    
-                    # 2. Encriptar con DNI
-                    pdf_enc = encriptar_pdf_en_memoria(pdf_orig, dni_envio)
-                    
-                    # 3. Enviar con configuración de la empresa
-                    emp_db = db_log.query(EmpresaModel).get(empresa_id)
-                    smtp_conf = {
-                        'host': emp_db.smtp_host, 'port': emp_db.smtp_port,
-                        'user': emp_db.smtp_user, 'pass': emp_db.smtp_pass
-                    }
-                    resultado = enviar_boleta_por_correo(mail_destino, periodo_legible, pdf_enc, nombre_envio, empresa_nombre, config_smtp=smtp_conf)
-                    
-                    # 4. Log
-                    log = LogEnvioBoleta(
-                        empresa_id=empresa_id,
-                        trabajador_id=db_log.query(Trabajador).filter_by(num_doc=dni_envio, empresa_id=empresa_id).first().id,
-                        periodo_key=periodo_key,
-                        correo_destino=mail_destino,
-                        estado="ENVIADO" if resultado is True else "ERROR",
-                        mensaje_error=None if resultado is True else str(resultado)
-                    )
-                    db_log.add(log)
-                    db_log.commit()
-                    
-                    if resultado is True: exitos += 1
-                    else: errores += 1
-                    
-                    progress_bar.progress((i + 1) / total_envios)
-                
+                exitos, errores = enviar_boletas_periodo(
+                    empresa_id, empresa_nombre, empresa_info, periodo_key, periodo_legible,
+                    df_resultados, df_trab, df_var, auditoria_data, con_correo,
+                )
                 st.balloons()
                 st.success(f"🎊 Proceso terminado. Enviados: {exitos} | Errores: {errores}")
                 if errores > 0:
                     st.error("Revise los logs de envío en la base de datos para ver los detalles de los errores.")
             except Exception as e_proc:
                 st.error(f"Error crítico en proceso: {e_proc}")
-            finally:
-                db_log.close()
