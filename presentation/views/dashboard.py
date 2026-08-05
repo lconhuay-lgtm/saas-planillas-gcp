@@ -141,5 +141,26 @@ def render():
                             f'Hay {n_prestamos} cronogramas de préstamos activos con cuotas próximas a descontar en la siguiente planilla.'
                             '</div>', unsafe_allow_html=True)
 
+        # Alerta: trabajadores activos sin correo electrónico registrado (no podrán
+        # recibir su boleta de pago por email). Los nuevos registros ya lo exigen —
+        # esto es solo para los trabajadores que ya existían antes de ese cambio.
+        sin_correo_dash = (
+            db.query(Trabajador)
+            .filter_by(empresa_id=empresa_id, situacion='ACTIVO')
+            .filter((Trabajador.correo_electronico.is_(None)) | (Trabajador.correo_electronico == ''))
+            .all()
+        )
+        if sin_correo_dash:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background-color:#FEF2F2; padding:15px; border-radius:10px; border-left: 5px solid #DC2626;">'
+                f'<strong>📧 {len(sin_correo_dash)} trabajador(es) sin correo electrónico registrado</strong><br>'
+                f'No podrán recibir su boleta de pago por correo hasta que se les registre uno en Maestro de Personal.'
+                '</div>', unsafe_allow_html=True
+            )
+            with st.expander("Ver trabajadores sin correo"):
+                for t in sin_correo_dash:
+                    st.caption(f"• {t.nombres} ({t.num_doc})")
+
     finally:
         db.close()

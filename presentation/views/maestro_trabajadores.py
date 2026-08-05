@@ -214,10 +214,12 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     nombres = r3.text_input("Nombres (sin apellidos)*", value=nombres_auto.upper(),
                             key=f"{key_prefix}_nombres")
     
-    u_correo = st.text_input("Correo Electrónico Corporativo/Personal", 
-                             value=correo_val if t else "", 
+    label_correo = "Correo Electrónico Corporativo/Personal*" if not es_edicion else "Correo Electrónico Corporativo/Personal"
+    u_correo = st.text_input(label_correo,
+                             value=correo_val if t else "",
                              key=f"{key_prefix}_correo",
-                             placeholder="ejemplo@empresa.com")
+                             placeholder="ejemplo@empresa.com",
+                             help="Obligatorio para trabajadores nuevos — es el correo al que se enviará su boleta de pago." if not es_edicion else None)
 
     # Nombre completo para compatibilidad con el resto del sistema
     nombre_completo = f"{ap_pat} {ap_mat} {nombres}".strip()
@@ -364,6 +366,9 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     if st.button(label_btn, type="primary", use_container_width=True, key=f"{key_prefix}_btn"):
         if not n_doc or not nombres:
             st.error("❌ Complete los campos obligatorios: Documento y Nombres.")
+            return None
+        if not es_edicion and (not u_correo or "@" not in u_correo):
+            st.error("❌ El Correo Electrónico es obligatorio para registrar un nuevo trabajador — se usa para el envío de su boleta de pago.")
             return None
         if not es_locador and s_base < 1025:
             st.error("❌ El Sueldo Mensual de un empleado de planilla debe ser ≥ S/ 1,025 (RMV).")
