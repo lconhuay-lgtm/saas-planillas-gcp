@@ -176,10 +176,13 @@ vista_actual = render_sidebar()
 # Bloquea la navegación a cualquier módulo operativo si la empresa activa tiene
 # boletas de un periodo cerrado (desde 07-2026) pendientes de autorizar. No aplica
 # al Selector de Empresa ni a Gestión de Usuarios, para no dejar a nadie sin salida.
+# periodo_bloqueante() ya descarta los periodos pospuestos esta sesión — si devuelve
+# None, no se llama a render() ni a st.stop(), y el enrutador sigue con normalidad.
 _empresa_activa_gate = st.session_state.get('empresa_activa_id')
 if _empresa_activa_gate and vista_actual not in ("Selector de Empresa", "Gestión de Usuarios", None):
-    if autorizacion_boletas.hay_pendientes(_empresa_activa_gate):
-        autorizacion_boletas.render()
+    _periodo_bloqueante = autorizacion_boletas.periodo_bloqueante(_empresa_activa_gate)
+    if _periodo_bloqueante:
+        autorizacion_boletas.render(_periodo_bloqueante)
         st.stop()
 # ─────────────────────────────────────────────────────────────────────────────────
 

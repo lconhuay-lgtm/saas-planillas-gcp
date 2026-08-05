@@ -3,7 +3,7 @@ import pandas as pd
 import json
 import io
 from infrastructure.database.connection import SessionLocal
-from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Prestamo, RegistroVacaciones
+from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Prestamo, RegistroVacaciones, LogEnvioBoleta
 from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 
 def render():
@@ -151,16 +151,38 @@ def render():
             .all()
         )
         if sin_correo_dash:
+            # Cruce con boletas que ya quedaron pendientes de envío por esta misma causa
+            ids_sin_correo = [t.id for t in sin_correo_dash]
+            logs_pend = (
+                db.query(LogEnvioBoleta)
+                .filter(LogEnvioBoleta.trabajador_id.in_(ids_sin_correo), LogEnvioBoleta.estado == 'PENDIENTE')
+                .all()
+            )
+            periodos_pend_por_trab = {}
+            for log in logs_pend:
+                periodos_pend_por_trab.setdefault(log.trabajador_id, set()).add(log.periodo_key)
+            total_boletas_pend = sum(len(v) for v in periodos_pend_por_trab.values())
+
             st.markdown("<br>", unsafe_allow_html=True)
+            resumen_pend = (
+                f" — <strong>{total_boletas_pend} boleta(s) pendiente(s) de envío</strong> acumuladas por esta causa"
+                if total_boletas_pend > 0 else ""
+            )
             st.markdown(
                 f'<div style="background-color:#FEF2F2; padding:15px; border-radius:10px; border-left: 5px solid #DC2626;">'
                 f'<strong>📧 {len(sin_correo_dash)} trabajador(es) sin correo electrónico registrado</strong><br>'
-                f'No podrán recibir su boleta de pago por correo hasta que se les registre uno en Maestro de Personal.'
+                f'No podrán recibir su boleta de pago por correo hasta que se les registre uno en Maestro de Personal'
+                f'{resumen_pend}.'
                 '</div>', unsafe_allow_html=True
             )
             with st.expander("Ver trabajadores sin correo"):
                 for t in sin_correo_dash:
-                    st.caption(f"• {t.nombres} ({t.num_doc})")
+                    periodos_t = periodos_pend_por_trab.get(t.id, set())
+                    if periodos_t:
+                        periodos_legibles = ", ".join(sorted(periodos_t))
+                        st.caption(f"• {t.nombres} ({t.num_doc}) — boleta(s) pendiente(s): {periodos_legibles}")
+                    else:
+                        st.caption(f"• {t.nombres} ({t.num_doc})")
 
     finally:
         db.close()

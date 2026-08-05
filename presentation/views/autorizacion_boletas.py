@@ -44,18 +44,30 @@ def _periodos_pendientes(db, empresa_id):
     return pendientes
 
 
-def hay_pendientes(empresa_id) -> bool:
-    """Chequeo rápido usado por el enrutador para decidir si bloquea la navegación."""
+def periodo_bloqueante(empresa_id):
+    """
+    Retorna el periodo_key que debe bloquear la navegación ahora mismo (el más antiguo
+    pendiente que NO haya sido pospuesto en esta sesión), o None si no hay ninguno.
+
+    Se evalúa ANTES de decidir si se llama a render() — así, posponer un periodo no deja
+    la pantalla en blanco: el enrutador simplemente no vuelve a llamar a esta vista.
+    """
     if not empresa_id:
-        return False
+        return None
     db = SessionLocal()
     try:
-        return len(_periodos_pendientes(db, empresa_id)) > 0
+        pendientes = _periodos_pendientes(db, empresa_id)
     finally:
         db.close()
 
+    for p in pendientes:
+        postpone_key = f"_boletas_gate_postpone_{empresa_id}_{p.periodo_key}"
+        if not st.session_state.get(postpone_key):
+            return p.periodo_key
+    return None  # todos los pendientes están pospuestos esta sesión
 
-def render():
+
+def render(periodo_key):
     st.title("🔒 Autorización de Envío de Boletas")
     st.markdown("---")
 
@@ -66,25 +78,21 @@ def render():
 
     db = SessionLocal()
     try:
+        planilla_sel = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
         pendientes = _periodos_pendientes(db, empresa_id)
     finally:
         db.close()
 
-    if not pendientes:
-        return  # nada pendiente — no debería llegar aquí, pero no bloqueamos por seguridad
+    if not planilla_sel:
+        return  # no debería pasar — el llamador ya validó que este periodo existe y está pendiente
 
-    planilla_sel = pendientes[0]
-    periodo_key = planilla_sel.periodo_key
     periodo_legible = _periodo_legible(periodo_key)
-
     postpone_key = f"_boletas_gate_postpone_{empresa_id}_{periodo_key}"
-    if st.session_state.get(postpone_key):
-        return  # ya se pospuso esta sesión — dejar navegar con normalidad
 
     if len(pendientes) > 1:
         st.info(
             f"ℹ️ Hay {len(pendientes)} periodo(s) con boletas pendientes de autorizar en "
-            f"**{empresa_nombre}**. Empezando por el más antiguo: **{periodo_legible}**."
+            f"**{empresa_nombre}**. Mostrando: **{periodo_legible}**."
         )
 
     st.warning(
@@ -152,7 +160,7 @@ def render():
             with st.spinner("Enviando boletas..."):
                 exitos, errores = enviar_boletas_periodo(
                     empresa_id, empresa_nombre, empresa_info, periodo_key, periodo_legible,
-                    df_resultados, df_trab, df_var, auditoria_data, con_correo,
+                    df_resultados, df_trab, df_var, auditoria_data, con_correo, sin_correo,
                 )
             db3 = SessionLocal()
             try:

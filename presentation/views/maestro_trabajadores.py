@@ -8,7 +8,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from infrastructure.database.connection import get_db
-from infrastructure.database.models import Trabajador, PlanillaMensual
+from infrastructure.database.models import Trabajador, PlanillaMensual, LogEnvioBoleta
 
 
 def determinar_regimen_trabajador(fecha_ingreso, regimen_empresa, fecha_acogimiento):
@@ -426,6 +426,44 @@ def render():
     db = next(get_db())
     editando_id = st.session_state.get('_editando_trabajador_id')
 
+    # ── AVISO DE REENVÍO: boletas que quedaron pendientes por falta de correo ─────
+    if st.session_state.get('_catchup_trabajador_id'):
+        _cid = st.session_state['_catchup_trabajador_id']
+        _t_catchup = db.query(Trabajador).filter_by(id=_cid, empresa_id=empresa_id).first()
+        _logs_pend = (
+            db.query(LogEnvioBoleta).filter_by(trabajador_id=_cid, estado='PENDIENTE').all()
+            if _t_catchup else []
+        )
+        _periodos_pend = sorted({l.periodo_key for l in _logs_pend})
+        if _t_catchup and _t_catchup.correo_electronico and _periodos_pend:
+            with st.container(border=True):
+                st.warning(
+                    f"📧 **{_t_catchup.nombres}** tiene {len(_periodos_pend)} boleta(s) "
+                    f"pendiente(s) de envío por falta de correo: {', '.join(_periodos_pend)}. "
+                    f"Ya tiene correo registrado — ¿enviarlas ahora?"
+                )
+                c_send, c_dismiss = st.columns(2)
+                if c_send.button("📤 Enviar boletas pendientes ahora", type="primary", use_container_width=True, key="btn_catchup_enviar"):
+                    from presentation.views.emision_boletas import enviar_boletas_pendientes_trabajador
+                    empresa_info_catchup = {
+                        'nombre': empresa_nombre,
+                        'ruc': st.session_state.get('empresa_activa_ruc', ''),
+                        'domicilio': st.session_state.get('empresa_activa_domicilio', ''),
+                        'representante': st.session_state.get('empresa_activa_representante', ''),
+                    }
+                    with st.spinner("Enviando boletas pendientes..."):
+                        exitos_c, errores_c = enviar_boletas_pendientes_trabajador(
+                            empresa_id, empresa_nombre, empresa_info_catchup, _t_catchup, _periodos_pend
+                        )
+                    st.session_state.pop('_catchup_trabajador_id', None)
+                    st.session_state['_msg_trabajador'] = f"📤 Envío de boletas pendientes: {exitos_c} exitosa(s), {errores_c} con error."
+                    st.rerun()
+                if c_dismiss.button("Descartar por ahora", use_container_width=True, key="btn_catchup_dismiss"):
+                    st.session_state.pop('_catchup_trabajador_id', None)
+                    st.rerun()
+        else:
+            st.session_state.pop('_catchup_trabajador_id', None)
+
     # ── MODO EDICIÓN ────────────────────────────────────────────────────────────
     if editando_id:
         t_edit = db.query(Trabajador).filter_by(id=editando_id).first()
@@ -446,6 +484,14 @@ def render():
                 db.commit()
                 st.session_state.pop('_editando_trabajador_id', None)
                 st.session_state['_msg_trabajador'] = f"✅ Trabajador **{t_edit.nombres}** actualizado correctamente."
+                # Si ahora tiene correo y le habían quedado boletas pendientes por esa
+                # causa, ofrecer reenviarlas apenas vuelva a la pantalla principal.
+                if t_edit.correo_electronico:
+                    _tiene_pendientes = db.query(LogEnvioBoleta).filter_by(
+                        trabajador_id=t_edit.id, estado='PENDIENTE'
+                    ).first()
+                    if _tiene_pendientes:
+                        st.session_state['_catchup_trabajador_id'] = t_edit.id
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al actualizar: {e}")

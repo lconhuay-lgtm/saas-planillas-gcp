@@ -405,11 +405,17 @@ def generar_zip_boletas(empresa_info, periodo, df_resultados, df_trabajadores, d
 
 
 def enviar_boletas_periodo(empresa_id, empresa_nombre, empresa_info, periodo_key, periodo_legible,
-                            df_resultados, df_trab, df_var, auditoria_data, con_correo):
+                            df_resultados, df_trab, df_var, auditoria_data, con_correo, sin_correo=None):
     """
     Envía por correo las boletas de todos los trabajadores en `con_correo` (DataFrame con
     'Num. Doc.', 'Nombres y Apellidos', 'correo_electronico'). Reutilizable tanto desde el
     envío manual (pestaña Distribución Digital) como desde la compuerta de autorización.
+
+    `sin_correo` (opcional): DataFrame de trabajadores saltados por no tener correo — se
+    registra un LogEnvioBoleta con estado PENDIENTE para cada uno, para poder darles
+    seguimiento después (ver alerta en el Dashboard) en vez de perder el rastro de que
+    se les debía esa boleta.
+
     Retorna (exitos, errores).
     """
     from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
@@ -423,6 +429,20 @@ def enviar_boletas_periodo(empresa_id, empresa_nombre, empresa_info, periodo_key
 
     db_log = SessionLocal()
     try:
+        if sin_correo is not None and not sin_correo.empty:
+            for _, t_row in sin_correo.iterrows():
+                dni_pend = str(t_row['Num. Doc.'])
+                trab_obj = db_log.query(Trabajador).filter_by(num_doc=dni_pend, empresa_id=empresa_id).first()
+                db_log.add(LogEnvioBoleta(
+                    empresa_id=empresa_id,
+                    trabajador_id=trab_obj.id if trab_obj else 0,
+                    periodo_key=periodo_key,
+                    correo_destino="",
+                    estado="PENDIENTE",
+                    mensaje_error="Sin correo electrónico registrado al momento del envío",
+                ))
+            db_log.commit()
+
         total_envios = len(con_correo)
         for i, (_, t_row) in enumerate(con_correo.iterrows()):
             dni_envio = str(t_row['Num. Doc.'])
@@ -460,6 +480,48 @@ def enviar_boletas_periodo(empresa_id, empresa_nombre, empresa_info, periodo_key
             progress_bar.progress((i + 1) / total_envios)
     finally:
         db_log.close()
+
+    return exitos, errores
+
+
+def enviar_boletas_pendientes_trabajador(empresa_id, empresa_nombre, empresa_info, trabajador, periodos_key):
+    """
+    Envía a UN solo trabajador las boletas de todos los `periodos_key` (lista de 'MM-YYYY')
+    donde le quedó pendiente por falta de correo. Usado por el aviso de "reenvío" que
+    aparece en Maestro de Personal apenas se le registra/corrige el correo.
+    Retorna (exitos, errores).
+    """
+    from core.use_cases.envio_correos import encriptar_pdf_en_memoria, enviar_boleta_por_correo
+    from infrastructure.database.models import LogEnvioBoleta
+
+    exitos = 0
+    errores = 0
+    db = SessionLocal()
+    try:
+        for periodo_key in periodos_key:
+            df_resultados, auditoria_data, df_trab, df_var = _cargar_planilla_periodo(db, empresa_id, periodo_key)
+            if df_resultados is None:
+                continue
+            df_ind = df_resultados[df_resultados['DNI'] == trabajador.num_doc]
+            if df_ind.empty:
+                continue
+            pdf_orig = generar_pdf_boletas_masivas(empresa_info, periodo_key, df_ind, df_trab, df_var, auditoria_data)
+            pdf_enc = encriptar_pdf_en_memoria(pdf_orig, trabajador.num_doc)
+            resultado = enviar_boleta_por_correo(
+                trabajador.correo_electronico, _periodo_legible(periodo_key), pdf_enc,
+                trabajador.nombres, empresa_nombre,
+            )
+            db.add(LogEnvioBoleta(
+                empresa_id=empresa_id, trabajador_id=trabajador.id, periodo_key=periodo_key,
+                correo_destino=trabajador.correo_electronico,
+                estado="ENVIADO" if resultado is True else "ERROR",
+                mensaje_error=None if resultado is True else str(resultado),
+            ))
+            db.commit()
+            if resultado is True: exitos += 1
+            else: errores += 1
+    finally:
+        db.close()
 
     return exitos, errores
 
@@ -681,7 +743,7 @@ def render():
             try:
                 exitos, errores = enviar_boletas_periodo(
                     empresa_id, empresa_nombre, empresa_info, periodo_key, periodo_legible,
-                    df_resultados, df_trab, df_var, auditoria_data, con_correo,
+                    df_resultados, df_trab, df_var, auditoria_data, con_correo, sin_correo,
                 )
                 st.balloons()
                 st.success(f"🎊 Proceso terminado. Enviados: {exitos} | Errores: {errores}")
