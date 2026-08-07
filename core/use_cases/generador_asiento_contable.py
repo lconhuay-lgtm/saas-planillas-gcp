@@ -26,7 +26,7 @@ from infrastructure.database.models import PlanillaMensual, Concepto, Configurac
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-07-r7"
+VERSION_GENERADOR = "2026-08-07-r8"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -390,7 +390,8 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_essalud_gasto', ''),
                             total_essalud, 0.0, num_doc_asiento, glosa_asiento))
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_essalud_pasivo', ''),
-                            0.0, total_essalud, num_doc_asiento, glosa_asiento))
+                            0.0, total_essalud, num_doc_asiento, glosa_asiento,
+                            cod_prov_clie=_RUC_SUNAT, ruc=_RUC_SUNAT, r_social=_NOMBRE_SUNAT))
     if total_onp > 0:
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_onp', ''),
                             0.0, total_onp, num_doc_asiento, glosa_asiento,
