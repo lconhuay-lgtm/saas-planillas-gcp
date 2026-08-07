@@ -553,12 +553,14 @@ def render():
 
     # ── TAB: ASIENTO CONTABLE (Excel de importación a SISCONT) ─────────────────
     with tab_asiento:
+        from core.use_cases.generador_asiento_contable import VERSION_GENERADOR
         st.markdown("### 📒 Asiento Contable de Planilla")
         st.markdown(f"**Periodo:** {_periodo_legible(sel_key)}  |  **Estado:** {badge}")
         st.caption(
             "Genera el Excel de importación a SISCONT con el asiento de planilla del "
             "mes. No depende de si las boletas ya fueron autorizadas/enviadas."
         )
+        st.caption(f"🔧 Versión del generador: `{VERSION_GENERADOR}`")
         st.markdown("---")
 
         mes_num_asiento = int(sel_key[:2])
