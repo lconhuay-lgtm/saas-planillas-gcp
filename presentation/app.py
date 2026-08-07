@@ -36,6 +36,7 @@ from presentation.views import gestion_usuarios
 from presentation.views import liquidacion_cese
 from presentation.views import gratificaciones_cts
 from presentation.views import autorizacion_boletas
+from presentation.views import configuracion_contable
 
 # ── AUTO-CREAR TABLAS EN NEON (seguro: no borra datos existentes) ──────────────
 if not st.session_state.get('_tablas_verificadas'):
@@ -129,6 +130,29 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS boletas_autorizado BOOLEAN DEFAULT false",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS boletas_autorizado_por VARCHAR(100)",
             "ALTER TABLE planillas_mensuales ADD COLUMN IF NOT EXISTS boletas_fecha_autorizacion TIMESTAMP",
+            # Asiento Contable — cuenta por concepto (Sueldo Base, Asig. Familiar, dinámicos)
+            "ALTER TABLE conceptos ADD COLUMN IF NOT EXISTS cuenta_contable VARCHAR(20)",
+            # Asiento Contable — cuentas fijas de sistema (una fila por empresa)
+            """CREATE TABLE IF NOT EXISTS configuracion_contable (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER NOT NULL UNIQUE REFERENCES empresas(id),
+                cuenta_horas_extra_25 VARCHAR(20),
+                cuenta_horas_extra_35 VARCHAR(20),
+                cuenta_descanso_vacacional VARCHAR(20),
+                cuenta_descanso_medico VARCHAR(20),
+                cuenta_licencia_goce VARCHAR(20),
+                cuenta_essalud_gasto VARCHAR(20),
+                cuenta_essalud_pasivo VARCHAR(20),
+                cuenta_onp VARCHAR(20),
+                cuenta_afp_habitat VARCHAR(20),
+                cuenta_afp_integra VARCHAR(20),
+                cuenta_afp_prima VARCHAR(20),
+                cuenta_afp_profuturo VARCHAR(20),
+                cuenta_retencion_5ta VARCHAR(20),
+                cuenta_remuneraciones_por_pagar VARCHAR(20),
+                cuenta_prestamos_personal VARCHAR(20),
+                fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -198,6 +222,9 @@ elif vista_actual == "Maestro de Personal":
 
 elif vista_actual == "Parámetros Legales":
     parametros_legales.render()
+
+elif vista_actual == "Configuración Contable":
+    configuracion_contable.render()
 
 elif vista_actual == "Ingreso de Asistencias":
     ingreso_asistencias.render()

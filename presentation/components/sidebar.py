@@ -85,6 +85,7 @@ def render_sidebar():
             opciones_base = [
                 "Dashboard Principal",
                 "Parámetros Legales",
+                "Configuración Contable",
                 "Maestro de Personal",
                 "Maestro de Conceptos",
                 "Ingreso de Asistencias",

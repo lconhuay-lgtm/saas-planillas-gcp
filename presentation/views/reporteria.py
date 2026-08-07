@@ -153,10 +153,11 @@ def render():
         return
 
     # Tabs de detalle
-    tab_sabana, tab_resumen, tab_audit, tab_interfaces, tab_loc, tab_tesoreria, tab_bcp, tab_personalizado = st.tabs(
+    tab_sabana, tab_resumen, tab_audit, tab_interfaces, tab_loc, tab_tesoreria, tab_bcp, tab_asiento, tab_personalizado = st.tabs(
         ["📋 Sábana de Planilla", "📊 Resumen de Obligaciones",
          "🔍 Auditoría por Trabajador", "📥 Interfaces SUNAT/AFPnet",
-         "🧾 Locadores (4ta Cat.)", "🏦 Reporte Tesorería", "💳 Pago Masivo BCP", "🛠️ Reporte Personalizado"]
+         "🧾 Locadores (4ta Cat.)", "🏦 Reporte Tesorería", "💳 Pago Masivo BCP",
+         "📒 Asiento Contable", "🛠️ Reporte Personalizado"]
     )
 
     with tab_sabana:
@@ -549,6 +550,55 @@ def render():
                     st.error(f"⚠️ {ve}")
                 except Exception as e:
                     st.error(f"Error inesperado: {e}")
+
+    # ── TAB: ASIENTO CONTABLE (Excel de importación a SISCONT) ─────────────────
+    with tab_asiento:
+        st.markdown("### 📒 Asiento Contable de Planilla")
+        st.markdown(f"**Periodo:** {_periodo_legible(sel_key)}  |  **Estado:** {badge}")
+        st.caption(
+            "Genera el Excel de importación a SISCONT con el asiento de planilla del "
+            "mes. No depende de si las boletas ya fueron autorizadas/enviadas."
+        )
+        st.markdown("---")
+
+        mes_num_asiento = int(sel_key[:2])
+        if mes_num_asiento in (7, 12):
+            st.warning(
+                f"⚠️ El periodo **{_periodo_legible(sel_key)}** no genera asiento automático "
+                f"todavía — la gratificación de julio/diciembre está pendiente de un módulo "
+                f"de provisión mensual (fase futura). Este periodo se registra manualmente."
+            )
+        elif estado_sel != "CERRADA":
+            st.info("ℹ️ El asiento contable solo está disponible para periodos **cerrados**.")
+        else:
+            if st.button("📒 Generar Asiento Contable (Excel)", type="primary", use_container_width=True, key="btn_gen_asiento"):
+                from core.use_cases.generador_asiento_contable import generar_asiento_planilla, AsientoContableError
+                try:
+                    with st.spinner("Armando el asiento contable..."):
+                        buf_asiento = generar_asiento_planilla(db, empresa_id, sel_key)
+                    st.success("✅ Asiento generado y cuadrado correctamente (Debe = Haber).")
+                    st.download_button(
+                        f"📥 Descargar ASIENTO_{sel_key}.xlsx",
+                        data=buf_asiento,
+                        file_name=f"ASIENTO_PLANILLA_{sel_key}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="dl_asiento",
+                    )
+                except AsientoContableError as ace:
+                    if ace.cuentas_faltantes:
+                        st.error(f"⚠️ **No se puede generar el asiento contable** — {ace.mensaje}")
+                        for cuenta_f in ace.cuentas_faltantes:
+                            st.markdown(f"- {cuenta_f}")
+                        st.info(
+                            "Vaya a **Configuración Contable** (cuentas fijas) o **Maestro de "
+                            "Conceptos** (cuentas por concepto) para completarlas, y vuelva a "
+                            "intentarlo."
+                        )
+                    else:
+                        st.warning(f"ℹ️ {ace.mensaje}")
+                except Exception as e_asiento:
+                    st.error(f"Error inesperado al generar el asiento: {e_asiento}")
 
     db.close()
     # ── TAB: REPORTE PERSONALIZADO ────────────────────────────────────────────

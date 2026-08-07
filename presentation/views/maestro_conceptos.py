@@ -102,6 +102,7 @@ def render():
                     "Prorrateable (Asist.)": getattr(c, 'prorrateable_por_asistencia', False),
                     "No Remunerativo": getattr(c, 'no_remunerativo', False),
                     "Recurrente": getattr(c, 'es_recurrente', True),
+                    "Cuenta Contable": getattr(c, 'cuenta_contable', '') or '',
                 })
             df_c = pd.DataFrame(rows)
             df_v = df_c.drop(columns=["_id"])
@@ -113,7 +114,10 @@ def render():
                 "o es un pago único/esporádico (ej. un bono especial). Solo afecta cómo se "
                 "*proyectan* los meses restantes del año para la retención de 5ta categoría — "
                 "no cambia el cálculo del mes actual. *Gratificación y Bonificación 9% siempre "
-                "se tratan como pago único por ley, sin importar esta casilla.*"
+                "se tratan como pago único por ley, sin importar esta casilla.*  \n"
+                "💡 **Cuenta Contable**: código de la cuenta a usar en el Asiento de Planilla "
+                "(Excel de importación a SISCONT). Si queda vacía, ese concepto bloqueará la "
+                "generación del asiento hasta que se configure."
             )
             df_edit = st.data_editor(
                 df_v, num_rows="fixed", use_container_width=True, hide_index=True,
@@ -127,6 +131,7 @@ def render():
                     "Prorrateable (Asist.)": st.column_config.CheckboxColumn(),
                     "No Remunerativo": st.column_config.CheckboxColumn(),
                     "Recurrente": st.column_config.CheckboxColumn(),
+                    "Cuenta Contable": st.column_config.TextColumn(),
                 },
                 key="editor_conceptos",
             )
@@ -145,6 +150,7 @@ def render():
                             c.prorrateable_por_asistencia = bool(row.get("Prorrateable (Asist.)", False))
                             c.no_remunerativo = bool(row.get("No Remunerativo", False))
                             c.es_recurrente = bool(row.get("Recurrente", True))
+                            c.cuenta_contable = (row.get("Cuenta Contable", "") or "").strip() or None
                     db.commit()
                     st.session_state['msg_exito_concepto'] = "✅ Reglas tributarias actualizadas correctamente."
                     st.rerun()
@@ -261,6 +267,12 @@ def render():
                             value=bool(getattr(obj_editar, 'es_recurrente', True)),
                             key="e_cb_recurrente",
                         )
+                    cuenta_contable_edit = st.text_input(
+                        "Cuenta Contable (Asiento de Planilla)",
+                        value=getattr(obj_editar, 'cuenta_contable', '') or '',
+                        key="e_cuenta_contable",
+                        help="Cuenta a usar en el Excel de importación a SISCONT. Si queda vacía, bloqueará la generación del asiento hasta que se configure.",
+                    )
 
                 if st.button("🔄 Actualizar Concepto", type="primary", use_container_width=True):
                     try:
@@ -286,6 +298,7 @@ def render():
                         obj_editar.prorrateable_por_asistencia = prorrateable_edit
                         obj_editar.no_remunerativo = no_remun_edit
                         obj_editar.es_recurrente = recurrente_edit
+                        obj_editar.cuenta_contable = cuenta_contable_edit.strip() or None
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (
                             f"✅ Concepto **{nombre_final}** actualizado — "
@@ -404,6 +417,14 @@ def render():
             )
             comp_recurrente = recurrencia_sel.startswith("Recurrente")
 
+            st.markdown("---")
+            cuenta_contable_nueva = st.text_input(
+                "📒 Cuenta Contable (Asiento de Planilla)",
+                key="cuenta_contable_nueva",
+                placeholder="ej. 6211",
+                help="Cuenta a usar en el Excel de importación a SISCONT. Si queda vacía, bloqueará la generación del asiento hasta que se configure — puede completarla después.",
+            )
+
             if st.button("➕ Crear Concepto", type="primary", use_container_width=True):
                 nombre_final = nombre_custom.strip().upper() or info_sel["desc"].upper()
                 existe = db.query(Concepto).filter_by(empresa_id=empresa_id, nombre=nombre_final).first()
@@ -419,6 +440,7 @@ def render():
                             prorrateable_por_asistencia=comp_pror,
                             no_remunerativo=comp_norem,
                             es_recurrente=comp_recurrente,
+                            cuenta_contable=cuenta_contable_nueva.strip() or None,
                         ))
                         db.commit()
                         st.session_state['msg_exito_concepto'] = (

@@ -150,9 +150,13 @@ class Concepto(Base):
     # mes que se paga, sin multiplicarlo por los meses que faltan del año.
     es_recurrente = Column(Boolean, default=True, server_default='true')
 
+    # Cuenta contable para el Asiento de Planilla (Excel de importación a SISCONT).
+    # NULL/vacío = el generador del asiento se detiene y avisa que falta configurarla.
+    cuenta_contable = Column(String(20), nullable=True)
+
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="conceptos")
-    
+
 class ParametroLegal(Base):
     __tablename__ = "parametros_legales"
     
@@ -357,3 +361,40 @@ class LogEnvioBoleta(Base):
     estado = Column(String(20), default="ENVIADO") # ENVIADO | ERROR
     mensaje_error = Column(Text, nullable=True)
     fecha_envio = Column(DateTime, default=datetime.now)
+
+
+# 10. CUENTAS CONTABLES FIJAS PARA EL ASIENTO DE PLANILLA (una fila por empresa)
+class ConfiguracionContable(Base):
+    """
+    Cuentas contables "de sistema" (no son Conceptos configurables) usadas para armar
+    el Excel de importación del asiento de planilla a SISCONT. Los conceptos dinámicos
+    (Sueldo Base, Asignación Familiar, y cualquier concepto propio de la empresa) usan
+    en cambio Concepto.cuenta_contable.
+    """
+    __tablename__ = "configuracion_contable"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, unique=True)
+
+    cuenta_horas_extra_25 = Column(String(20), nullable=True)
+    cuenta_horas_extra_35 = Column(String(20), nullable=True)
+    cuenta_descanso_vacacional = Column(String(20), nullable=True)
+    cuenta_descanso_medico = Column(String(20), nullable=True)
+    cuenta_licencia_goce = Column(String(20), nullable=True)
+
+    cuenta_essalud_gasto = Column(String(20), nullable=True)
+    cuenta_essalud_pasivo = Column(String(20), nullable=True)
+
+    cuenta_onp = Column(String(20), nullable=True)
+    cuenta_afp_habitat = Column(String(20), nullable=True)
+    cuenta_afp_integra = Column(String(20), nullable=True)
+    cuenta_afp_prima = Column(String(20), nullable=True)
+    cuenta_afp_profuturo = Column(String(20), nullable=True)
+
+    cuenta_retencion_5ta = Column(String(20), nullable=True)
+    cuenta_remuneraciones_por_pagar = Column(String(20), nullable=True)
+    cuenta_prestamos_personal = Column(String(20), nullable=True)
+
+    fecha_actualizacion = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    empresa = relationship("Empresa")
