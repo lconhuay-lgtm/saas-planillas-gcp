@@ -26,7 +26,7 @@ from infrastructure.database.models import PlanillaMensual, Concepto, Configurac
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-07-r4"
+VERSION_GENERADOR = "2026-08-07-r5"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -273,6 +273,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         d = _diag(dni, nombre)
 
         # Débitos: cada concepto de ingreso con monto > 0
+        debe_ingresos_trab = 0.0  # Total Bruto de ESTE trabajador (sin EsSalud)
         for nombre_c, monto in ingresos.items():
             monto = float(monto or 0)
             if monto <= 0 or nombre_c in _CONCEPTOS_GRATI_EXCLUIDOS:
@@ -296,6 +297,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             filas.append(_fila(11, 1, fecha_asiento, cuenta, monto, 0.0, num_doc_asiento, glosa_asiento,
                                 cod_prov_clie=dni, ruc=dni, r_social=nombre))
             d["debe"] += monto
+            debe_ingresos_trab += monto
 
         essalud_trab = float(row.get('Aporte Seg. Social', 0) or 0)
         onp_trab = float(row.get('ONP (13%)', 0) or 0)
@@ -313,15 +315,18 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         # la MISMA cuenta de AFP/ONP del trabajador, sea positivo o negativo — nunca se
         # descarta, aunque sea negativo (ver bug corregido: antes se perdía).
         aj_afp = float(descuentos.get(_CLAVE_AJUSTE_AFP, 0) or 0)
+        credito_pension_trab = 0.0  # lo que se le retuvo por AFP/ONP, para el residual de abajo
         if sist in total_afp:
             total_afp[sist] += monto_afp_calculado + aj_afp
             d["haber"] += monto_afp_calculado + aj_afp
+            credito_pension_trab = monto_afp_calculado + aj_afp
         elif sist == "ONP":
             total_onp += aj_afp
             d["haber"] += aj_afp
+            credito_pension_trab = aj_afp  # onp_trab ya se sumó arriba en la línea de EsSalud/ONP/5ta
 
         # Créditos por trabajador: préstamos/descuentos dinámicos (cuenta propia)
-        tardanzas = float(descuentos.get('Tardanzas', 0) or 0)
+        credito_prestamos_dinamicos = 0.0
         for nombre_c, monto in descuentos.items():
             monto = float(monto or 0)
             if monto <= 0 or nombre_c in _DESCUENTOS_ESPECIALES:
@@ -330,13 +335,17 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             filas.append(_fila(11, 1, fecha_asiento, cuenta_desc, 0.0, monto, num_doc_asiento, glosa_asiento,
                                 cod_prov_clie=dni, ruc=dni, r_social=nombre))
             d["haber"] += monto
+            credito_prestamos_dinamicos += monto
 
-        # Remuneraciones por Pagar = Neto + Tardanzas + Ajuste Varios (ninguno de los
-        # dos tiene cuenta propia — reducen/aumentan lo que se le debe al trabajador
-        # sin generar un pasivo hacia un tercero distinto).
-        aj_otros = float(descuentos.get(_CLAVE_AJUSTE_OTROS, 0) or 0)
-        neto = float(row.get('NETO A PAGAR', 0) or 0)
-        monto_remun_pagar = neto + tardanzas + aj_otros
+        # Remuneraciones por Pagar se calcula como RESIDUAL (Total Bruto del trabajador
+        # menos todo lo que ya se le acreditó a otras cuentas) — NO se usa el campo
+        # "NETO A PAGAR" guardado en la planilla. Esto garantiza que el asiento cuadre
+        # siempre por construcción, sin depender de que ese campo coincida exactamente
+        # con la suma de sus componentes (evita descuadres si el dato guardado difiere).
+        monto_remun_pagar = (
+            debe_ingresos_trab - onp_trab - ret5ta_trab
+            - credito_pension_trab - credito_prestamos_dinamicos
+        )
         if monto_remun_pagar > 0:
             filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_remuneraciones_por_pagar', ''),
                                 0.0, monto_remun_pagar, num_doc_asiento, glosa_asiento,
