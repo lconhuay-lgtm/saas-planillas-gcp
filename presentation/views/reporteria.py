@@ -595,6 +595,26 @@ def render():
                             "Conceptos** (cuentas por concepto) para completarlas, y vuelva a "
                             "intentarlo."
                         )
+                    elif ace.detalle_diagnostico:
+                        st.error(f"⚠️ {ace.mensaje}")
+                        st.markdown("##### 🔍 Diagnóstico — trabajador(es) que causan la diferencia")
+                        st.caption(
+                            "Cada fila compara, para ese trabajador, todo lo que se le cargó como "
+                            "gasto/aporte (Debe) contra todo lo que se le abonó a alguna cuenta "
+                            "(Haber). Si no coinciden, ahí está el origen del descuadre."
+                        )
+                        st.dataframe(
+                            pd.DataFrame(ace.detalle_diagnostico)[["dni", "nombre", "debe", "haber", "diferencia"]]
+                            .rename(columns={"dni": "DNI", "nombre": "Trabajador", "debe": "Debe (S/)",
+                                              "haber": "Haber (S/)", "diferencia": "Diferencia (S/)"}),
+                            use_container_width=True, hide_index=True,
+                        )
+                        st.info(
+                            "Si la diferencia coincide con un 'Ajuste AFP' o 'Ajuste Varios' hecho "
+                            "en el Panel de Auditoría Tributaria de ese trabajador, revise ese "
+                            "periodo en Cálculo de Planilla. Si no reconoce la causa, copie esta "
+                            "tabla y compártala para seguir investigando."
+                        )
                     else:
                         st.warning(f"ℹ️ {ace.mensaje}")
                 except Exception as e_asiento:

@@ -41,7 +41,13 @@ _CONCEPTOS_GRATI_EXCLUIDOS = {"Gratificación", "Bono Ext. 9%"}
 # flujo genérico de "descuento dinámico -> cuenta de Préstamos".
 _CLAVE_AJUSTE_AFP = "Ajuste AFP (Audit)"
 _CLAVE_AJUSTE_OTROS = "Ajuste Varios (Audit)"
-_DESCUENTOS_ESPECIALES = ("Faltas", "Tardanzas", _CLAVE_AJUSTE_AFP, _CLAVE_AJUSTE_OTROS)
+# "Retención 5ta Cat." TAMBIÉN aparece en desglose_descuentos (calculo_mensual.py la
+# agrega ahí para mostrarla en la boleta) — pero ya se contabiliza aparte con el valor
+# de la columna "Ret. 5ta Cat." de la sábana (variable total_5ta). Si no se excluye acá,
+# se contaba DOS VECES: una vez bien (cuenta de Retención 5ta) y otra de más (crédito
+# extra a Préstamos al Personal) — esto inflaba el Haber por encima del Debe.
+_CLAVE_RET_5TA = "Retención 5ta Cat."
+_DESCUENTOS_ESPECIALES = ("Faltas", "Tardanzas", _CLAVE_AJUSTE_AFP, _CLAVE_AJUSTE_OTROS, _CLAVE_RET_5TA)
 
 _AFP_CUENTA_ATTR = {
     "AFP HABITAT": "cuenta_afp_habitat",
@@ -65,10 +71,13 @@ COLUMNAS_SISCONT = [
 class AsientoContableError(Exception):
     """Error esperado (periodo no soportado, planilla no cerrada, cuentas sin
     configurar) — el mensaje ya viene listo para mostrarle al usuario."""
-    def __init__(self, mensaje, cuentas_faltantes=None):
+    def __init__(self, mensaje, cuentas_faltantes=None, detalle_diagnostico=None):
         super().__init__(mensaje)
         self.mensaje = mensaje
         self.cuentas_faltantes = cuentas_faltantes or []
+        # Lista de dicts {"dni", "nombre", "debe", "haber", "diferencia"} — solo se
+        # llena cuando el asiento no cuadra, para señalar qué trabajador(es) lo causan.
+        self.detalle_diagnostico = detalle_diagnostico or []
 
 
 def _fila(origen, num_voucher, fecha, cuenta, debe, haber, num_doc, glosa,
@@ -239,6 +248,17 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     total_5ta = 0.0
     total_afp = {k: 0.0 for k in _AFP_CUENTA_ATTR}
 
+    # Diagnóstico: Debe/Haber acumulado POR TRABAJADOR (incluye su porción de las
+    # cuentas globales, aunque en el archivo salgan como una sola línea totalizada) —
+    # así, si el asiento no cuadra, se puede señalar exactamente quién causa la
+    # diferencia en vez de solo el total general.
+    diagnostico = {}  # dni -> {"nombre": str, "debe": float, "haber": float}
+
+    def _diag(dni, nombre):
+        if dni not in diagnostico:
+            diagnostico[dni] = {"nombre": nombre, "debe": 0.0, "haber": 0.0}
+        return diagnostico[dni]
+
     for _, row in df_data.iterrows():
         dni = str(row['DNI'])
         nombre = row['Apellidos y Nombres']
@@ -246,6 +266,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         ingresos = info.get('ingresos', {}) or {}
         descuentos = info.get('descuentos', {}) or {}
         sist = str(row.get('Sist. Pensión', '') or '')
+        d = _diag(dni, nombre)
 
         # Débitos: cada concepto de ingreso con monto > 0
         for nombre_c, monto in ingresos.items():
@@ -270,10 +291,17 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
                 cuenta = cuentas_concepto.get(nombre_c, "")
             filas.append(_fila(11, 1, fecha_asiento, cuenta, monto, 0.0, num_doc_asiento, glosa_asiento,
                                 cod_prov_clie=dni, ruc=dni, r_social=nombre))
+            d["debe"] += monto
 
-        total_essalud += float(row.get('Aporte Seg. Social', 0) or 0)
-        total_onp += float(row.get('ONP (13%)', 0) or 0)
-        total_5ta += float(row.get('Ret. 5ta Cat.', 0) or 0)
+        essalud_trab = float(row.get('Aporte Seg. Social', 0) or 0)
+        onp_trab = float(row.get('ONP (13%)', 0) or 0)
+        ret5ta_trab = float(row.get('Ret. 5ta Cat.', 0) or 0)
+        total_essalud += essalud_trab
+        total_onp += onp_trab
+        total_5ta += ret5ta_trab
+        d["debe"] += essalud_trab   # EsSalud es gasto también, aunque salga en línea global
+        d["haber"] += essalud_trab + onp_trab + ret5ta_trab
+
         monto_afp_calculado = sum(float(row.get(c, 0) or 0) for c in ["AFP Aporte", "AFP Seguro", "AFP Comis."])
 
         # "Ajuste AFP (Audit)" — ajuste manual del Panel de Auditoría Tributaria, se
@@ -283,8 +311,10 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         aj_afp = float(descuentos.get(_CLAVE_AJUSTE_AFP, 0) or 0)
         if sist in total_afp:
             total_afp[sist] += monto_afp_calculado + aj_afp
+            d["haber"] += monto_afp_calculado + aj_afp
         elif sist == "ONP":
             total_onp += aj_afp
+            d["haber"] += aj_afp
 
         # Créditos por trabajador: préstamos/descuentos dinámicos (cuenta propia)
         tardanzas = float(descuentos.get('Tardanzas', 0) or 0)
@@ -295,6 +325,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             cuenta_desc = cuentas_concepto.get(nombre_c) or getattr(cfg, 'cuenta_prestamos_personal', '')
             filas.append(_fila(11, 1, fecha_asiento, cuenta_desc, 0.0, monto, num_doc_asiento, glosa_asiento,
                                 cod_prov_clie=dni, ruc=dni, r_social=nombre))
+            d["haber"] += monto
 
         # Remuneraciones por Pagar = Neto + Tardanzas + Ajuste Varios (ninguno de los
         # dos tiene cuenta propia — reducen/aumentan lo que se le debe al trabajador
@@ -306,6 +337,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_remuneraciones_por_pagar', ''),
                                 0.0, monto_remun_pagar, num_doc_asiento, glosa_asiento,
                                 cod_prov_clie=dni, ruc=dni, r_social=nombre))
+            d["haber"] += monto_remun_pagar
 
     # ── Líneas globales: EsSalud (gasto + pasivo), ONP, AFP x4, Retención 5ta ──
     if total_essalud > 0:
@@ -328,9 +360,20 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     total_debe = sum(f["Monto Debe"] for f in filas)
     total_haber = sum(f["Monto Haber"] for f in filas)
     if round(total_debe - total_haber, 2) != 0:
+        detalle = []
+        for dni, d in diagnostico.items():
+            diferencia = round(d["debe"] - d["haber"], 2)
+            if diferencia != 0:
+                detalle.append({
+                    "dni": dni, "nombre": d["nombre"],
+                    "debe": round(d["debe"], 2), "haber": round(d["haber"], 2),
+                    "diferencia": diferencia,
+                })
+        detalle.sort(key=lambda x: abs(x["diferencia"]), reverse=True)
         raise AsientoContableError(
             f"El asiento no cuadra (Debe: S/ {total_debe:,.2f} vs Haber: S/ {total_haber:,.2f}). "
-            f"No se generó el archivo — este es un error interno, no de configuración."
+            f"No se generó el archivo — este es un error interno, no de configuración.",
+            detalle_diagnostico=detalle,
         )
 
     df_out = pd.DataFrame(filas, columns=COLUMNAS_SISCONT)
