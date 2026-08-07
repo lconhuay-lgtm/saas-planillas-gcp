@@ -36,6 +36,13 @@ _MESES_SIN_ASIENTO = (7, 12)
 # de jul/dic, pero se excluyen explícitamente como seguro adicional)
 _CONCEPTOS_GRATI_EXCLUIDOS = {"Gratificación", "Bono Ext. 9%"}
 
+# Claves de "desglose_descuentos" que NO son conceptos configurables ni préstamos —
+# tienen su propio tratamiento contable especial (ver más abajo), no deben entrar al
+# flujo genérico de "descuento dinámico -> cuenta de Préstamos".
+_CLAVE_AJUSTE_AFP = "Ajuste AFP (Audit)"
+_CLAVE_AJUSTE_OTROS = "Ajuste Varios (Audit)"
+_DESCUENTOS_ESPECIALES = ("Faltas", "Tardanzas", _CLAVE_AJUSTE_AFP, _CLAVE_AJUSTE_OTROS)
+
 _AFP_CUENTA_ATTR = {
     "AFP HABITAT": "cuenta_afp_habitat",
     "AFP INTEGRA": "cuenta_afp_integra",
@@ -186,7 +193,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         float(v or 0) > 0
         for info in auditoria_data.values()
         for k, v in (info.get('descuentos', {}) or {}).items()
-        if k not in ("Faltas", "Tardanzas") and k not in cuentas_concepto
+        if k not in _DESCUENTOS_ESPECIALES and k not in cuentas_concepto
     )
     if necesita_prestamos:
         _cuenta_fija('cuenta_prestamos_personal', "Préstamos al Personal (Configuración Contable)")
@@ -205,7 +212,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             else:
                 _cuenta_concepto(nombre_c)
         for nombre_c, monto in (info.get('descuentos', {}) or {}).items():
-            if float(monto or 0) <= 0 or nombre_c in ("Faltas", "Tardanzas"):
+            if float(monto or 0) <= 0 or nombre_c in _DESCUENTOS_ESPECIALES:
                 continue
             if nombre_c not in cuentas_concepto:
                 continue  # es un préstamo (no es Concepto) — ya cubierto por cuenta fija arriba
@@ -267,24 +274,34 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         total_essalud += float(row.get('Aporte Seg. Social', 0) or 0)
         total_onp += float(row.get('ONP (13%)', 0) or 0)
         total_5ta += float(row.get('Ret. 5ta Cat.', 0) or 0)
+        monto_afp_calculado = sum(float(row.get(c, 0) or 0) for c in ["AFP Aporte", "AFP Seguro", "AFP Comis."])
+
+        # "Ajuste AFP (Audit)" — ajuste manual del Panel de Auditoría Tributaria, se
+        # resta del neto POR SU CUENTA (no es un "descuento dinámico" más) y debe ir a
+        # la MISMA cuenta de AFP/ONP del trabajador, sea positivo o negativo — nunca se
+        # descarta, aunque sea negativo (ver bug corregido: antes se perdía).
+        aj_afp = float(descuentos.get(_CLAVE_AJUSTE_AFP, 0) or 0)
         if sist in total_afp:
-            total_afp[sist] += sum(float(row.get(c, 0) or 0) for c in ["AFP Aporte", "AFP Seguro", "AFP Comis."])
+            total_afp[sist] += monto_afp_calculado + aj_afp
+        elif sist == "ONP":
+            total_onp += aj_afp
 
         # Créditos por trabajador: préstamos/descuentos dinámicos (cuenta propia)
         tardanzas = float(descuentos.get('Tardanzas', 0) or 0)
         for nombre_c, monto in descuentos.items():
             monto = float(monto or 0)
-            if monto <= 0 or nombre_c in ("Faltas", "Tardanzas"):
+            if monto <= 0 or nombre_c in _DESCUENTOS_ESPECIALES:
                 continue
             cuenta_desc = cuentas_concepto.get(nombre_c) or getattr(cfg, 'cuenta_prestamos_personal', '')
             filas.append(_fila(11, 1, fecha_asiento, cuenta_desc, 0.0, monto, num_doc_asiento, glosa_asiento,
                                 cod_prov_clie=dni, ruc=dni, r_social=nombre))
 
-        # Remuneraciones por Pagar = Neto + Tardanzas (Tardanzas no tiene cuenta propia,
-        # se absorbe aquí — reduce lo que se le debe al trabajador, sin generar un
-        # pasivo hacia un tercero, así que no necesita su propia cuenta contable).
+        # Remuneraciones por Pagar = Neto + Tardanzas + Ajuste Varios (ninguno de los
+        # dos tiene cuenta propia — reducen/aumentan lo que se le debe al trabajador
+        # sin generar un pasivo hacia un tercero distinto).
+        aj_otros = float(descuentos.get(_CLAVE_AJUSTE_OTROS, 0) or 0)
         neto = float(row.get('NETO A PAGAR', 0) or 0)
-        monto_remun_pagar = neto + tardanzas
+        monto_remun_pagar = neto + tardanzas + aj_otros
         if monto_remun_pagar > 0:
             filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_remuneraciones_por_pagar', ''),
                                 0.0, monto_remun_pagar, num_doc_asiento, glosa_asiento,
