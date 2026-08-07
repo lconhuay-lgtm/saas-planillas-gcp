@@ -26,7 +26,7 @@ from infrastructure.database.models import PlanillaMensual, Concepto, Configurac
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-07-r6"
+VERSION_GENERADOR = "2026-08-07-r7"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -75,6 +75,20 @@ _AFP_CUENTA_ATTR = {
     "AFP INTEGRA": "cuenta_afp_integra",
     "AFP PRIMA": "cuenta_afp_prima",
     "AFP PROFUTURO": "cuenta_afp_profuturo",
+}
+
+# RUC/Razón Social de las entidades a quienes se les debe ONP, Retención de 5ta y cada
+# AFP — se usan en las líneas globales (Cod.Prov.Clie/RUC/R.Social) para que SISCONT
+# pueda identificar al acreedor de cada cuenta por pagar, aunque el monto esté
+# totalizado por empresa (no por trabajador).
+_RUC_SUNAT = "20131312955"
+_NOMBRE_SUNAT = "SUNAT"
+
+_AFP_RUC_RSOCIAL = {
+    "AFP HABITAT": ("20551464971", "AFP Habitat S.A."),
+    "AFP INTEGRA": ("20157036794", "AFP Integra S.A."),
+    "AFP PRIMA": ("20510398158", "Prima AFP S.A."),
+    "AFP PROFUTURO": ("20142829551", "Profuturo AFP S.A."),
 }
 
 COLUMNAS_SISCONT = [
@@ -256,7 +270,9 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
 
     # ── Ya validado: armar las filas del asiento ──
     dias_mes = calendar.monthrange(anio_num, mes_num)[1]
-    fecha_asiento = date(anio_num, mes_num, dias_mes)
+    # Como texto "dd/mm/yyyy" (no como objeto date) para que SISCONT no lo reciba en
+    # formato ISO — Fecha, Fec.Doc y Fec.Ven usan este mismo valor en cada fila.
+    fecha_asiento = date(anio_num, mes_num, dias_mes).strftime('%d/%m/%Y')
     num_doc_asiento = f"BS{mes_num:02d}-{anio_num}"
     glosa_asiento = f"PLANILLA DE SUELDO {MESES_ES.get(mes_num, '')} {anio_num}"
 
@@ -377,14 +393,18 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
                             0.0, total_essalud, num_doc_asiento, glosa_asiento))
     if total_onp > 0:
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_onp', ''),
-                            0.0, total_onp, num_doc_asiento, glosa_asiento))
+                            0.0, total_onp, num_doc_asiento, glosa_asiento,
+                            cod_prov_clie=_RUC_SUNAT, ruc=_RUC_SUNAT, r_social=_NOMBRE_SUNAT))
     for admin, monto in total_afp.items():
         if monto > 0:
+            ruc_afp, rsocial_afp = _AFP_RUC_RSOCIAL.get(admin, ("", ""))
             filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _AFP_CUENTA_ATTR[admin], ''),
-                                0.0, monto, num_doc_asiento, glosa_asiento))
+                                0.0, monto, num_doc_asiento, glosa_asiento,
+                                cod_prov_clie=ruc_afp, ruc=ruc_afp, r_social=rsocial_afp))
     if total_5ta > 0:
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_retencion_5ta', ''),
-                            0.0, total_5ta, num_doc_asiento, glosa_asiento))
+                            0.0, total_5ta, num_doc_asiento, glosa_asiento,
+                            cod_prov_clie=_RUC_SUNAT, ruc=_RUC_SUNAT, r_social=_NOMBRE_SUNAT))
 
     # ── Seguro interno: el asiento SIEMPRE debe cuadrar ──
     total_debe = sum(f["Monto Debe"] for f in filas)
