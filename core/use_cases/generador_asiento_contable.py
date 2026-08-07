@@ -26,7 +26,7 @@ from infrastructure.database.models import PlanillaMensual, Concepto, Configurac
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-07-r5"
+VERSION_GENERADOR = "2026-08-07-r6"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -52,6 +52,23 @@ _CLAVE_AJUSTE_OTROS = "Ajuste Varios (Audit)"
 # extra a Préstamos al Personal) — esto inflaba el Haber por encima del Debe.
 _CLAVE_RET_5TA = "Retención 5ta Cat."
 _DESCUENTOS_ESPECIALES = ("Faltas", "Tardanzas", _CLAVE_AJUSTE_AFP, _CLAVE_AJUSTE_OTROS, _CLAVE_RET_5TA)
+
+# _calcular_pension() en calculo_mensual.py TAMBIÉN escribe el detalle de AFP/ONP dentro
+# de desglose_descuentos (con el nombre de la administradora incluido en la clave, ej.
+# "APORTE OBLIGATORIO AFP INTEGRA") — pero ese monto ya se contabiliza aparte, leyendo
+# directo las columnas "AFP Aporte"/"AFP Seguro"/"AFP Comis."/"ONP (13%)" de la sábana.
+# Si no se excluye, se duplicaba: una vez bien (cuenta de AFP/ONP) y otra de más (crédito
+# extra a Préstamos al Personal), "robándole" ese monto a Remuneraciones por Pagar.
+_PREFIJOS_DETALLE_PENSION = ("APORTE OBLIGATORIO ", "PRIMA DE SEGURO ", "COMISIÓN ")
+
+
+def _es_descuento_ya_manejado(nombre: str) -> bool:
+    """True si esta clave de desglose_descuentos ya tiene su propio tratamiento contable
+    (informativo, ajuste de auditoría, retención 5ta, o detalle de AFP/ONP) y NO debe
+    pasar por el flujo genérico de 'descuento dinámico -> cuenta de Préstamos'."""
+    if nombre in _DESCUENTOS_ESPECIALES or nombre == "Aporte ONP":
+        return True
+    return nombre.startswith(_PREFIJOS_DETALLE_PENSION)
 
 _AFP_CUENTA_ATTR = {
     "AFP HABITAT": "cuenta_afp_habitat",
@@ -206,7 +223,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         float(v or 0) > 0
         for info in auditoria_data.values()
         for k, v in (info.get('descuentos', {}) or {}).items()
-        if k not in _DESCUENTOS_ESPECIALES and k not in cuentas_concepto
+        if not _es_descuento_ya_manejado(k) and k not in cuentas_concepto
     )
     if necesita_prestamos:
         _cuenta_fija('cuenta_prestamos_personal', "Préstamos al Personal (Configuración Contable)")
@@ -225,7 +242,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             else:
                 _cuenta_concepto(nombre_c)
         for nombre_c, monto in (info.get('descuentos', {}) or {}).items():
-            if float(monto or 0) <= 0 or nombre_c in _DESCUENTOS_ESPECIALES:
+            if float(monto or 0) <= 0 or _es_descuento_ya_manejado(nombre_c):
                 continue
             if nombre_c not in cuentas_concepto:
                 continue  # es un préstamo (no es Concepto) — ya cubierto por cuenta fija arriba
@@ -329,7 +346,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         credito_prestamos_dinamicos = 0.0
         for nombre_c, monto in descuentos.items():
             monto = float(monto or 0)
-            if monto <= 0 or nombre_c in _DESCUENTOS_ESPECIALES:
+            if monto <= 0 or _es_descuento_ya_manejado(nombre_c):
                 continue
             cuenta_desc = cuentas_concepto.get(nombre_c) or getattr(cfg, 'cuenta_prestamos_personal', '')
             filas.append(_fila(11, 1, fecha_asiento, cuenta_desc, 0.0, monto, num_doc_asiento, glosa_asiento,
