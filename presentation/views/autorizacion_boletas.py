@@ -7,6 +7,7 @@ trabajador, y presionar "Autorizar y Enviar" antes de que salgan los correos rea
 
 Solo aplica a periodos a partir de 07-2026 (no afecta meses anteriores ya procesados).
 """
+import json
 from datetime import datetime
 import streamlit as st
 
@@ -32,13 +33,26 @@ def _periodo_ordenable(periodo_key: str) -> int:
         return 0
 
 
+def _tiene_datos_planilla(p) -> bool:
+    """True si el periodo tiene al menos un trabajador de Planilla (5ta categoría)
+    calculado. Un periodo puede cerrarse con resultado_json='[]' cuando la empresa solo
+    tuvo locadores (4ta categoría) ese mes — ellos reciben recibo por honorarios, no
+    boleta, así que no hay nada que autorizar/enviar y la compuerta no debe activarse."""
+    try:
+        return len(json.loads(p.resultado_json or '[]')) > 0
+    except Exception:
+        return False
+
+
 def _periodos_pendientes(db, empresa_id):
-    """Periodos CERRADOS, no autorizados, desde 07-2026 en adelante — el más antiguo primero."""
+    """Periodos CERRADOS, no autorizados, desde 07-2026 en adelante, con boletas reales
+    que enviar — el más antiguo primero."""
     planillas = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, estado='CERRADA').all()
     pendientes = [
         p for p in planillas
         if not getattr(p, 'boletas_autorizado', False)
         and _periodo_ordenable(p.periodo_key) >= UMBRAL_PERIODO
+        and _tiene_datos_planilla(p)
     ]
     pendientes.sort(key=lambda p: _periodo_ordenable(p.periodo_key))
     return pendientes

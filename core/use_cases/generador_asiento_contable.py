@@ -26,7 +26,7 @@ from infrastructure.database.models import PlanillaMensual, Concepto, Configurac
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-07-r8"
+VERSION_GENERADOR = "2026-08-07-r9"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -161,6 +161,12 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
 
     df_resultados = pd.read_json(io.StringIO(planilla.resultado_json), orient='records')
     auditoria_data = json.loads(planilla.auditoria_json)
+    if df_resultados.empty or 'Apellidos y Nombres' not in df_resultados.columns:
+        raise AsientoContableError(
+            f"No hay trabajadores de Planilla (5ta categoría) calculados en {periodo_key} "
+            f"— probablemente ese mes solo hubo locadores (4ta categoría), que emiten "
+            f"recibo por honorarios y no generan asiento por este módulo."
+        )
     df_data = df_resultados[df_resultados['Apellidos y Nombres'] != 'TOTALES']
 
     if df_data.empty:
