@@ -61,6 +61,11 @@ class Empresa(Base):
     # presentación del PDF de Tesorería — no altera ningún cálculo de planilla.
     formato_reporte_tesoreria = Column(String(20), default='CLASICO', nullable=False, server_default='CLASICO')
 
+    # --- EPS (Ley 26790) ---
+    # Interruptor maestro: si está en False, el checkbox "Afecto a EPS" de Maestro de
+    # Personal se oculta para esta empresa (evita marcar EPS por error sin contrato vigente).
+    usa_eps = Column(Boolean, default=False, server_default='false')
+
     fecha_registro = Column(DateTime, default=datetime.now)
 
     # Relaciones
@@ -107,6 +112,10 @@ class Trabajador(Base):
     # Datos Previsionales y Seguros
     asig_fam = Column(Boolean, default=False)
     eps = Column(Boolean, default=False)
+    # Descuento fijo mensual al trabajador por EPS (S/) — política propia de cada
+    # empresa, independiente del crédito patronal contra EsSalud. Solo aplica si
+    # eps=True. 0.0 = la empresa no le descuenta nada al trabajador por este concepto.
+    monto_eps_trabajador = Column(Float, default=0.0, server_default='0')
     sistema_pension = Column(String(50))
     comision_afp = Column(String(50))
     cuspp = Column(String(50))
@@ -394,6 +403,9 @@ class ConfiguracionContable(Base):
     cuenta_retencion_5ta = Column(String(20), nullable=True)
     cuenta_remuneraciones_por_pagar = Column(String(20), nullable=True)
     cuenta_prestamos_personal = Column(String(20), nullable=True)
+    # Cuenta por pagar a la EPS privada (Ley 26790) — recibe el descuento EPS del
+    # trabajador. NO recibe el crédito patronal (ver nota en generador_asiento_contable.py).
+    cuenta_eps_por_pagar = Column(String(20), nullable=True)
 
     fecha_actualizacion = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

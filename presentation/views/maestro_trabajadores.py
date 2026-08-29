@@ -113,6 +113,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     # ── Valores iniciales ──────────────────────────────────────────────────────
     regimen_empresa = st.session_state.get('empresa_activa_regimen', 'Régimen General')
     es_micro_empresa = "Micro Empresa" in regimen_empresa
+    usa_eps_empresa = bool(st.session_state.get('empresa_activa_usa_eps', False))
 
     if t is None:
         t_doc_val, n_doc_val = "DNI", ""
@@ -124,6 +125,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         s_pension_val, t_comision_val, cuspp_val = "ONP", "FLUJO", ""
         banco_val, n_cuenta_val, cci_val = "BCP", "", ""
         a_fam_val, eps_val = False, False
+        monto_eps_val = 0.0
         seguro_social_val = "ESSALUD"
         tipo_contrato_val = "PLANILLA"
         suspension_4ta_val = False
@@ -156,6 +158,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         cci_val = t.cci or ""
         a_fam_val = bool(t.asig_fam)
         eps_val = bool(t.eps)
+        monto_eps_val = float(getattr(t, 'monto_eps_trabajador', 0.0) or 0.0)
         seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
         tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
         suspension_4ta_val = bool(getattr(t, 'tiene_suspension_4ta', False) or False)
@@ -350,6 +353,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         st.caption("⚠️ **Asignación Familiar** y **EPS** no aplican a locadores de servicio (no hay beneficios sociales).")
         a_fam = False
         eps_afecto = False
+        monto_eps_input = 0.0
         tiene_suspension_4ta_val = st.checkbox(
             "🧾 Suspensión de Retenciones 4ta Categoría",
             value=suspension_4ta_val,
@@ -359,7 +363,21 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
     else:
         col_opt1, col_opt2 = st.columns(2)
         a_fam = col_opt1.checkbox("Asignación Familiar", value=a_fam_val, key=f"{key_prefix}_afam")
-        eps_afecto = col_opt2.checkbox("Afecto a EPS", value=eps_val, key=f"{key_prefix}_eps")
+        if usa_eps_empresa:
+            eps_afecto = col_opt2.checkbox("Afecto a EPS", value=eps_val, key=f"{key_prefix}_eps")
+            monto_eps_input = 0.0
+            if eps_afecto:
+                monto_eps_input = col_opt2.number_input(
+                    "Descuento EPS al trabajador (S/ por mes)",
+                    min_value=0.0, step=5.0, value=monto_eps_val,
+                    key=f"{key_prefix}_monto_eps",
+                    help="Monto fijo mensual que se le descontará en la boleta. Déjelo en 0 "
+                         "si la empresa asume el costo completo del plan EPS.",
+                )
+        else:
+            eps_afecto = False
+            monto_eps_input = 0.0
+            col_opt2.caption("EPS no está habilitado para esta empresa (ver Panel de Control).")
         tiene_suspension_4ta_val = False
 
     label_btn = "💾 Guardar Cambios" if es_edicion else "💾 Registrar e Inscribir en la Nube"
@@ -395,6 +413,7 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "cci": cci if es_banco else "",
             "asig_fam": a_fam,
             "eps": eps_afecto,
+            "monto_eps_trabajador": monto_eps_input if eps_afecto else 0.0,
             "seguro_social": seguro_social,
             "tiene_suspension_4ta": tiene_suspension_4ta_val,
             "dias_vacaciones_anuales": dias_vac_input,

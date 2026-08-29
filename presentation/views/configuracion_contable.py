@@ -73,6 +73,15 @@ def render():
             c_remun_pagar = c7.text_input("Remuneraciones por Pagar (neto)", value=_v('cuenta_remuneraciones_por_pagar'))
             c_prestamos = c8.text_input("Préstamos al Personal (por cobrar)", value=_v('cuenta_prestamos_personal'))
 
+            st.markdown("---")
+            st.markdown("##### EPS (Ley 26790)")
+            st.caption(
+                "Solo se usa si algún trabajador tiene un descuento EPS configurado en "
+                "Maestro de Personal — recibe ese monto, que se le debe a la aseguradora "
+                "privada (no a SUNAT)."
+            )
+            c_eps = st.text_input("EPS Por Pagar", value=_v('cuenta_eps_por_pagar'))
+
             guardar = st.form_submit_button("💾 Guardar Configuración", type="primary", use_container_width=True)
 
         if guardar:
@@ -95,6 +104,7 @@ def render():
                 cfg.cuenta_retencion_5ta = c_5ta.strip()
                 cfg.cuenta_remuneraciones_por_pagar = c_remun_pagar.strip()
                 cfg.cuenta_prestamos_personal = c_prestamos.strip()
+                cfg.cuenta_eps_por_pagar = c_eps.strip()
                 db.commit()
                 st.session_state['_msg_config_contable'] = "✅ Configuración contable actualizada correctamente."
                 st.rerun()

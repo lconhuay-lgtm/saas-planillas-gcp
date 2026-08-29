@@ -160,6 +160,17 @@ def render():
                     format_func=lambda x: _FMT_TESO[x],
                 )
 
+            with st.expander("🩺 EPS (Ley 26790)"):
+                st.caption(
+                    "Actívelo solo si la empresa tiene un contrato vigente con una EPS "
+                    "privada (Rímac, Pacífico, etc.). Si está apagado, el checkbox 'Afecto "
+                    "a EPS' de Maestro de Personal queda oculto para esta empresa."
+                )
+                usa_eps_sel = st.checkbox(
+                    "¿Esta empresa contrata EPS?",
+                    value=bool(getattr(emp, 'usa_eps', False)),
+                )
+
             st.markdown("---")
             col_g, col_c = st.columns(2)
             if col_g.button("💾 Guardar Cambios", type="primary", use_container_width=True):
@@ -178,6 +189,7 @@ def render():
                         emp.cuenta_cargo_bcp = st.session_state.get('_edit_cta_cargo', emp.cuenta_cargo_bcp)
                         emp.factor_proyeccion_grati = _MAP_GRATI[pol_grati_sel]
                         emp.formato_reporte_tesoreria = fmt_teso_sel
+                        emp.usa_eps = usa_eps_sel
                         db.commit()
                         # Actualizar session_state si es la empresa activa
                         if st.session_state.get('empresa_activa_id') == editando_id:
@@ -185,6 +197,7 @@ def render():
                             st.session_state['empresa_activa_regimen'] = regimen_sel
                             st.session_state['empresa_acogimiento'] = fecha_acogimiento_sel
                             st.session_state['empresa_formato_reporte_tesoreria'] = fmt_teso_sel
+                            st.session_state['empresa_activa_usa_eps'] = usa_eps_sel
                         st.session_state.pop('_editando_empresa_id', None)
                         st.session_state['_msg_empresa'] = f"✅ Empresa **{razon_social}** actualizada correctamente."
                         st.rerun()
@@ -251,4 +264,5 @@ def render():
                             st.session_state['empresa_activa_representante'] = emp.representante_legal or ''
                             st.session_state['empresa_activa_correo'] = emp.correo_electronico or ''
                             st.session_state['empresa_formato_reporte_tesoreria'] = getattr(emp, 'formato_reporte_tesoreria', 'CLASICO') or 'CLASICO'
+                            st.session_state['empresa_activa_usa_eps'] = bool(getattr(emp, 'usa_eps', False))
                             st.rerun()

@@ -26,7 +26,7 @@ from infrastructure.database.models import PlanillaMensual, Concepto, Configurac
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-07-r9"
+VERSION_GENERADOR = "2026-08-29-r1"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -51,7 +51,10 @@ _CLAVE_AJUSTE_OTROS = "Ajuste Varios (Audit)"
 # se contaba DOS VECES: una vez bien (cuenta de Retención 5ta) y otra de más (crédito
 # extra a Préstamos al Personal) — esto inflaba el Haber por encima del Debe.
 _CLAVE_RET_5TA = "Retención 5ta Cat."
-_DESCUENTOS_ESPECIALES = ("Faltas", "Tardanzas", _CLAVE_AJUSTE_AFP, _CLAVE_AJUSTE_OTROS, _CLAVE_RET_5TA)
+# "Descuento EPS" (Ley 26790) también tiene su propio tratamiento: línea dedicada a la
+# cuenta "EPS Por Pagar" (ver más abajo) — no debe caer en la cuenta de Préstamos.
+_CLAVE_DSCTO_EPS = "Descuento EPS"
+_DESCUENTOS_ESPECIALES = ("Faltas", "Tardanzas", _CLAVE_AJUSTE_AFP, _CLAVE_AJUSTE_OTROS, _CLAVE_RET_5TA, _CLAVE_DSCTO_EPS)
 
 # _calcular_pension() en calculo_mensual.py TAMBIÉN escribe el detalle de AFP/ONP dentro
 # de desglose_descuentos (con el nombre de la administradora incluido en la clave, ej.
@@ -248,6 +251,13 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     if necesita_prestamos:
         _cuenta_fija('cuenta_prestamos_personal', "Préstamos al Personal (Configuración Contable)")
 
+    necesita_eps = any(
+        float((info.get('descuentos', {}) or {}).get(_CLAVE_DSCTO_EPS, 0) or 0) > 0
+        for info in auditoria_data.values()
+    )
+    if necesita_eps:
+        _cuenta_fija('cuenta_eps_por_pagar', "EPS Por Pagar (Configuración Contable)")
+
     # ── Validar cuentas de conceptos dinámicos (ingresos y descuentos) ──
     for info in auditoria_data.values():
         for nombre_c, monto in (info.get('ingresos', {}) or {}).items():
@@ -376,6 +386,16 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             d["haber"] += monto
             credito_prestamos_dinamicos += monto
 
+        # Descuento EPS al trabajador (Ley 26790) — línea propia a "EPS Por Pagar" (se le
+        # debe a la aseguradora privada, no a SUNAT ni es un préstamo). Igual que ONP/5ta/
+        # AFP, se resta explícitamente del residual de abajo para no perderlo ni duplicarlo.
+        credito_eps_trab = float(descuentos.get(_CLAVE_DSCTO_EPS, 0) or 0)
+        if credito_eps_trab > 0:
+            filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_eps_por_pagar', ''),
+                                0.0, credito_eps_trab, num_doc_asiento, glosa_asiento,
+                                cod_prov_clie=dni, ruc=dni, r_social=nombre))
+            d["haber"] += credito_eps_trab
+
         # Remuneraciones por Pagar se calcula como RESIDUAL (Total Bruto del trabajador
         # menos todo lo que ya se le acreditó a otras cuentas) — NO se usa el campo
         # "NETO A PAGAR" guardado en la planilla. Esto garantiza que el asiento cuadre
@@ -383,7 +403,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         # con la suma de sus componentes (evita descuadres si el dato guardado difiere).
         monto_remun_pagar = (
             debe_ingresos_trab - onp_trab - ret5ta_trab
-            - credito_pension_trab - credito_prestamos_dinamicos
+            - credito_pension_trab - credito_prestamos_dinamicos - credito_eps_trab
         )
         if monto_remun_pagar > 0:
             filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_remuneraciones_por_pagar', ''),

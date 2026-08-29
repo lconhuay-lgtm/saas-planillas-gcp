@@ -249,6 +249,17 @@ def _calcular_haberes(
     if dscto_tardanzas > 0:
         desglose_descuentos["Tardanzas"] = round(dscto_tardanzas, 2)
 
+    # Descuento EPS al trabajador (Ley 26790): monto fijo mensual configurado en Maestro
+    # de Personal, solo si está "Afecto a EPS". A diferencia de "Faltas", este SÍ es
+    # dinero real que se le descuenta — se suma a descuentos_manuales.
+    monto_eps_trab = (
+        float(row.get('Monto EPS Trabajador', 0.0) or 0.0)
+        if row.get('EPS', 'No') == "Sí" else 0.0
+    )
+    if monto_eps_trab > 0:
+        desglose_descuentos["Descuento EPS"] = round(monto_eps_trab, 2)
+        descuentos_manuales += monto_eps_trab
+
     # ── CUOTAS DE PRÉSTAMOS/DESCUENTOS PROGRAMADOS ──────────────────
     # IMPORTANTE: Estos montos NO afectan bases de AFP, 5ta o EsSalud.
     # Solo se restan al final para llegar al NETO A PAGAR.
@@ -639,6 +650,17 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         aporte_essalud = max(h['base_essalud'], p['rmv']) * (p['tasa_essalud'] / 100)
         etiqueta_seguro = "ESSALUD"
 
+    # Crédito EPS patronal (Ley 26790) — puramente informativo, para consulta en el
+    # Asiento Contable. Es el tope legal (tasa_essalud - tasa_eps) que la empresa dejó
+    # de pagarle a SUNAT por afiliar a este trabajador a una EPS privada. NO se resta
+    # de neto_pagar (no es un descuento al trabajador) y NO se agrega a "fila" (no debe
+    # sumarse en ningún total de la sábana/Tesorería/Dashboard) — solo se expone en
+    # auditoria para quien genere el asiento contable. El costo real facturado por la
+    # aseguradora puede diferir de este tope; no se usa como una cifra ya conciliada.
+    credito_eps_patronal = 0.0
+    if etiqueta_seguro == "ESSALUD-EPS":
+        credito_eps_patronal = max(h['base_essalud'], p['rmv']) * ((p['tasa_essalud'] - p['tasa_eps']) / 100)
+
     neto_pagar = h['ingresos_totales'] - pen['total_pension'] - aj_afp - retencion_quinta - descuentos_manuales
 
     # --- FILA DE LA SÁBANA CORPORATIVA ---
@@ -681,6 +703,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         "base_afp": round(h['base_afp_onp'], 2),   # para AFPnet
         "seguro_social": etiqueta_seguro,
         "aporte_seg_social": round(aporte_essalud, 2),
+        "credito_eps_patronal": round(credito_eps_patronal, 2),  # informativo, ver nota arriba
         "ingresos": h['desglose_ingresos'], "descuentos": desglose_descuentos,
         "totales": {"ingreso": h['ingresos_totales'], "descuento": (pen['total_pension'] + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
         "quinta": {

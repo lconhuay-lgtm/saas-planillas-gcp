@@ -97,6 +97,7 @@ def cargar_trabajadores_df(db, empresa_id, mes_calc: int = 0, anio_calc: int = 0
             "Comisión AFP": t.comision_afp or "FLUJO",
             "Asig. Fam.": "Sí" if t.asig_fam else "No",
             "EPS": "Sí" if t.eps else "No",
+            "Monto EPS Trabajador": float(getattr(t, 'monto_eps_trabajador', 0.0) or 0.0),
             "CUSPP": t.cuspp or "",
             "Cargo": t.cargo or "",
             "Seguro Social": getattr(t, 'seguro_social', None) or "ESSALUD",

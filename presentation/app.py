@@ -153,6 +153,11 @@ if not st.session_state.get('_tablas_verificadas'):
                 cuenta_prestamos_personal VARCHAR(20),
                 fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )""",
+            # EPS (Ley 26790) — interruptor por empresa, descuento fijo por trabajador,
+            # y cuenta contable para lo que se le debe a la aseguradora privada.
+            "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS usa_eps BOOLEAN DEFAULT false",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS monto_eps_trabajador FLOAT DEFAULT 0",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_eps_por_pagar VARCHAR(20)",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
