@@ -596,6 +596,14 @@ def render():
 
     db.close()
 
+    if df_resultados.empty or 'Apellidos y Nombres' not in df_resultados.columns:
+        st.info(
+            f"ℹ️ El periodo **{_periodo_legible(periodo_key)}** no tiene trabajadores de "
+            f"Planilla (5ta categoría) calculados — probablemente ese mes solo hubo "
+            f"locadores (4ta categoría), que reciben recibo por honorarios y no boleta."
+        )
+        return
+
     # Dict con datos completos de la empresa para los PDF
     empresa_info = {
         'nombre':        st.session_state.get('empresa_activa_nombre', ''),

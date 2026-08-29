@@ -25,9 +25,18 @@ def render():
         count_planilla = db.query(Trabajador).filter_by(empresa_id=empresa_id, tipo_contrato='PLANILLA', situacion='ACTIVO').count()
         count_locadores = db.query(Trabajador).filter_by(empresa_id=empresa_id, tipo_contrato='LOCADOR', situacion='ACTIVO').count()
         
-        # Última planilla cerrada para KPIs financieros
-        ultima_planilla = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, estado='CERRADA').order_by(PlanillaMensual.fecha_calculo.desc()).first()
-        
+        # Última planilla cerrada CON trabajadores de Planilla (5ta categoría) calculados,
+        # para KPIs financieros — un periodo puede cerrarse con resultado_json='[]' cuando
+        # la empresa solo tuvo locadores (4ta) ese mes, y ese no sirve para estos KPIs.
+        ultima_planilla = None
+        for _cand in db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, estado='CERRADA').order_by(PlanillaMensual.fecha_calculo.desc()).all():
+            try:
+                if len(json.loads(_cand.resultado_json or '[]')) > 0:
+                    ultima_planilla = _cand
+                    break
+            except Exception:
+                continue
+
         # Deuda total pendiente en préstamos
         total_prestamos_saldo = 0.0
         prestamos_activos = db.query(Prestamo).filter_by(empresa_id=empresa_id, estado='ACTIVO').all()
@@ -93,6 +102,8 @@ def render():
                         st.rerun()
             except Exception as e:
                 st.error(f"Error procesando métricas: {e}")
+        elif count_planilla == 0:
+            st.info("ℹ️ Esta empresa solo tiene locadores (4ta categoría) — el análisis de costos de Planilla (5ta categoría) no aplica.")
         else:
             st.info("ℹ️ No hay planillas cerradas para mostrar análisis de costos. Los gráficos se activarán tras el primer cierre mensual.")
 
