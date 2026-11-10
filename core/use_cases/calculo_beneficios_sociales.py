@@ -153,15 +153,16 @@ def extras_computables_cts(variables_meses: list, nombres_computables, meses_ser
     de Conceptos que el trabajador percibió con regularidad.
 
     Criterio adoptado:
-      - Semestre completo (6 meses de servicio): es regular si se percibió en
-        al menos 3 de los 6 meses; se incorpora la suma / 6.
-      - Semestre incompleto (ingreso o cese dentro del periodo): es regular si
-        se percibió en al menos la mitad de los meses con servicio; se
-        incorpora la suma / meses con servicio.
+      - Un concepto es regular solo si se percibió en al menos 3 meses del
+        semestre (también cuando el trabajador tiene menos de 6 meses de
+        servicio: con 1 o 2 meses no hay regularidad y nada variable entra).
+      - Semestre completo: se incorpora la suma / 6.
+      - Semestre incompleto (ingreso o cese dentro del periodo): se incorpora la
+        suma / meses con servicio, para no diluir el promedio.
     """
     nombres = set(nombres_computables or ())
     divisor = max(1, min(6, int(meses_servicio or 0)))
-    umbral = 3 if divisor >= 6 else -(-divisor // 2)  # techo de divisor/2
+    umbral = 3
 
     montos, meses_con = {}, {}
     for v in variables_meses or []:

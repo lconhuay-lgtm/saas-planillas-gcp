@@ -134,9 +134,17 @@ def test_solo_cuentan_conceptos_marcados_y_no_la_gratificacion_ni_ajustes():
 
 
 def test_semestre_incompleto_divide_entre_meses_con_servicio():
-    meses = [{'conceptos': {"BONO": 200.0}} for _ in range(2)]
+    meses = [{'conceptos': {"BONO": 200.0}} for _ in range(3)]
     r = extras_computables_cts(meses, {"BONO"}, meses_servicio=4)
-    assert r['total'] == pytest.approx(100.0)   # 400 / 4, regular con 2 de 4 meses
+    assert r['total'] == pytest.approx(150.0)   # 600 / 4, regular con 3 de 4 meses
+
+
+def test_pago_unico_de_trabajador_nuevo_no_es_regular():
+    # Caso real: ingreso en octubre, un pago de S/ 2,559.32 en su único mes.
+    meses = [{'conceptos': {"BONO": 2559.32}}]
+    r = extras_computables_cts(meses, {"BONO"}, meses_servicio=1)
+    assert r['total'] == 0.0
+    assert r['no_regulares'] == ["BONO"]
 
 
 def test_extras_entran_en_la_base_de_la_cts():
