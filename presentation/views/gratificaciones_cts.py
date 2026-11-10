@@ -27,15 +27,20 @@ from core.use_cases.calculo_beneficios_sociales import (
     SEMESTRES_GRATI,
     PERIODOS_CTS,
     rango_cts,
+    rango_grati,
     periodo_keys_rango,
     meses_con_servicio,
     dias_no_computables_cts,
     extras_computables_cts,
+    extras_computables_regulares,
+    OPCIONES_GRATI_VOLUNTARIA,
 )
 from infrastructure.repositories.repo_beneficios import (
     cargar_parametro_vigente,
     cargar_variables_rango,
     nombres_conceptos_computables_cts,
+    nombres_conceptos_computables_grati,
+    planilla_cerrada,
     sueldos_de_planilla,
 )
 
@@ -538,12 +543,26 @@ def _anio_from_periodo_key(periodo_key_dep: str) -> int:
 
 def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
                                  regimen_empresa: str, fecha_acogimiento):
-    st.markdown("#### Cálculo de Gratificaciones Legales")
+    st.markdown("#### Cálculo de Gratificaciones")
     st.info(
         "Ley 27735 — Se paga 1 sueldo íntegro en Julio y Diciembre. "
-        "Para MYPE Pequeña Empresa: 50%. Micro Empresa: no aplica. "
-        "Incluye Bono Extraordinario 9% (Ley 29351)."
+        "Pequeña Empresa: 50% por ley. Micro Empresa: no es obligatoria, pero puede "
+        "otorgarse de forma voluntaria (media o completa). "
+        "Incluye Bonificación Extraordinaria (Ley 30334): 9%, o 6.75% si el trabajador tiene EPS."
     )
+
+    # Gratificación voluntaria: por defecto, la política guardada en la empresa.
+    _opciones_vol = list(OPCIONES_GRATI_VOLUNTARIA.keys())
+    _pol_empresa = st.session_state.get('empresa_factor_grati', None)
+    _idx_vol = next((i for i, k in enumerate(_opciones_vol)
+                     if OPCIONES_GRATI_VOLUNTARIA[k] == _pol_empresa), 0)
+    opcion_vol = st.radio(
+        "Gratificación a otorgar", _opciones_vol, index=_idx_vol, horizontal=True,
+        key="grati_voluntaria",
+        help="Funciona como mínimo: si la ley obliga a pagar más (Régimen General o "
+             "trabajadores con derechos adquiridos), se paga lo que manda la ley.",
+    )
+    factor_voluntario = OPCIONES_GRATI_VOLUNTARIA[opcion_vol]
 
     col1, col2, col3 = st.columns(3)
     semestre  = col1.selectbox("Semestre", list(SEMESTRES_GRATI.keys()),
@@ -560,9 +579,6 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
                   use_container_width=True, key="btn_calc_grati"):
         db = SessionLocal()
         try:
-            empresa_obj    = db.query(Empresa).filter_by(id=empresa_id).first()
-            factor_override = getattr(empresa_obj, 'factor_proyeccion_grati', None)
-
             # RMV vigente al mes de pago (julio/diciembre) — orden cronológico real.
             param = cargar_parametro_vigente(db, empresa_id, anio, mes_pago)
             if not param or not param.rmv:
@@ -583,6 +599,11 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
                 .order_by(Trabajador.nombres)
                 .all()
             )
+
+            # Conceptos "Computable Grati" percibidos con regularidad en el semestre
+            ini_sem, fin_sem = rango_grati(semestre, anio)
+            vars_sem   = cargar_variables_rango(db, empresa_id, periodo_keys_rango(ini_sem, fin_sem))
+            nombres_cg = nombres_conceptos_computables_grati(db, empresa_id)
         finally:
             db.close()
 
@@ -592,6 +613,10 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
 
         filas = []
         for t in trabajadores:
+            extras_g = extras_computables_regulares(
+                vars_sem.get(t.id, []), nombres_cg,
+                meses_con_servicio(t.fecha_ingreso, getattr(t, 'fecha_cese', None), ini_sem, fin_sem),
+            )
             r = calcular_gratificacion_trabajador(
                 trabajador=t,
                 semestre=semestre,
@@ -599,21 +624,26 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
                 rmv=rmv,
                 regimen_empresa=regimen_empresa,
                 fecha_acogimiento=fecha_acogimiento,
-                factor_override=factor_override,
+                factor_override=factor_voluntario,
+                extras_computables=extras_g['total'],
             )
+            obs_g = r['observaciones']
+            if extras_g['no_regulares']:
+                obs_g = " | ".join(x for x in [obs_g, "No regulares: " + ", ".join(extras_g['no_regulares'])] if x)
             filas.append({
                 'Trabajador':      t.nombres,
                 'DNI':             t.num_doc,
                 'Sueldo Base':     t.sueldo_base,
                 'Asig. Fam.':      round(r['monto_asig_fam'], 2),
+                'Rem. Computables': r['extras_computables'],
                 'Base Computable': r['base_computable'],
-                'Factor':          f"{r['factor_grati']*100:.0f}%",
+                'Factor':          f"{r['factor_grati']*100:.0f}%" + (" (voluntaria)" if r['es_voluntaria'] else ""),
                 'Meses':           r['meses_computados'],
                 'Gratificación':   r['monto_grati'],
-                'Bono 9%':         r['bono_9pct'],
+                'Bono Ext.':       r['bono_9pct'],
                 'TOTAL':           r['total'],
                 'Aplica':          'Sí' if r['aplica'] else 'No',
-                'Observaciones':   r['observaciones'],
+                'Observaciones':   obs_g,
                 '_concepto_key':   r['concepto_json_key'],
                 '_trabajador_id':  t.id,
                 '_monto_grati':    r['monto_grati'],
@@ -628,10 +658,10 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
         st.session_state['_grati_anio']        = anio
 
         total_grati = sum(f['_monto_grati'] for f in filas if f['_aplica'])
-        total_bono  = sum(f['Bono 9%']      for f in filas if f['_aplica'])
+        total_bono  = sum(f['Bono Ext.']    for f in filas if f['_aplica'])
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Gratificaciones", f"S/ {total_grati:,.2f}")
-        m2.metric("Total Bono 9%",         f"S/ {total_bono:,.2f}")
+        m2.metric("Total Bono Extraordinario", f"S/ {total_bono:,.2f}")
         m3.metric("Costo Total Empresa",   f"S/ {total_grati + total_bono:,.2f}")
 
         st.dataframe(df_show, use_container_width=True, hide_index=True)
@@ -666,6 +696,12 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
                      help=f"Guarda los montos en las variables del período {periodo_pago_saved}"):
         db2 = SessionLocal()
         try:
+            if planilla_cerrada(db2, empresa_id, periodo_pago_saved):
+                st.error(
+                    f"🔒 La planilla de **{periodo_pago_saved}** ya está CERRADA. "
+                    "Un Supervisor debe reabrirla antes de registrar gratificaciones."
+                )
+                return
             registrados = 0
             for f in filas:
                 if not f['_aplica'] or f['_monto_grati'] <= 0:
@@ -691,7 +727,7 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
             st.success(
                 f"✅ Gratificaciones registradas para {registrados} trabajador(es) "
                 f"en el período **{periodo_pago_saved}**. "
-                f"El Bono 9% se calculará automáticamente en Cálculo de Planilla."
+                f"La Bonificación Extraordinaria se calculará automáticamente en Cálculo de Planilla."
             )
             st.session_state['_grati_filas'] = None
         except Exception as e:

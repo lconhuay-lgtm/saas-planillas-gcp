@@ -1,13 +1,20 @@
 import streamlit as st
 import datetime
 
+# Política de gratificación de la empresa. Es un MÍNIMO: sirve para otorgar una
+# gratificación voluntaria (Micro: no obligatoria; Pequeña: 50% por ley), pero nunca
+# reduce lo que la ley obliga. Se usa por defecto en el módulo de Gratificaciones y
+# en la proyección de 5ta categoría.
 _MAP_GRATI = {
-    "Automático (Según Ley)": None, 
-    "Otorgar 1 Sueldo Completo": 1.0, 
-    "Otorgar 1/2 Sueldo": 0.5, 
-    "No otorgar (0)": 0.0
+    "Según ley": None,
+    "Media gratificación (50%) — voluntaria si la ley da menos": 0.5,
+    "Gratificación completa (100%) — voluntaria si la ley da menos": 1.0,
 }
 _MAP_GRATI_INV = {v: k for k, v in _MAP_GRATI.items()}
+_LABEL_POLITICA_GRATI = "Política de Gratificación"
+_AYUDA_POLITICA_GRATI = ("Micro Empresa no está obligada a pagar gratificación y Pequeña Empresa "
+                         "paga 50%. Elija media o completa si la empresa la otorga voluntariamente. "
+                         "Nunca reduce lo que manda la ley.")
 from infrastructure.database.connection import get_db
 from infrastructure.database.models import Empresa, Usuario
 from infrastructure.services.sunat_api import consultar_dni_sunat
@@ -64,7 +71,7 @@ def render():
                 regimenes = ["Régimen General", "Régimen Especial - Micro Empresa", "Régimen Especial - Pequeña Empresa"]
                 regimen_sel = st.selectbox("Régimen Laboral*", regimenes)
 
-                pol_grati_sel = st.selectbox("Política de Gratificación (Proyección 5ta Cat.)", list(_MAP_GRATI.keys()))
+                pol_grati_sel = st.selectbox(_LABEL_POLITICA_GRATI, list(_MAP_GRATI.keys()), help=_AYUDA_POLITICA_GRATI)
 
                 fecha_acogimiento_sel = None
                 if regimen_sel != "Régimen General":
@@ -128,8 +135,8 @@ def render():
             )
             st.markdown("<br/>", unsafe_allow_html=True)
 
-            idx_pg = list(_MAP_GRATI.keys()).index(_MAP_GRATI_INV.get(emp.factor_proyeccion_grati, "Automático (Según Ley)"))
-            pol_grati_sel = st.selectbox("Política de Gratificación (Proyección 5ta Cat.)", list(_MAP_GRATI.keys()), index=idx_pg)
+            idx_pg = list(_MAP_GRATI.keys()).index(_MAP_GRATI_INV.get(emp.factor_proyeccion_grati, "Según ley"))
+            pol_grati_sel = st.selectbox(_LABEL_POLITICA_GRATI, list(_MAP_GRATI.keys()), index=idx_pg, help=_AYUDA_POLITICA_GRATI)
 
             fecha_acogimiento_sel = emp.fecha_acogimiento
             if regimen_sel != "Régimen General":

@@ -157,7 +157,7 @@ def render():
                 items += [
                     (f"Vacaciones truncas ({liq['dias_vacaciones_pendientes']:.0f} días)", liq['monto_vacaciones_truncas']),
                     (f"Gratificación trunca ({liq['meses_grati']} mes(es), {liq['periodo_grati_ref']})", liq['monto_grati_trunca']),
-                    ("Bono Ext. 9% (Ley 29351)", liq['monto_bono_9']),
+                    ("Bonificación Extraordinaria (Ley 30334)", liq['monto_bono_9']),
                     (f"CTS trunca ({liq['meses_cts']} meses, {liq['periodo_cts_ref']})", liq['monto_cts_trunca']),
                 ]
                 if liq['monto_bono_cese'] > 0:

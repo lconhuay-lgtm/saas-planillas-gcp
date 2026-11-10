@@ -2,7 +2,7 @@
 streamlit>=1.36.0
 
 # Base de Datos y ORM
-SQLAlchemy>=2.0.28
+SQLAlchemy>=2.0.28,<2.1
 psycopg2-binary>=2.9.9
 
 # Variables de entorno y utilidades

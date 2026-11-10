@@ -12,6 +12,7 @@ from sqlalchemy import or_
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual, Prestamo, CuotaPrestamo, Empresa as EmpresaModel
 from core.use_cases.calculo_honorarios import calcular_recibo_honorarios
+from core.use_cases.calculo_beneficios_sociales import factor_grati_aplicable, tasa_bono_extraordinario
 from core.use_cases.generador_reportes_calculo import (
     generar_excel_sabana, generar_pdf_sabana, generar_pdf_quinta,
     generar_excel_honorarios, generar_pdf_honorarios,
@@ -132,15 +133,15 @@ def _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado
     regimen_empresa_motor = st.session_state.get('empresa_activa_regimen', 'Régimen General')
     factor_g_manual = st.session_state.get('empresa_factor_grati', None)
 
-    if factor_g_manual is not None:
-        factor_g = float(factor_g_manual)
+    if "Micro Empresa" in regimen_empresa_motor:
+        factor_g_legal = 0.0
+    elif "Pequeña Empresa" in regimen_empresa_motor:
+        factor_g_legal = 0.5
     else:
-        if "Micro Empresa" in regimen_empresa_motor:
-            factor_g = 0.0
-        elif "Pequeña Empresa" in regimen_empresa_motor:
-            factor_g = 0.5
-        else:
-            factor_g = 1.0
+        factor_g_legal = 1.0
+    # La política de la empresa (gratificación voluntaria) solo puede subir el factor,
+    # nunca bajarlo del mínimo legal — mismo criterio que el módulo de Gratificaciones.
+    factor_g = factor_grati_aplicable(factor_g_legal, factor_g_manual)
 
     # Precargar notas de gestión manuales
     notas_gestion_map = {}
@@ -351,7 +352,9 @@ def _calcular_haberes(
 
     monto_grati = float(row.get('GRATIFICACION (JUL/DIC)', 0.0))
     if monto_grati > 0:
-        monto_bono_9 = monto_grati * 0.09
+        # Ley 30334: 9 %, o 6.75 % si el trabajador está afiliado a EPS. La clave del
+        # desglose se mantiene como "Bono Ext. 9%" porque la usan PLAME y el asiento.
+        monto_bono_9 = monto_grati * tasa_bono_extraordinario(row.get('EPS', 'No') == "Sí")
         desglose_ingresos['Gratificación'] = round(monto_grati, 2)
         desglose_ingresos['Bono Ext. 9%'] = round(monto_bono_9, 2)
         ingresos_totales += (monto_grati + monto_bono_9)
@@ -507,6 +510,7 @@ def _calcular_quinta(
     total_ausencias, ingreso_este_mes, factor_g,
     monto_ausencias_rem=0.0,
     monto_no_recurrente_5ta=0.0,
+    tiene_eps=False,
 ) -> dict:
     """
     Calcula la retención de 5ta categoría con proyección anual (método PLAME).
@@ -536,10 +540,11 @@ def _calcular_quinta(
             + conceptos_recuperados_5ta, 2
         )
     proyeccion_gratis = 0.0
+    factor_bono = 1 + tasa_bono_extraordinario(tiene_eps)   # 1.09, o 1.0675 con EPS
     if mes_idx <= 6:
-        proyeccion_gratis = base_quinta_proyeccion * 2 * factor_g * 1.09
+        proyeccion_gratis = base_quinta_proyeccion * 2 * factor_g * factor_bono
     elif mes_idx <= 11:
-        proyeccion_gratis = base_quinta_proyeccion * 1 * factor_g * 1.09
+        proyeccion_gratis = base_quinta_proyeccion * 1 * factor_g * factor_bono
     proyeccion_sueldos_restantes = base_quinta_proyeccion * meses_restantes
 
     renta_bruta_anual = int(round(rem_previa_historica + base_quinta_mes + proyeccion_sueldos_restantes + proyeccion_gratis))
@@ -625,6 +630,7 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         h['total_ausencias'], h['ingreso_este_mes'], factor_g,
         h['monto_ausencias_rem'],
         h['monto_no_recurrente_5ta'],
+        tiene_eps=(row.get('EPS', 'No') == "Sí"),
     )
 
     # Desempaquetar variables mutables (se modifican en ajustes de auditoría)

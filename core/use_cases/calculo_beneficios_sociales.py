@@ -88,6 +88,13 @@ def rango_cts(periodo: str, anio_deposito: int) -> tuple:
     return inicio, fin
 
 
+def rango_grati(semestre: str, anio: int) -> tuple:
+    """Fechas (inicio, fin) del semestre de gratificación (ENE-JUN o JUL-DIC) de un año."""
+    meses = SEMESTRES_GRATI[semestre]['meses']
+    return (datetime.date(anio, meses[0], 1),
+            datetime.date(anio, meses[-1], calendar.monthrange(anio, meses[-1])[1]))
+
+
 def periodo_keys_rango(inicio: datetime.date, fin: datetime.date) -> list:
     """Lista de periodo_key 'MM-YYYY' de cada mes entre inicio y fin (inclusive)."""
     keys = []
@@ -178,6 +185,43 @@ def extras_computables_cts(variables_meses: list, nombres_computables, meses_ser
     }
 
 
+# La gratificación usa la misma regla de regularidad (D.S. 005-2002-TR Art. 3:
+# percibido en al menos 3 meses del semestre, se incorpora el promedio).
+extras_computables_regulares = extras_computables_cts
+
+
+# ── Bonificación extraordinaria (Ley 30334) ─────────────────────────────────────
+# Equivale al aporte a EsSalud que la gratificación deja de pagar: 9 %, o 6.75 %
+# si el trabajador está afiliado a una EPS.
+TASA_BONO_EXTRAORDINARIO = 0.09
+TASA_BONO_EXTRAORDINARIO_EPS = 0.0675
+
+
+def tasa_bono_extraordinario(tiene_eps) -> float:
+    return TASA_BONO_EXTRAORDINARIO_EPS if tiene_eps else TASA_BONO_EXTRAORDINARIO
+
+
+# ── Gratificación voluntaria ────────────────────────────────────────────────────
+# Para Micro Empresa la gratificación no es obligatoria (0 %) y para Pequeña Empresa
+# es media (50 %), pero la empresa puede otorgar más por decisión propia. La opción
+# elegida es un PISO: nunca baja lo que la ley ya obliga (Régimen General o
+# trabajadores con derechos adquiridos siguen recibiendo el 100 %).
+OPCIONES_GRATI_VOLUNTARIA = {
+    "Según ley": None,
+    "Media gratificación (50%)": 0.5,
+    "Gratificación completa (100%)": 1.0,
+}
+
+
+def factor_grati_aplicable(factor_legal: float, factor_voluntario=None) -> float:
+    """Factor final: el mayor entre el mínimo legal y lo que la empresa decidió otorgar."""
+    try:
+        voluntario = float(factor_voluntario) if factor_voluntario is not None else 0.0
+    except (TypeError, ValueError):
+        voluntario = 0.0
+    return max(float(factor_legal), min(1.0, max(0.0, voluntario)))
+
+
 def _meses_completos(fecha_ingreso: datetime.date,
                      fecha_cese,              # datetime.date | None
                      inicio_rango: datetime.date,
@@ -248,25 +292,30 @@ def calcular_gratificacion_trabajador(
     rmv: float,
     regimen_empresa: str = 'Régimen General',
     fecha_acogimiento=None,
-    factor_override=None,   # float | None  (de Empresa.factor_proyeccion_grati)
-    extras_computables: float = 0.0,  # suma de conceptos computable_grati adicionales
+    factor_override=None,   # float | None — gratificación voluntaria (0.5 / 1.0), ver abajo
+    extras_computables: float = 0.0,  # promedio de conceptos "Computable Grati" regulares
 ) -> dict:
     """
-    Calcula la gratificación legal de un trabajador para un semestre dado.
+    Calcula la gratificación de un trabajador para un semestre dado.
 
-    Devuelve dict con: base_computable, factor_grati, meses_computados,
-    monto_grati, bono_9pct, total, codigo_sunat, aplica, observaciones.
+    `factor_override`: lo que la empresa decide otorgar (media o completa). Funciona
+    como piso, nunca como techo: el factor final es max(mínimo legal, voluntario),
+    así una política de "media gratificación" no recorta a quien por ley le toca
+    el 100 % (Régimen General o derechos adquiridos).
+
+    La bonificación extraordinaria es 9 % (6.75 % si el trabajador tiene EPS).
+
+    Devuelve dict con: base_computable, factor_grati, factor_legal, es_voluntaria,
+    meses_computados, monto_grati, bono_9pct, tasa_bono, total, codigo_sunat,
+    aplica, observaciones.
     """
     regimen_trab = determinar_regimen_trabajador(
         trabajador.fecha_ingreso, regimen_empresa, fecha_acogimiento
     )
     factores = obtener_factores_regimen(regimen_trab)
-
-    # El factor_override de la empresa prevalece sobre el régimen
-    factor_grati = (
-        float(factor_override) if factor_override is not None
-        else factores['grati']
-    )
+    factor_legal = float(factores['grati'])
+    factor_grati = factor_grati_aplicable(factor_legal, factor_override)
+    es_voluntaria = factor_grati > factor_legal
 
     monto_asig_fam  = (rmv * 0.10) if trabajador.asig_fam else 0.0
     base_computable = trabajador.sueldo_base + monto_asig_fam + extras_computables
@@ -285,22 +334,29 @@ def calcular_gratificacion_trabajador(
 
     meses_comp  = _meses_completos(fecha_ingreso, fecha_cese, inicio, fin)
     monto_grati = round(base_computable * factor_grati * (meses_comp / 6.0), 2)
-    bono_9pct   = round(monto_grati * 0.09, 2)
+    tasa_bono   = tasa_bono_extraordinario(getattr(trabajador, 'eps', False))
+    bono_9pct   = round(monto_grati * tasa_bono, 2)
     total       = round(monto_grati + bono_9pct, 2)
 
     obs = []
     if regimen_trab != regimen_empresa:
         obs.append(f'Derechos adquiridos ({regimen_trab})')
-    if factor_override is not None and factor_override != factores['grati']:
-        obs.append(f'Factor manual {factor_grati*100:.0f}%')
+    if es_voluntaria:
+        obs.append(f'Voluntaria {factor_grati*100:.0f}% (por ley: {factor_legal*100:.0f}%)')
     if meses_comp < 6:
         obs.append(f'{meses_comp}/6 meses')
-    if not trabajador.asig_fam:
-        pass   # silencioso; la asig_fam es la info positiva que se menciona si aplica
+    if tasa_bono != TASA_BONO_EXTRAORDINARIO:
+        obs.append(f'Bono extraordinario {tasa_bono*100:.2f}% (EPS)')
+    if extras_computables:
+        obs.append(f'Incluye S/ {extras_computables:,.2f} de conceptos computables')
 
     return {
         'regimen_trab':    regimen_trab,
         'factor_grati':    factor_grati,
+        'factor_legal':    factor_legal,
+        'es_voluntaria':   es_voluntaria,
+        'tasa_bono':       tasa_bono,
+        'extras_computables': round(float(extras_computables or 0.0), 2),
         'base_computable': round(base_computable, 2),
         'monto_asig_fam':  round(monto_asig_fam, 2),
         'meses_computados': meses_comp,

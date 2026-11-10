@@ -220,13 +220,16 @@ def generar_pdf_liquidacion(empresa_info, trabajador, liquidacion) -> io.BytesIO
     elements.append(_tabla_memoria(f"{_sig_letra()}. GRATIFICACIÓN TRUNCA", filas_grati, formula_grati, "TOTAL GRATIFICACIÓN TRUNCA", liquidacion.monto_grati_trunca))
     elements.append(Spacer(1, 6))
 
-    # D.4 Bonificación Extraordinaria 9%
+    # D.4 Bonificación Extraordinaria — 9 %, o 6.75 % con EPS (Ley 30334). La tasa se
+    # deduce de los montos guardados para que el PDF coincida con lo calculado.
+    _tasa_bono = (liquidacion.monto_bono_9 / liquidacion.monto_grati_trunca) if liquidacion.monto_grati_trunca else 0.09
+    _tasa_txt = "6.75% (EPS)" if abs(_tasa_bono - 0.0675) < 0.001 else "9%"
     filas_bono9 = [
         ("Base: Gratificación Trunca calculada arriba", f"S/ {liquidacion.monto_grati_trunca:,.2f}"),
-        ("Tasa (Ley 29351 — Bonificación Extraordinaria)", "9%"),
+        ("Tasa (Ley 30334 — Bonificación Extraordinaria)", _tasa_txt),
     ]
-    formula_bono9 = f"S/ {liquidacion.monto_grati_trunca:,.2f} × 9%"
-    elements.append(_tabla_memoria(f"{_sig_letra()}. BONIFICACIÓN EXTRAORDINARIA 9%", filas_bono9, formula_bono9, "TOTAL BONO 9%", liquidacion.monto_bono_9))
+    formula_bono9 = f"S/ {liquidacion.monto_grati_trunca:,.2f} × {_tasa_txt.split()[0]}"
+    elements.append(_tabla_memoria(f"{_sig_letra()}. BONIFICACIÓN EXTRAORDINARIA", filas_bono9, formula_bono9, "TOTAL BONIFICACIÓN EXTRAORDINARIA", liquidacion.monto_bono_9))
     elements.append(Spacer(1, 6))
 
     # D.5 CTS truncada
@@ -306,7 +309,7 @@ def generar_pdf_liquidacion(empresa_info, trabajador, liquidacion) -> io.BytesIO
         filas_5ta = [
             ("Vacaciones truncas (afecta, código SUNAT 0114)", f"S/ {liquidacion.monto_vacaciones_truncas:,.2f}"),
             ("Gratificación trunca (afecta)", f"S/ {liquidacion.monto_grati_trunca:,.2f}"),
-            ("Bonificación Extraordinaria 9% (afecta)", f"S/ {liquidacion.monto_bono_9:,.2f}"),
+            ("Bonificación Extraordinaria (afecta)", f"S/ {liquidacion.monto_bono_9:,.2f}"),
             ("Base gravada total", f"S/ {base_gravada_5ta:,.2f}"),
         ]
         elements.append(_tabla_memoria(

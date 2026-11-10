@@ -67,6 +67,20 @@ def nombres_conceptos_computables_cts(db, empresa_id: int) -> set:
     }
 
 
+def nombres_conceptos_computables_grati(db, empresa_id: int) -> set:
+    """Nombres de los conceptos de INGRESO marcados 'Computable Grati' en el Maestro de Conceptos."""
+    return {
+        c.nombre for c in db.query(Concepto).filter_by(
+            empresa_id=empresa_id, tipo='INGRESO', computable_grati=True,
+        ).all()
+    }
+
+
+def planilla_cerrada(db, empresa_id: int, periodo_key: str) -> bool:
+    p = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+    return bool(p and getattr(p, 'estado', 'ABIERTA') == 'CERRADA')
+
+
 def sueldos_de_planilla(db, empresa_id: int, periodo_key: str) -> dict:
     """
     Sueldo básico nominal con el que se calculó la planilla de un periodo,

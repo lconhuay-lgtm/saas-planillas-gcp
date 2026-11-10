@@ -38,7 +38,8 @@ def calcular_saldo_vacacional(trabajador, registros_vacaciones, fecha_calculo=No
     dias_sueltos = delta.days
 
     # Días devengados: dozavos por cada mes completo + treintavos por los días sueltos
-    cuota_anual = getattr(trabajador, 'dias_vacaciones_anuales', 30)
+    # "or 30": registros creados fuera del ORM pueden tener la columna en NULL
+    cuota_anual = getattr(trabajador, 'dias_vacaciones_anuales', None) or 30
     devengados = round(
         (cuota_anual / 12.0) * total_meses + (cuota_anual / 360.0) * dias_sueltos, 2
     )

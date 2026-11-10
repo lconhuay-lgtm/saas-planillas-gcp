@@ -127,6 +127,11 @@ def cargar_variables_df(db, empresa_id, periodo_key, conceptos) -> pd.DataFrame:
         .all()
     )
     concepto_nombres = [c.nombre for c in conceptos]
+    # La gratificación se registra desde el módulo "Gratificaciones y CTS" con esta
+    # clave fija; debe llegar al motor aunque la empresa nunca haya abierto el Maestro
+    # de Conceptos (que es donde se siembra el concepto). Si no, se perdía en silencio.
+    if "GRATIFICACION (JUL/DIC)" not in concepto_nombres:
+        concepto_nombres.append("GRATIFICACION (JUL/DIC)")
     rows = []
     for v in variables:
         susp = json.loads(getattr(v, 'suspensiones_json', '{}') or '{}')

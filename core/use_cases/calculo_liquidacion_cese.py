@@ -21,8 +21,8 @@ import types
 from infrastructure.database.models import Prestamo, DepositoCTS, LiquidacionCese
 from core.use_cases.calculo_beneficios_sociales import (
     calcular_gratificacion_trabajador, calcular_cts_trabajador,
-    rango_cts, periodo_keys_rango, meses_con_servicio,
-    dias_no_computables_cts, extras_computables_cts,
+    rango_cts, rango_grati, periodo_keys_rango, meses_con_servicio,
+    dias_no_computables_cts, extras_computables_cts, extras_computables_regulares,
 )
 from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 from core.domain.exceptions import ReglaNegocioError
@@ -252,6 +252,7 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
         sueldo_base=trabajador.sueldo_base,
         asig_fam=trabajador.asig_fam,
         num_doc=trabajador.num_doc,
+        eps=bool(getattr(trabajador, 'eps', False)),   # bono extraordinario 6.75 % con EPS
         dias_vacaciones_anuales=getattr(trabajador, 'dias_vacaciones_anuales', 30),
     )
 
@@ -274,11 +275,24 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
     monto_vac_truncas = round((sueldo_base / 30.0) * dias_vac_pend, 2)
 
     # 3. Gratificación trunca — mismo motor que "Gratificaciones y CTS"
+    # Incluye el promedio de conceptos "Computable Grati" regulares del semestre.
+    from infrastructure.repositories.repo_beneficios import (
+        cargar_variables_rango, nombres_conceptos_computables_grati,
+    )
     semestre_grati, anio_grati = _semestre_grati_de_fecha(fecha_cese)
+    ini_g, fin_g = rango_grati(semestre_grati, anio_grati)
+    v_sem_g = cargar_variables_rango(
+        db, empresa_id, periodo_keys_rango(ini_g, min(fin_g, fecha_cese)), trabajador_id=trabajador.id,
+    ).get(trabajador.id, [])
+    extras_g = extras_computables_regulares(
+        v_sem_g, nombres_conceptos_computables_grati(db, empresa_id),
+        meses_con_servicio(trabajador.fecha_ingreso, fecha_cese, ini_g, fin_g),
+    )
     res_grati = calcular_gratificacion_trabajador(
         trabajador_sim, semestre_grati, anio_grati, rmv,
         regimen_empresa=regimen_empresa, fecha_acogimiento=fecha_acogimiento,
         factor_override=factor_override,
+        extras_computables=extras_g['total'],
     )
     monto_grati_trunca = res_grati['monto_grati']
     monto_bono_9 = res_grati['bono_9pct']
