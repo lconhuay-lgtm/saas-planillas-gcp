@@ -11,7 +11,7 @@ import pandas as pd
 from datetime import datetime
 from sqlalchemy import or_
 from infrastructure.database.models import (
-    Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual,
+    Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual, Empresa,
 )
 
 
@@ -84,6 +84,16 @@ def cargar_trabajadores_df(db, empresa_id, mes_calc: int = 0, anio_calc: int = 0
             )
             .all()
         )
+    # Traslado de Personal: resolver "Trasladado Desde" (nombre de la empresa de origen)
+    # de una sola pasada, para no hacer una consulta aparte por cada trabajador.
+    ids_origen = [t.trabajador_origen_id for t in trabajadores if getattr(t, 'trabajador_origen_id', None)]
+    origen_empresa_nombre = {}
+    if ids_origen:
+        origenes = db.query(Trabajador).filter(Trabajador.id.in_(ids_origen)).all()
+        empresas_origen_ids = {o.empresa_id for o in origenes}
+        empresas_origen = {e.id: e.razon_social for e in db.query(Empresa).filter(Empresa.id.in_(empresas_origen_ids)).all()}
+        origen_empresa_nombre = {o.id: empresas_origen.get(o.empresa_id, '') for o in origenes}
+
     rows = []
     for t in trabajadores:
         rows.append({
@@ -98,6 +108,7 @@ def cargar_trabajadores_df(db, empresa_id, mes_calc: int = 0, anio_calc: int = 0
             "Asig. Fam.": "Sí" if t.asig_fam else "No",
             "EPS": "Sí" if t.eps else "No",
             "Monto EPS Trabajador": float(getattr(t, 'monto_eps_trabajador', 0.0) or 0.0),
+            "Trasladado Desde": origen_empresa_nombre.get(getattr(t, 'trabajador_origen_id', None), ''),
             "CUSPP": t.cuspp or "",
             "Cargo": t.cargo or "",
             "Seguro Social": getattr(t, 'seguro_social', None) or "ESSALUD",

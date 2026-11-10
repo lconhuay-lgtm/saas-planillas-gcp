@@ -1,9 +1,11 @@
 import io
 import zipfile
 import json
+import calendar
+from datetime import date
 import pandas as pd
 from sqlalchemy.orm import Session
-from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto
+from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto, LiquidacionCese
 
 def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
     """Genera archivo .JOR (Jornada Laboral)"""
@@ -80,10 +82,22 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
 
 def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
     """Genera archivo .REM con asignación directa y tríada de AFP obligatoria en cero."""
+    mes_int, anio_int = int(periodo_key[:2]), int(periodo_key[3:])
+    ultimo_dia_mes = calendar.monthrange(anio_int, mes_int)[1]
+    liquidaciones_periodo = db.query(LiquidacionCese).filter(
+        LiquidacionCese.empresa_id == empresa_id,
+        LiquidacionCese.estado != 'BORRADOR',
+        LiquidacionCese.fecha_cese_snapshot >= date(anio_int, mes_int, 1),
+        LiquidacionCese.fecha_cese_snapshot <= date(anio_int, mes_int, ultimo_dia_mes),
+    ).all()
+
     planilla = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-    if not planilla: return ""
-        
-    auditoria = json.loads(planilla.auditoria_json or '{}')
+    # Con liquidaciones pero sin planilla regular (empresa que no corrió planilla ese
+    # mes porque todo su personal cesó): no cortar aquí, seguir para declarar la liquidación.
+    if not planilla and not liquidaciones_periodo:
+        return ""
+
+    auditoria = json.loads(planilla.auditoria_json or '{}') if planilla else {}
     lineas = []
     
     conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
@@ -200,7 +214,48 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             for cod_afp in ["0608", "0606", "0601"]:
                 if cod_afp not in codigos_procesados:
                     lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_afp}|0.00|0.00|")
-                
+
+    # ── LIQUIDACIÓN POR CESE: conceptos adicionales del trabajador que cesó este mes ──
+    # Se declaran como líneas adicionales del mismo DNI (el PDT las suma junto con lo
+    # ya declarado arriba si el trabajador también tuvo planilla regular ese mes, p.ej.
+    # su sueldo proporcional). Mismos códigos SUNAT Tabla 22 que ya usa este archivo
+    # para los conceptos equivalentes de planilla regular (Grati=0305, Bono 9%=0303,
+    # CTS=0401), más los nuevos para Vacaciones Truncas (0114) e Incentivo por Cese (0906).
+    for liq in liquidaciones_periodo:
+        t_liq = db.query(Trabajador).filter_by(id=liq.trabajador_id).first()
+        if not t_liq:
+            continue
+        tipo_doc_liq = getattr(t_liq, 'tipo_documento', '01') or '01'
+        dni_liq = "".join(str(t_liq.num_doc).split())
+        if len(dni_liq) > 8 and tipo_doc_liq == '01':
+            tipo_doc_liq = '04'
+
+        conceptos_liq = [
+            ("0114", liq.monto_vacaciones_truncas),
+            ("0305", liq.monto_grati_trunca),
+            ("0303", liq.monto_bono_9),
+            ("0401", liq.monto_cts_trunca),
+            ("0906", liq.monto_bono_cese),
+        ]
+        if liq.incluye_sueldo_mes_cese:
+            conceptos_liq.append(("0121", liq.monto_sueldo_proporcional))
+
+        for cod_liq, monto_liq in conceptos_liq:
+            monto_liq = float(monto_liq or 0.0)
+            if monto_liq > 0:
+                lineas.append(f"{tipo_doc_liq}|{dni_liq}|{cod_liq}|{monto_liq:.2f}|{monto_liq:.2f}|")
+
+        # Renta de 5ta sobre la liquidación (0605) — obligatoria, igual que en planilla regular
+        lineas.append(f"{tipo_doc_liq}|{dni_liq}|0605|0.00|{float(liq.monto_retencion_5ta or 0.0):.2f}|")
+
+        # Tríada de AFP de la liquidación (0608/0606/0601) — obligatoria en cero si no aplica
+        sistema_pension_liq = str(liq.sistema_pension_snapshot or '').upper()
+        if "AFP" in sistema_pension_liq:
+            for cod_afp, monto_afp in [
+                ("0608", liq.monto_aporte_afp), ("0606", liq.monto_prima_afp), ("0601", liq.monto_comision_afp),
+            ]:
+                lineas.append(f"{tipo_doc_liq}|{dni_liq}|{cod_afp}|0.00|{float(monto_afp or 0.0):.2f}|")
+
     # ── CTS: en Mayo (05) y Noviembre (11) agregar líneas de depósito ────────
     if _mes_plame in (5, 11):
         try:

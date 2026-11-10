@@ -19,14 +19,37 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import (
-    Trabajador, ParametroLegal, VariablesMes, DepositoCTS, Empresa,
+    Trabajador, VariablesMes, DepositoCTS, Empresa,
 )
 from core.use_cases.calculo_beneficios_sociales import (
     calcular_gratificacion_trabajador,
     calcular_cts_trabajador,
     SEMESTRES_GRATI,
     PERIODOS_CTS,
+    rango_cts,
+    periodo_keys_rango,
+    meses_con_servicio,
+    dias_no_computables_cts,
+    extras_computables_cts,
 )
+from infrastructure.repositories.repo_beneficios import (
+    cargar_parametro_vigente,
+    cargar_variables_rango,
+    nombres_conceptos_computables_cts,
+    sueldos_de_planilla,
+)
+
+
+def _anios_selector(hoy: datetime.date) -> list:
+    return list(range(hoy.year - 2, hoy.year + 2))
+
+
+def _periodo_cts_sugerido(hoy: datetime.date) -> tuple:
+    """Depósito CTS que toca procesar a la fecha: de diciembre a mayo el de mayo
+    (NOV-ABR), de junio a noviembre el de noviembre (MAY-OCT)."""
+    if 6 <= hoy.month <= 11:
+        return 'MAY-OCT', hoy.year
+    return 'NOV-ABR', (hoy.year + 1 if hoy.month == 12 else hoy.year)
 
 C_NAVY  = colors.HexColor("#0F2744")
 C_STEEL = colors.HexColor("#1E4D8C")
@@ -383,7 +406,10 @@ def generar_pdf_liquidacion_cts_individual(
                                    textColor=C_NAVY, alignment=TA_RIGHT, leading=12)
             return [Paragraph(label, _s_l), Paragraph(str(valor), _s_v)]
 
-        sueldo_base = t.sueldo_base or 0.0
+        # Sueldo efectivamente usado en el cálculo (vigente al cierre), no el actual del maestro
+        sueldo_base = f.get('_sueldo_usado', t.sueldo_base or 0.0)
+        extras_cts  = f.get('_extras', 0.0) or 0.0
+        dias_nc     = f.get('_dias_no_comp', 0) or 0
         rmv_asig    = f.get('Asig. Fam.', 0.0)
         if not isinstance(rmv_asig, (int, float)):
             try:
@@ -394,15 +420,26 @@ def generar_pdf_liquidacion_cts_individual(
         desglose_data = [
             _fila('Remuneración básica mensual', f"S/  {sueldo_base:,.2f}"),
             _fila('Asignación familiar', f"S/  {rmv_asig:,.2f}"),
+        ]
+        if extras_cts:
+            desglose_data.append(_fila('Remuneraciones computables (promedio)', f"S/  {extras_cts:,.2f}"))
+        desglose_data += [
             _fila(f'Gratificación de referencia ({_semestre_grati(_get_periodo_cts_from_filas(f))} {_anio_grati(_get_periodo_cts_from_filas(f), _anio_from_periodo_key(periodo_key_dep))})',
                   f"S/  {grati_ref_val:,.2f}"),
             _fila('  → 1/6 de gratificación (base CTS)', f"S/  {sexto_grati:,.2f}"),
             _fila('BASE COMPUTABLE', f"S/  {base_cts:,.2f}", bold=True),
             _fila('Período computable', periodo_lab),
-            _fila('Meses computados', str(meses_comp)),
+            _fila('Meses computados', str(meses_comp)
+                  + (f" y {f.get('_dias_sueltos', 0)} día(s)" if f.get('_dias_sueltos') else "")),
+        ]
+        if dias_nc:
+            desglose_data.append(_fila('Días no computables descontados (faltas/suspensiones)', str(dias_nc)))
+        desglose_data += [
             _fila(f'Factor ({regimen_str})', f"{factor_cts*100:.0f}%"),
             _fila('MONTO A DEPOSITAR', f"S/  {monto_cts:,.2f}", bold=True),
         ]
+        _idx_destacados = [i for i, (lbl, _) in enumerate(desglose_data)
+                           if lbl.text in ('BASE COMPUTABLE', 'MONTO A DEPOSITAR')]
 
         t_des = Table(desglose_data, colWidths=[W_lbl2, W_val2])
         row_styles = []
@@ -410,7 +447,7 @@ def generar_pdf_liquidacion_cts_individual(
             bg = C_LIGHT if idx % 2 == 0 else C_WHITE
             row_styles.append(('BACKGROUND', (0, idx), (-1, idx), bg))
         # Fila base computable y monto a depositar en C_LIGHT con borde
-        for idx in [4, 8]:
+        for idx in _idx_destacados:
             row_styles.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor("#D6E4F7")))
             row_styles.append(('LINEABOVE',  (0, idx), (-1, idx), 0.8, C_STEEL))
             row_styles.append(('LINEBELOW',  (0, idx), (-1, idx), 0.8, C_STEEL))
@@ -512,7 +549,9 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
     semestre  = col1.selectbox("Semestre", list(SEMESTRES_GRATI.keys()),
                                 format_func=lambda s: SEMESTRES_GRATI[s]['label'],
                                 key="grati_semestre")
-    anio      = col2.selectbox("Año", [2024, 2025, 2026, 2027], index=1, key="grati_anio")
+    _anios_g  = _anios_selector(datetime.date.today())
+    anio      = col2.selectbox("Año", _anios_g,
+                                index=_anios_g.index(datetime.date.today().year), key="grati_anio")
     mes_pago  = SEMESTRES_GRATI[semestre]['mes_pago']
     periodo_pago = f"{mes_pago:02d}-{anio}"
     col3.metric("Período de Pago", f"{'Julio' if mes_pago == 7 else 'Diciembre'} {anio}")
@@ -524,13 +563,15 @@ def _render_tab_gratificaciones(empresa_id: int, empresa_nombre: str,
             empresa_obj    = db.query(Empresa).filter_by(id=empresa_id).first()
             factor_override = getattr(empresa_obj, 'factor_proyeccion_grati', None)
 
-            param = (
-                db.query(ParametroLegal)
-                .filter_by(empresa_id=empresa_id)
-                .order_by(ParametroLegal.periodo_key.desc())
-                .first()
-            )
-            rmv = param.rmv if param else 1025.0
+            # RMV vigente al mes de pago (julio/diciembre) — orden cronológico real.
+            param = cargar_parametro_vigente(db, empresa_id, anio, mes_pago)
+            if not param or not param.rmv:
+                st.error(
+                    f"No hay Parámetros Legales (RMV) registrados hasta **{periodo_pago}**. "
+                    "Regístrelos en el módulo Parámetros Legales antes de calcular."
+                )
+                return
+            rmv = float(param.rmv)
 
             trabajadores = (
                 db.query(Trabajador)
@@ -671,12 +712,19 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
         "Pequeña Empresa: 50%. Micro Empresa: no aplica. No afecta 5ta categoría."
     )
 
+    hoy = datetime.date.today()
+    periodo_sug, anio_sug = _periodo_cts_sugerido(hoy)
+    anios = _anios_selector(hoy)
+    if anio_sug not in anios:
+        anios.append(anio_sug)
     col1, col2 = st.columns(2)
-    periodo_cts = col1.selectbox("Período CTS", list(PERIODOS_CTS.keys()),
+    periodos = list(PERIODOS_CTS.keys())
+    periodo_cts = col1.selectbox("Período CTS", periodos,
+                                  index=periodos.index(periodo_sug),
                                   format_func=lambda p: PERIODOS_CTS[p]['label'],
                                   key="cts_periodo")
-    anio_dep    = col2.selectbox("Año de depósito", [2024, 2025, 2026, 2027],
-                                  index=1, key="cts_anio")
+    anio_dep    = col2.selectbox("Año de depósito", anios,
+                                  index=anios.index(anio_sug), key="cts_anio")
     mes_dep     = PERIODOS_CTS[periodo_cts]['mes_deposito']
     periodo_key_dep = f"{mes_dep:02d}-{anio_dep}"
 
@@ -703,13 +751,28 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
             empresa_obj    = db.query(Empresa).filter_by(id=empresa_id).first()
             factor_override = getattr(empresa_obj, 'factor_proyeccion_grati', None)
 
-            param = (
-                db.query(ParametroLegal)
-                .filter_by(empresa_id=empresa_id)
-                .order_by(ParametroLegal.periodo_key.desc())
-                .first()
-            )
-            rmv = param.rmv if param else 1025.0
+            # RMV vigente al cierre del semestre (abril u octubre), no "el último
+            # registro" — ordenar periodo_key como texto elegía meses equivocados.
+            inicio_cts, fin_cts = rango_cts(periodo_cts, anio_dep)
+            pk_cierre = f"{fin_cts.month:02d}-{fin_cts.year}"
+            param = cargar_parametro_vigente(db, empresa_id, fin_cts.year, fin_cts.month)
+            if not param or not param.rmv:
+                st.error(
+                    f"No hay Parámetros Legales (RMV) registrados hasta **{pk_cierre}**. "
+                    "Regístrelos en el módulo Parámetros Legales antes de calcular la CTS."
+                )
+                return
+            rmv = float(param.rmv)
+            if param.periodo_key != pk_cierre:
+                st.caption(f"RMV tomada de los parámetros de **{param.periodo_key}** "
+                           f"(no hay registro propio para {pk_cierre}).")
+
+            # Datos del semestre: suspensiones/faltas y conceptos computables por
+            # trabajador, y el sueldo con que se calculó la planilla del mes de cierre.
+            pks_semestre   = periodo_keys_rango(inicio_cts, fin_cts)
+            vars_semestre  = cargar_variables_rango(db, empresa_id, pks_semestre)
+            nombres_comp   = nombres_conceptos_computables_cts(db, empresa_id)
+            sueldos_cierre = sueldos_de_planilla(db, empresa_id, pk_cierre)
 
             trabajadores = (
                 db.query(Trabajador)
@@ -756,6 +819,15 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
                     grati_val    = rg['monto_grati']
                     grati_fuente = "estimado"
 
+                # ── 3. Datos del semestre ────────────────────────────────────
+                v_sem = vars_semestre.get(t.id, [])
+                dias_no_comp = dias_no_computables_cts(v_sem)
+                n_meses_serv = meses_con_servicio(t.fecha_ingreso, getattr(t, 'fecha_cese', None),
+                                                  inicio_cts, fin_cts)
+                extras = extras_computables_cts(v_sem, nombres_comp, n_meses_serv)
+                sueldo_cierre = sueldos_cierre.get(str(t.num_doc))
+                fuente_sueldo = f"planilla {pk_cierre}" if sueldo_cierre is not None else "maestro (actual)"
+
                 r = calcular_cts_trabajador(
                     trabajador=t,
                     periodo=periodo_cts,
@@ -764,12 +836,23 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
                     grati_semestral=grati_val,
                     regimen_empresa=regimen_empresa,
                     fecha_acogimiento=fecha_acogimiento,
+                    extras_computables=extras['total'],
+                    dias_no_computables=dias_no_comp,
+                    remuneracion_basica=sueldo_cierre,
                 )
+                obs_cts = r['observaciones']
+                if sueldo_cierre is None:
+                    obs_cts = " | ".join(x for x in [obs_cts, f"Sueldo del maestro: no hay planilla {pk_cierre}"] if x)
+                if extras['no_regulares']:
+                    obs_cts = " | ".join(x for x in [obs_cts, "No regulares: " + ", ".join(extras['no_regulares'])] if x)
                 filas.append({
                     'Trabajador':    t.nombres,
                     'DNI':           t.num_doc,
-                    'Sueldo Base':   t.sueldo_base,
+                    'Sueldo Base':   r['sueldo_base_usado'],
+                    'Fuente Sueldo': fuente_sueldo,
                     'Asig. Fam.':    round(r['monto_asig_fam'], 2),
+                    'Rem. Computables': r['extras_computables'],
+                    'Días no comp.': r['dias_no_computables'],
                     'Grati Ref.':    round(grati_val, 2),
                     'Fuente':        grati_fuente,
                     '1/6 Grati':     r['sexto_grati'],
@@ -778,8 +861,12 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
                     'Meses':         r['meses_computados'],
                     'Depósito CTS':  r['monto_cts'],
                     'Período':       r['periodo_label'],
-                    'Observaciones': r['observaciones'],
+                    'Observaciones': obs_cts,
                     '_trabajador_id': t.id,
+                    '_sueldo_usado':  r['sueldo_base_usado'],
+                    '_extras':        r['extras_computables'],
+                    '_dias_no_comp':  r['dias_no_computables'],
+                    '_dias_sueltos':  r['dias_sueltos'],
                     '_monto_cts':     r['monto_cts'],
                     '_base_cts':      r['base_cts'],
                     '_sexto_grati':   r['sexto_grati'],
@@ -840,7 +927,7 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
     filas_aplica = [f for f in filas if f['_aplica'] and f['_monto_cts'] > 0]
     df_cts_pdf = pd.DataFrame([{
         k: v for k, v in f.items()
-        if not k.startswith('_') and k not in ('Fuente',)
+        if not k.startswith('_') and k not in ('Fuente', 'Fuente Sueldo')
     } for f in filas_aplica])
 
     st.markdown("---")
@@ -903,6 +990,7 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
         db3 = SessionLocal()
         try:
             registrados = 0
+            omitidos_depositados = []
             if periodo_cts_saved == 'NOV-ABR':
                 periodo_label_str = f"NOV {anio_dep_saved - 1} – ABR {anio_dep_saved}"
             else:
@@ -916,6 +1004,10 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
                     trabajador_id=f['_trabajador_id'],
                     periodo_key_deposito=periodo_key_dep_saved,
                 ).first()
+                if dep and dep.estado == 'DEPOSITADO':
+                    # Un depósito ya efectuado es un hecho contable: no se reescribe.
+                    omitidos_depositados.append(f['Trabajador'])
+                    continue
                 if dep:
                     dep.base_computable  = f['_base_cts']
                     dep.sexto_grati      = f['_sexto_grati']
@@ -942,6 +1034,11 @@ def _render_tab_cts(empresa_id: int, empresa_nombre: str,
                 f"✅ CTS registrada para {registrados} trabajador(es). "
                 f"Período: **{periodo_label_str}** → depósito en **{periodo_key_dep_saved}**."
             )
+            if omitidos_depositados:
+                st.warning(
+                    f"{len(omitidos_depositados)} trabajador(es) no se modificaron porque su CTS "
+                    f"de este periodo ya figura como DEPOSITADA: " + ", ".join(omitidos_depositados)
+                )
             st.session_state['_cts_filas'] = None
         except Exception as e:
             db3.rollback()

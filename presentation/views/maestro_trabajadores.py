@@ -8,16 +8,174 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from infrastructure.database.connection import get_db
-from infrastructure.database.models import Trabajador, PlanillaMensual, LogEnvioBoleta
+from infrastructure.database.models import (
+    Trabajador, PlanillaMensual, LogEnvioBoleta, Usuario, Empresa, Prestamo, CuotaPrestamo,
+    LiquidacionCese,
+)
+from core.use_cases.calculo_kardex import calcular_saldo_vacacional
+from core.use_cases.calculo_liquidacion_cese import generar_liquidacion_borrador_automatica
 
 
-def determinar_regimen_trabajador(fecha_ingreso, regimen_empresa, fecha_acogimiento):
-    """Lógica legal de protección de derechos adquiridos"""
-    if regimen_empresa == "Régimen General" or not fecha_acogimiento:
-        return "Régimen General"
-    if fecha_ingreso < fecha_acogimiento:
-        return "Régimen General (Derechos Adquiridos)"
-    return regimen_empresa
+def _tiene_planilla_cerrada(db, trabajador) -> bool:
+    """True si el DNI de este trabajador ya aparece en una planilla/honorarios CERRADA
+    de su propia empresa — a partir de ahí, un Traslado de Personal ya no se puede
+    deshacer con un botón (hay boletas/asientos que dependen de ese cierre); se corrige
+    manualmente como cualquier otro caso ya calculado."""
+    import json as _jrev
+    campo_json = 'honorarios_json' if getattr(trabajador, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else 'resultado_json'
+    planillas_cerradas = db.query(PlanillaMensual).filter_by(
+        empresa_id=trabajador.empresa_id, estado='CERRADA'
+    ).all()
+    for p in planillas_cerradas:
+        try:
+            filas = _jrev.loads(getattr(p, campo_json, None) or '[]')
+        except Exception:
+            continue
+        if any(str(row.get('DNI', '')) == str(trabajador.num_doc) for row in filas):
+            return True
+    return False
+
+
+def _liquidacion_bloqueante_traslado(db, t_origen):
+    """Liquidación por Cese (APROBADA o PAGADA) asociada al cese actual de este
+    traslado, si existe — bloquea "Deshacer Traslado" porque ya pudo declararse en
+    PLAME/AFPnet o generar su Asiento Contable (deshacer dejaría esa liquidación
+    huérfana, referida a un cese que el sistema diría que nunca ocurrió). Una
+    liquidación que sigue en BORRADOR NO bloquea — esa se elimina sola al deshacer,
+    ver _deshacer_traslado."""
+    if not getattr(t_origen, 'fecha_cese', None):
+        return None
+    return db.query(LiquidacionCese).filter(
+        LiquidacionCese.trabajador_id == t_origen.id,
+        LiquidacionCese.empresa_id == t_origen.empresa_id,
+        LiquidacionCese.fecha_cese_snapshot == t_origen.fecha_cese,
+        LiquidacionCese.estado != 'BORRADOR',
+    ).first()
+
+
+def _deshacer_traslado(db, t_origen, t_destino):
+    """Revierte un Traslado de Personal: borra el registro creado en destino, reactiva
+    el de origen tal como estaba antes del traslado, y elimina la Liquidación por Cese
+    en BORRADOR que se hubiera generado automáticamente para este cese (ya no
+    corresponde — el trabajador nunca terminó de cesar). No se debe llamar si existe
+    una Liquidación APROBADA/PAGADA para este cese — eso lo valida el llamador antes
+    con _liquidacion_bloqueante_traslado()."""
+    if getattr(t_origen, 'fecha_cese', None):
+        liq_borrador = db.query(LiquidacionCese).filter_by(
+            trabajador_id=t_origen.id, empresa_id=t_origen.empresa_id,
+            fecha_cese_snapshot=t_origen.fecha_cese, estado='BORRADOR',
+        ).first()
+        if liq_borrador:
+            db.delete(liq_borrador)
+    db.delete(t_destino)
+    t_origen.situacion = "ACTIVO"
+    t_origen.fecha_cese = None
+    t_origen.motivo_cese = None
+    t_origen.empresa_destino_id = None
+    db.commit()
+
+
+def _empresas_destino_disponibles(db, empresa_id_actual):
+    """Empresas a las que el usuario logueado tiene acceso, excluyendo la actual —
+    opciones de destino en Traslado de Personal (individual y masivo)."""
+    usuario_actual = db.query(Usuario).filter_by(username=st.session_state.get('usuario_logueado')).first()
+    if usuario_actual and usuario_actual.acceso_total:
+        return db.query(Empresa).filter(Empresa.id != empresa_id_actual).order_by(Empresa.razon_social).all()
+    elif usuario_actual:
+        return sorted(
+            [e for e in usuario_actual.empresas_asignadas if e.id != empresa_id_actual],
+            key=lambda e: e.razon_social,
+        )
+    return []
+
+
+def _saldo_prestamos_pendientes(db, trabajador, empresa_id) -> float:
+    """Suma de cuotas PENDIENTES de préstamos ACTIVOS de este trabajador en su empresa."""
+    prestamos = db.query(Prestamo).filter_by(
+        trabajador_id=trabajador.id, empresa_id=empresa_id, estado='ACTIVO'
+    ).all()
+    return sum(float(c.monto) for pr in prestamos for c in pr.cuotas if c.estado == 'PENDIENTE')
+
+
+def _ejecutar_traslado(db, t_origen, empresa_destino_id, fecha_cese, fecha_ingreso, sueldo_destino, cargo_destino):
+    """Ejecuta el Traslado de Personal (usada por el flujo individual y el masivo):
+    cesa al trabajador en su empresa actual y crea su registro ACTIVO en la empresa
+    destino, copiando los datos de la persona. Retorna el nuevo Trabajador creado.
+    No hace commit — el llamador decide cuándo confirmar (uno o varios a la vez)."""
+    t_origen.situacion = "CESADO"
+    t_origen.fecha_cese = fecha_cese
+    t_origen.motivo_cese = "TRASLADO"
+    t_origen.empresa_destino_id = empresa_destino_id
+
+    nuevo_t = Trabajador(
+        empresa_id=empresa_destino_id,
+        tipo_doc=t_origen.tipo_doc,
+        tipo_documento=getattr(t_origen, 'tipo_documento', '01'),
+        num_doc=t_origen.num_doc,
+        nombres=t_origen.nombres,
+        apellido_paterno=getattr(t_origen, 'apellido_paterno', ''),
+        apellido_materno=getattr(t_origen, 'apellido_materno', ''),
+        fecha_nac=t_origen.fecha_nac,
+        correo_electronico=getattr(t_origen, 'correo_electronico', ''),
+        cargo=cargo_destino,
+        fecha_ingreso=fecha_ingreso,
+        situacion="ACTIVO",
+        sueldo_base=sueldo_destino,
+        tipo_contrato=t_origen.tipo_contrato,
+        dias_vacaciones_anuales=getattr(t_origen, 'dias_vacaciones_anuales', 30),
+        banco=t_origen.banco,
+        cuenta_bancaria=t_origen.cuenta_bancaria,
+        cci=t_origen.cci,
+        asig_fam=t_origen.asig_fam,
+        sistema_pension=t_origen.sistema_pension,
+        comision_afp=t_origen.comision_afp,
+        cuspp=t_origen.cuspp,
+        seguro_social=getattr(t_origen, 'seguro_social', 'ESSALUD'),
+        # La suspensión de 4ta es de la PERSONA ante SUNAT, no de la empresa que paga.
+        tiene_suspension_4ta=getattr(t_origen, 'tiene_suspension_4ta', False),
+        trabajador_origen_id=t_origen.id,
+    )
+    db.add(nuevo_t)
+    return nuevo_t
+
+
+def _generar_liq_auto_y_avisar(db, trabajador, empresa_id, fecha_cese, regimen_empresa,
+                                fecha_acogimiento, factor_grati_empresa, origen: str) -> tuple:
+    """Genera la Liquidación por Cese en BORRADOR automáticamente (si aplica) y hace
+    commit en una transacción PROPIA, separada de la del cese/traslado que la origina
+    — así, si el cálculo de la liquidación falla por algo imprevisto, no revierte la
+    operación principal (el cese ya es un hecho consumado). Retorna (texto, fallo):
+    `texto` para anexar al mensaje de éxito de quien llama, `fallo=True` solo cuando
+    hubo un error real (no cuando simplemente no aplica, ej. locador o ya existía) —
+    útil para decidir si todavía hace falta ofrecer el flujo manual como respaldo."""
+    if getattr(trabajador, 'tipo_contrato', None) == 'LOCADOR':
+        return "", False
+    try:
+        nueva_liq = generar_liquidacion_borrador_automatica(
+            db, trabajador, empresa_id, fecha_cese, regimen_empresa,
+            fecha_acogimiento=fecha_acogimiento, factor_override=factor_grati_empresa,
+            generado_por=f"{st.session_state.get('usuario_logueado', 'sistema')} ({origen})",
+        )
+        if nueva_liq:
+            db.commit()
+            return (
+                f" 📄 Se generó automáticamente su **Liquidación por Cese en BORRADOR** "
+                f"(Neto estimado: S/ {nueva_liq.total_neto:,.2f}) — revísela y apruébela en "
+                f"el módulo **Liquidación por Cese**.",
+                False,
+            )
+        return "", False
+    except Exception as e_liq_auto:
+        db.rollback()
+        return (
+            f" ⚠️ No se pudo generar su Liquidación automáticamente ({e_liq_auto}) — genérela manualmente.",
+            True,
+        )
+
+
+# determinar_regimen_trabajador vive ahora en core/domain/payroll_engine.py (lógica pura,
+# testeable sin Streamlit); se reexporta aquí porque otras vistas la importan desde este módulo.
+from core.domain.payroll_engine import determinar_regimen_trabajador  # noqa: E402,F401
 
 
 def generar_pdf_ficha_trabajador(t, empresa_nombre, empresa_ruc, regimen_empresa):
@@ -428,6 +586,7 @@ def render():
     empresa_nombre = st.session_state.get('empresa_activa_nombre')
     regimen_empresa = st.session_state.get('empresa_activa_regimen', 'Régimen General')
     fecha_acogimiento = st.session_state.get('empresa_acogimiento', None)
+    factor_grati_empresa = st.session_state.get('empresa_factor_grati', None)
 
     if not empresa_id:
         st.error("⚠️ Seleccione una empresa en el Panel de Control para continuar.")
@@ -441,6 +600,19 @@ def render():
     if st.session_state.get('_msg_trabajador'):
         msg = st.session_state.pop('_msg_trabajador')
         st.success(msg)
+
+    # Sugerencia accionable: generar la Liquidación de un trabajador recién trasladado
+    if st.session_state.get('_liq_sugerir_trabajador_id'):
+        with st.container(border=True):
+            st.info("💡 Este trabajador fue cesado por traslado — genere su Liquidación por Cese ahora.")
+            cl1, cl2 = st.columns(2)
+            if cl1.button("📄 Generar Liquidación Ahora", type="primary", use_container_width=True, key="btn_ir_liquidacion"):
+                st.session_state['_liq_preseleccionar_trabajador_id'] = st.session_state.pop('_liq_sugerir_trabajador_id')
+                st.session_state['_forzar_navegacion'] = "Liquidación por Cese"
+                st.rerun()
+            if cl2.button("Descartar", use_container_width=True, key="btn_descartar_sug_liq"):
+                st.session_state.pop('_liq_sugerir_trabajador_id', None)
+                st.rerun()
 
     db = next(get_db())
     editando_id = st.session_state.get('_editando_trabajador_id')
@@ -483,6 +655,130 @@ def render():
         else:
             st.session_state.pop('_catchup_trabajador_id', None)
 
+    # ── MODO TRASLADO ───────────────────────────────────────────────────────────
+    trasladando_id = st.session_state.get('_trasladando_trabajador_id')
+    if trasladando_id:
+        t_origen = db.query(Trabajador).filter_by(id=trasladando_id).first()
+        if not t_origen:
+            st.session_state.pop('_trasladando_trabajador_id', None)
+            st.rerun()
+
+        st.subheader(f"🔄 Trasladar a Otra Empresa: {t_origen.nombres}")
+        st.caption(f"DNI/CE: {t_origen.num_doc}  —  Empresa actual: {empresa_nombre}")
+
+        # ── ALERTA: préstamos activos con saldo pendiente ────────────────────
+        _saldo_prestamos_tr = _saldo_prestamos_pendientes(db, t_origen, empresa_id)
+        if _saldo_prestamos_tr > 0:
+            st.warning(
+                f"💰 **Préstamo(s) con saldo pendiente: S/ {_saldo_prestamos_tr:,.2f}**. Este monto "
+                f"**no se descuenta automáticamente** al trasladar — debe incluirse en su "
+                f"**Liquidación por Cese** en esta empresa."
+            )
+
+        # ── ALERTA: vacaciones pendientes de goce ────────────────────────────
+        _saldo_vac_tr = calcular_saldo_vacacional(t_origen, t_origen.vacaciones).get('saldo', 0.0)
+        if _saldo_vac_tr and _saldo_vac_tr > 0:
+            st.warning(
+                f"🏖️ **Vacaciones pendientes: {_saldo_vac_tr:.0f} día(s)**. Este saldo debe incluirse "
+                f"como vacaciones truncas en su **Liquidación por Cese** en esta empresa — no se "
+                f"traslada automáticamente a la empresa destino."
+            )
+
+        st.markdown("---")
+
+        empresas_destino = _empresas_destino_disponibles(db, empresa_id)
+
+        if not empresas_destino:
+            st.warning("⚠️ No tiene acceso a ninguna otra empresa para trasladar a este trabajador.")
+            if st.button("← Volver", key="btn_cancelar_traslado_sin_empresas"):
+                st.session_state.pop('_trasladando_trabajador_id', None)
+                st.rerun()
+        else:
+            opciones_emp = {f"{e.razon_social} ({e.ruc})": e.id for e in empresas_destino}
+            emp_sel_label = st.selectbox("Empresa Destino*", list(opciones_emp.keys()), key="traslado_emp_destino")
+            empresa_destino_id = opciones_emp[emp_sel_label]
+
+            col_f1, col_f2 = st.columns(2)
+            fecha_cese_tr = col_f1.date_input(
+                "Fecha de Cese en esta empresa*", value=datetime.date.today(),
+                min_value=datetime.date(2000, 1, 1), key="traslado_fecha_cese",
+            )
+            fecha_ingreso_tr = col_f2.date_input(
+                "Fecha de Ingreso en la empresa destino*",
+                value=fecha_cese_tr + datetime.timedelta(days=1),
+                min_value=fecha_cese_tr, key="traslado_fecha_ingreso",
+                help="Puede ser el día siguiente, la semana siguiente, o cualquier fecha futura — "
+                     "el trabajador no aparecerá en ninguna planilla de la empresa destino antes de esta fecha.",
+            )
+
+            st.markdown("##### Datos laborales en la empresa destino")
+            st.caption(
+                "Los datos personales, bancarios y de pensión se copian automáticamente. "
+                "Confirme o ajuste el sueldo y el cargo — pueden cambiar en la nueva empresa."
+            )
+            col_l1, col_l2 = st.columns(2)
+            label_sueldo_tr = "Honorario Base (S/)*" if t_origen.tipo_contrato == "LOCADOR" else "Sueldo Mensual (S/)*"
+            sueldo_destino = col_l1.number_input(
+                label_sueldo_tr, min_value=0.01, step=50.0,
+                value=float(t_origen.sueldo_base), key="traslado_sueldo",
+            )
+            cargo_destino = col_l2.text_input("Cargo / Puesto", value=t_origen.cargo or "", key="traslado_cargo")
+
+            if t_origen.tipo_contrato == "LOCADOR" and getattr(t_origen, 'tiene_suspension_4ta', False):
+                st.warning(
+                    "⚠️ Este locador tiene **Suspensión de Retenciones 4ta Categoría** activa. Se "
+                    "copiará a la empresa destino porque es una condición de la persona ante SUNAT, "
+                    "no de la empresa pagadora — pero **verifique en SUNAT que la constancia siga "
+                    "vigente** para el año en curso antes de continuar (es de renovación anual)."
+                )
+
+            st.markdown("---")
+            # Bloquea solo si el DNI está ACTIVO en destino — un CESADO histórico (ej. ya trabajó
+            # antes ahí y ahora "regresa" por traslado) no debe impedir el traslado.
+            _dup_destino = db.query(Trabajador).filter_by(
+                empresa_id=empresa_destino_id, num_doc=t_origen.num_doc, situacion="ACTIVO"
+            ).first()
+            if fecha_ingreso_tr <= fecha_cese_tr:
+                st.error("❌ La fecha de ingreso en la empresa destino debe ser posterior a la fecha de cese.")
+            elif _dup_destino:
+                st.error(
+                    f"❌ Ya existe un trabajador ACTIVO con el documento {t_origen.num_doc} en la "
+                    f"empresa destino. No se puede continuar."
+                )
+            else:
+                if st.button("✅ Confirmar Traslado", type="primary", use_container_width=True, key="btn_confirmar_traslado"):
+                    try:
+                        _ejecutar_traslado(
+                            db, t_origen, empresa_destino_id,
+                            fecha_cese_tr, fecha_ingreso_tr, sueldo_destino, cargo_destino,
+                        )
+                        db.commit()
+                        st.session_state.pop('_trasladando_trabajador_id', None)
+                        _msg_tr = (
+                            f"✅ Traslado registrado: **{t_origen.nombres}** queda CESADO en "
+                            f"**{empresa_nombre}** el {fecha_cese_tr.strftime('%d/%m/%Y')}, y quedará "
+                            f"ACTIVO en **{emp_sel_label}** a partir del {fecha_ingreso_tr.strftime('%d/%m/%Y')} "
+                            f"(no aparecerá en ninguna planilla antes de esa fecha)."
+                        )
+                        _txt_liq, _fallo_liq = _generar_liq_auto_y_avisar(
+                            db, t_origen, empresa_id, fecha_cese_tr, regimen_empresa,
+                            fecha_acogimiento, factor_grati_empresa, origen="auto-traslado",
+                        )
+                        _msg_tr += _txt_liq
+                        if _fallo_liq:
+                            # Respaldo manual solo si la generación automática falló de verdad.
+                            st.session_state['_liq_sugerir_trabajador_id'] = t_origen.id
+                        st.session_state['_msg_trabajador'] = _msg_tr
+                        st.rerun()
+                    except Exception as e_tr:
+                        db.rollback()
+                        st.error(f"❌ Error al registrar el traslado: {e_tr}")
+
+            if st.button("← Cancelar Traslado", key="btn_cancelar_traslado"):
+                st.session_state.pop('_trasladando_trabajador_id', None)
+                st.rerun()
+        return  # No renderizar las tabs mientras se está trasladando
+
     # ── MODO EDICIÓN ────────────────────────────────────────────────────────────
     if editando_id:
         t_edit = db.query(Trabajador).filter_by(id=editando_id).first()
@@ -497,12 +793,24 @@ def render():
         datos = _render_form_trabajador(t=t_edit, key_prefix=f"edit_{t_edit.id}")
         if datos:
             try:
+                situacion_previa = t_edit.situacion
                 campos_editables = {k: v for k, v in datos.items() if k not in ("tipo_doc", "num_doc")}
                 for campo, valor in campos_editables.items():
                     setattr(t_edit, campo, valor)
                 db.commit()
                 st.session_state.pop('_editando_trabajador_id', None)
-                st.session_state['_msg_trabajador'] = f"✅ Trabajador **{t_edit.nombres}** actualizado correctamente."
+                _msg_edit = f"✅ Trabajador **{t_edit.nombres}** actualizado correctamente."
+
+                # Cese directo (no por Traslado): recién ahora pasó a CESADO -> generar
+                # su Liquidación por Cese en BORRADOR automáticamente.
+                if situacion_previa != "CESADO" and t_edit.situacion == "CESADO":
+                    _txt_liq_edit, _ = _generar_liq_auto_y_avisar(
+                        db, t_edit, empresa_id, t_edit.fecha_cese, regimen_empresa,
+                        fecha_acogimiento, factor_grati_empresa, origen="auto-cese",
+                    )
+                    _msg_edit += _txt_liq_edit
+
+                st.session_state['_msg_trabajador'] = _msg_edit
                 # Si ahora tiene correo y le habían quedado boletas pendientes por esa
                 # causa, ofrecer reenviarlas apenas vuelva a la pantalla principal.
                 if t_edit.correo_electronico:
@@ -522,8 +830,8 @@ def render():
         return  # No renderizar las tabs en modo edición
 
     # ── MODO NORMAL: TABS ───────────────────────────────────────────────────────
-    tab_lista, tab_cesados, tab_nuevo = st.tabs([
-        "📋 Personal Activo", "🗂️ Cesados / Inactivos", "➕ Alta de Trabajador"
+    tab_lista, tab_cesados, tab_nuevo, tab_masivo = st.tabs([
+        "📋 Personal Activo", "🗂️ Cesados / Inactivos", "➕ Alta de Trabajador", "🔄 Traslado Masivo"
     ])
 
     with tab_cesados:
@@ -549,6 +857,32 @@ def render():
                     if c6.button("✏️", key=f"edit_ces_{t.id}", help="Editar trabajador cesado"):
                         st.session_state['_editando_trabajador_id'] = t.id
                         st.rerun()
+                    if getattr(t, 'motivo_cese', None) == 'TRASLADO' and getattr(t, 'empresa_destino_id', None):
+                        _emp_dest = db.query(Empresa).filter_by(id=t.empresa_destino_id).first()
+                        if _emp_dest:
+                            st.caption(f"🔄 Trasladado a **{_emp_dest.razon_social}**")
+                        _t_dest = db.query(Trabajador).filter_by(trabajador_origen_id=t.id).first()
+                        if _t_dest:
+                            _liq_bloq = _liquidacion_bloqueante_traslado(db, t)
+                            if _tiene_planilla_cerrada(db, _t_dest):
+                                st.caption(
+                                    "🔒 Ya no se puede deshacer con un botón — el destino tiene una "
+                                    "planilla/honorarios CERRADA. Corríjalo manualmente si es necesario."
+                                )
+                            elif _liq_bloq:
+                                st.caption(
+                                    f"🔒 Ya no se puede deshacer con un botón — existe una Liquidación "
+                                    f"por Cese **{_liq_bloq.estado}** para este cese. Corríjalo "
+                                    f"manualmente si es necesario."
+                                )
+                            elif st.button("↩️ Deshacer Traslado", key=f"deshacer_ces_{t.id}"):
+                                try:
+                                    _deshacer_traslado(db, t, _t_dest)
+                                    st.session_state['_msg_trabajador'] = f"↩️ Traslado de **{t.nombres}** revertido correctamente."
+                                    st.rerun()
+                                except Exception as e_rev:
+                                    db.rollback()
+                                    st.error(f"❌ Error al revertir: {e_rev}")
 
     with tab_lista:
         trabajadores_db = db.query(Trabajador).filter(
@@ -562,7 +896,7 @@ def render():
             for t in trabajadores_db:
                 determinar_regimen_trabajador(t.fecha_ingreso, regimen_empresa, fecha_acogimiento)
                 with st.container(border=True):
-                    c1, c2, c3, c4, c_pdf, c5, c6 = st.columns([2.5, 1.5, 1.3, 1.3, 0.5, 0.5, 0.5])
+                    c1, c2, c3, c4, c_pdf, c_tr, c5, c6 = st.columns([2.2, 1.4, 1.2, 1.2, 0.5, 0.5, 0.5, 0.5])
                     tipo_badge = "📋 Locador" if getattr(t, 'tipo_contrato', 'PLANILLA') == 'LOCADOR' else "🏢 Planilla"
                     
                     # Alerta visual de correo faltante
@@ -574,7 +908,34 @@ def render():
                     c2.markdown(f"Doc: `{t.num_doc}`")
                     c3.markdown(f"{t.cargo or '—'}")
                     c4.markdown(f"S/ {t.sueldo_base:,.2f}")
-                    
+
+                    if getattr(t, 'trabajador_origen_id', None):
+                        _t_orig = db.query(Trabajador).filter_by(id=t.trabajador_origen_id).first()
+                        if _t_orig:
+                            _emp_orig = db.query(Empresa).filter_by(id=_t_orig.empresa_id).first()
+                            if _emp_orig:
+                                st.caption(f"🔄 Trasladado desde **{_emp_orig.razon_social}**")
+                            _liq_bloq2 = _liquidacion_bloqueante_traslado(db, _t_orig)
+                            if _tiene_planilla_cerrada(db, t):
+                                st.caption(
+                                    "🔒 Ya no se puede deshacer con un botón — esta empresa ya tiene "
+                                    "una planilla/honorarios CERRADA con este trabajador."
+                                )
+                            elif _liq_bloq2:
+                                st.caption(
+                                    f"🔒 Ya no se puede deshacer con un botón — existe una Liquidación "
+                                    f"por Cese **{_liq_bloq2.estado}** para este cese en la empresa de "
+                                    f"origen. Corríjalo manualmente si es necesario."
+                                )
+                            elif st.button("↩️ Deshacer Traslado", key=f"deshacer_act_{t.id}"):
+                                try:
+                                    _deshacer_traslado(db, _t_orig, t)
+                                    st.session_state['_msg_trabajador'] = f"↩️ Traslado de **{t.nombres}** revertido correctamente."
+                                    st.rerun()
+                                except Exception as e_rev2:
+                                    db.rollback()
+                                    st.error(f"❌ Error al revertir: {e_rev2}")
+
                     buf_ficha = generar_pdf_ficha_trabajador(
                         t, empresa_nombre, 
                         st.session_state.get('empresa_activa_ruc', ''), 
@@ -636,6 +997,10 @@ def render():
                             except Exception as e_chk:
                                 st.error(f"Error al verificar planillas: {e_chk}")
 
+                    if c_tr.button("🔄", key=f"trasladar_{t.id}", help="Trasladar a Otra Empresa"):
+                        st.session_state['_trasladando_trabajador_id'] = t.id
+                        st.rerun()
+
     with tab_nuevo:
         datos = _render_form_trabajador(key_prefix="nuevo")
         if datos:
@@ -659,3 +1024,154 @@ def render():
                     st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al guardar: {e}")
+
+    with tab_masivo:
+        st.markdown("##### Traslado Masivo de Personal")
+        st.caption(
+            "Seleccione varios trabajadores activos y envíelos a la misma empresa destino en "
+            "una sola operación. Cada fila se puede ajustar de forma individual antes de confirmar."
+        )
+
+        empresas_destino_m = _empresas_destino_disponibles(db, empresa_id)
+        if not empresas_destino_m:
+            st.warning("⚠️ No tiene acceso a ninguna otra empresa para realizar traslados.")
+        else:
+            opciones_emp_m = {f"{e.razon_social} ({e.ruc})": e.id for e in empresas_destino_m}
+            emp_sel_m = st.selectbox("Empresa Destino*", list(opciones_emp_m.keys()), key="masivo_emp_destino")
+            empresa_destino_m_id = opciones_emp_m[emp_sel_m]
+
+            col_d1, col_d2 = st.columns(2)
+            fecha_cese_def = col_d1.date_input(
+                "Fecha de Cese por defecto*", value=datetime.date.today(),
+                min_value=datetime.date(2000, 1, 1), key="masivo_fecha_cese_def",
+                help="Se aplica a todos los seleccionados — ajustable fila por fila en la tabla.",
+            )
+            fecha_ingreso_def = col_d2.date_input(
+                "Fecha de Ingreso en destino por defecto*",
+                value=fecha_cese_def + datetime.timedelta(days=1),
+                min_value=fecha_cese_def, key="masivo_fecha_ingreso_def",
+            )
+
+            activos_masivo = db.query(Trabajador).filter(
+                Trabajador.empresa_id == empresa_id,
+                Trabajador.situacion == "ACTIVO",
+            ).order_by(Trabajador.nombres).all()
+
+            if not activos_masivo:
+                st.info("No hay trabajadores activos para trasladar.")
+            else:
+                df_masivo = pd.DataFrame([{
+                    "Trasladar": False,
+                    "Nombre": t.nombres,
+                    "DNI": t.num_doc,
+                    "Tipo": "Locador" if t.tipo_contrato == "LOCADOR" else "Planilla",
+                    "Fecha Cese": fecha_cese_def,
+                    "Fecha Ingreso Destino": fecha_ingreso_def,
+                    "Sueldo Destino": float(t.sueldo_base),
+                    "Cargo Destino": t.cargo or "",
+                } for t in activos_masivo])
+
+                st.caption("Marque \"Trasladar\" en cada trabajador — puede editar fecha, sueldo y cargo por fila antes de confirmar.")
+                edited = st.data_editor(
+                    df_masivo,
+                    hide_index=True,
+                    use_container_width=True,
+                    key="masivo_data_editor",
+                    disabled=["Nombre", "DNI", "Tipo"],
+                    column_config={
+                        "Trasladar": st.column_config.CheckboxColumn(),
+                        "Fecha Cese": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Fecha Ingreso Destino": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Sueldo Destino": st.column_config.NumberColumn(format="S/ %.2f", min_value=0.01),
+                    },
+                )
+
+                seleccionados = edited[edited["Trasladar"] == True]
+
+                if seleccionados.empty:
+                    st.caption("Ningún trabajador seleccionado todavía.")
+                else:
+                    trab_por_dni = {t.num_doc: t for t in activos_masivo}
+                    dnis_sel = [str(d) for d in seleccionados["DNI"]]
+
+                    saldo_prestamos_tot = sum(
+                        _saldo_prestamos_pendientes(db, trab_por_dni[d], empresa_id)
+                        for d in dnis_sel if d in trab_por_dni
+                    )
+                    saldo_vac_tot = sum(
+                        (calcular_saldo_vacacional(trab_por_dni[d], trab_por_dni[d].vacaciones).get('saldo', 0.0) or 0.0)
+                        for d in dnis_sel if d in trab_por_dni
+                    )
+                    if saldo_prestamos_tot > 0 or saldo_vac_tot > 0:
+                        st.warning(
+                            f"💰 Préstamos pendientes en el grupo seleccionado: S/ {saldo_prestamos_tot:,.2f}  |  "
+                            f"🏖️ Vacaciones pendientes acumuladas: {saldo_vac_tot:.0f} día(s). Recuerde incluir "
+                            f"estos montos en la Liquidación por Cese de cada trabajador en esta empresa."
+                        )
+
+                    st.markdown(f"**{len(seleccionados)} trabajador(es)** seleccionado(s) para trasladar a **{emp_sel_m}**")
+
+                    if st.button(
+                        f"✅ Confirmar Traslado de {len(seleccionados)} Trabajador(es)",
+                        type="primary", use_container_width=True, key="btn_confirmar_masivo",
+                    ):
+                        exitos_m, errores_m = 0, []
+                        liq_generadas_m, liq_fallidas_m = 0, []
+                        for _, fila in seleccionados.iterrows():
+                            dni_f = str(fila["DNI"])
+                            t_f = trab_por_dni.get(dni_f)
+                            if not t_f:
+                                continue
+                            try:
+                                fecha_cese_f = fila["Fecha Cese"]
+                                fecha_ingreso_f = fila["Fecha Ingreso Destino"]
+                                if hasattr(fecha_cese_f, 'date'):
+                                    fecha_cese_f = fecha_cese_f.date()
+                                if hasattr(fecha_ingreso_f, 'date'):
+                                    fecha_ingreso_f = fecha_ingreso_f.date()
+
+                                if fecha_ingreso_f <= fecha_cese_f:
+                                    errores_m.append(f"{t_f.nombres}: fecha de ingreso debe ser posterior al cese")
+                                    continue
+                                dup_f = db.query(Trabajador).filter_by(
+                                    empresa_id=empresa_destino_m_id, num_doc=t_f.num_doc, situacion="ACTIVO"
+                                ).first()
+                                if dup_f:
+                                    errores_m.append(f"{t_f.nombres}: ya existe ACTIVO en la empresa destino")
+                                    continue
+
+                                _ejecutar_traslado(
+                                    db, t_f, empresa_destino_m_id,
+                                    fecha_cese_f, fecha_ingreso_f,
+                                    float(fila["Sueldo Destino"]), fila["Cargo Destino"],
+                                )
+                                db.commit()
+                                exitos_m += 1
+
+                                _txt_liq_m, _fallo_liq_m = _generar_liq_auto_y_avisar(
+                                    db, t_f, empresa_id, fecha_cese_f, regimen_empresa,
+                                    fecha_acogimiento, factor_grati_empresa, origen="auto-traslado masivo",
+                                )
+                                if _txt_liq_m:
+                                    liq_generadas_m += 1
+                                if _fallo_liq_m:
+                                    liq_fallidas_m.append(t_f.nombres)
+                            except Exception as e_m:
+                                db.rollback()
+                                errores_m.append(f"{t_f.nombres if t_f else dni_f}: {e_m}")
+
+                        _msg_masivo = f"✅ Traslado masivo a **{emp_sel_m}**: {exitos_m} exitoso(s)"
+                        if liq_generadas_m:
+                            _msg_masivo += (
+                                f" | 📄 {liq_generadas_m} Liquidación(es) por Cese en BORRADOR "
+                                f"generada(s) automáticamente — revíselas en 'Liquidación por Cese'"
+                            )
+                        if liq_fallidas_m:
+                            _msg_masivo += (
+                                f" | ⚠️ Liquidación NO generada para: {', '.join(liq_fallidas_m)} "
+                                f"(genérela manualmente)"
+                            )
+                        if errores_m:
+                            _msg_masivo += f", {len(errores_m)} con error — " + "; ".join(errores_m)
+                        st.session_state['_msg_trabajador'] = _msg_masivo
+                        st.rerun()

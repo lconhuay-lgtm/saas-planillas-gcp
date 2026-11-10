@@ -11,6 +11,7 @@ _MAP_GRATI_INV = {v: k for k, v in _MAP_GRATI.items()}
 from infrastructure.database.connection import get_db
 from infrastructure.database.models import Empresa, Usuario
 from infrastructure.services.sunat_api import consultar_dni_sunat
+from presentation.components.busqueda import filtrar_empresas
 
 def render():
     st.title("🗄️ Panel de Control Multi-Empresa")
@@ -222,14 +223,31 @@ def render():
     else:
         empresas_db = []
 
-    if usuario_actual and usuario_actual.rol in ("admin", "supervisor"):
-        col_t, col_b = st.columns([3, 1])
-        col_b.button("➕ Crear Nueva Empresa", type="primary", use_container_width=True, 
+    puede_crear = bool(usuario_actual and usuario_actual.rol in ("admin", "supervisor"))
+    col_t, col_b = st.columns([3, 1], vertical_alignment="bottom")
+    texto_busqueda = ""
+    if empresas_db:
+        texto_busqueda = col_t.text_input(
+            "Buscar empresa",
+            key="buscar_empresa",
+            placeholder="🔎 Buscar por razón social o RUC…",
+            label_visibility="collapsed",
+        )
+    if puede_crear:
+        col_b.button("➕ Crear Nueva Empresa", type="primary", use_container_width=True,
                      on_click=lambda: st.session_state.update({"_creando_nueva_empresa": True}))
 
-    if not empresas_db:
+    total_empresas = len(empresas_db)
+    empresas_db = filtrar_empresas(empresas_db, texto_busqueda)
+
+    if total_empresas == 0:
         st.info("No hay empresas registradas bajo su perfil.")
+    elif not empresas_db:
+        st.warning(f"Ninguna empresa coincide con **{texto_busqueda.strip()}**. "
+                   "Pruebe con otra parte del nombre o con el RUC.")
     else:
+        if texto_busqueda.strip():
+            st.caption(f"Mostrando {len(empresas_db)} de {total_empresas} empresas")
         # Mostrar en cuadrícula (grid) para estilo profesional
         for i in range(0, len(empresas_db), 2):
             cols = st.columns(2)

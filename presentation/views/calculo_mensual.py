@@ -63,6 +63,44 @@ def _cargar_contexto_calculo(empresa_id, periodo_key, mes_idx, anio_seleccionado
     except Exception:
         pass
 
+    # Traslado de Personal: si algún trabajador de esta empresa llegó por traslado desde
+    # otra empresa del grupo, sumar también su histórico de 5ta de la empresa de ORIGEN
+    # (mismo año calendario) — así la proyección de renta de 5ta en la empresa destino
+    # no arranca de cero como si el trabajador nunca hubiera ganado nada este año, lo que
+    # lo perjudicaría con una retención menor a la que realmente le corresponde por su
+    # ingreso anual acumulado entre ambos empleadores.
+    try:
+        db_tr = SessionLocal()
+        trasladados = db_tr.query(Trabajador).filter(
+            Trabajador.empresa_id == empresa_id,
+            Trabajador.trabajador_origen_id.isnot(None),
+        ).all()
+        for t_dest in trasladados:
+            t_orig = db_tr.query(Trabajador).filter_by(id=t_dest.trabajador_origen_id).first()
+            if not t_orig:
+                continue
+            dni_tr = t_dest.num_doc
+            for mes_o in range(1, 13):
+                plan_o = db_tr.query(PlanillaMensual).filter_by(
+                    empresa_id=t_orig.empresa_id, periodo_key=f"{mes_o:02d}-{anio_seleccionado}"
+                ).first()
+                if not plan_o:
+                    continue
+                try:
+                    q_o = json.loads(plan_o.auditoria_json or '{}').get(dni_tr, {}).get('quinta', {})
+                    b_o = float(q_o.get('base_mes', 0.0))
+                    r_o = float(q_o.get('retencion', 0.0))
+                    if b_o > 0 or r_o > 0:
+                        if dni_tr not in historico_quinta:
+                            historico_quinta[dni_tr] = {'rem_previa': 0.0, 'ret_previa': 0.0}
+                        historico_quinta[dni_tr]['rem_previa'] += b_o
+                        historico_quinta[dni_tr]['ret_previa'] += r_o
+                except Exception:
+                    pass
+        db_tr.close()
+    except Exception:
+        pass
+
     # Precargar cuotas de préstamos pendientes del periodo (una sola consulta)
     cuotas_del_mes: dict = {}
     try:
@@ -198,6 +236,9 @@ def _calcular_haberes(
     obs_trab = []
     if ingreso_este_mes:
         obs_trab.append(f"Ingresó el {fecha_ingreso.strftime('%d/%m/%Y')}")
+        _empresa_origen_traslado = str(row.get('Trasladado Desde', '') or '').strip()
+        if _empresa_origen_traslado:
+            obs_trab.append(f"🔄 Trasladado desde {_empresa_origen_traslado}")
     if cese_este_mes:
         obs_trab.append(f"Cese: {fecha_cese.strftime('%d/%m/%Y')} — sueldo proporcional")
 
@@ -703,6 +744,9 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         "base_afp": round(h['base_afp_onp'], 2),   # para AFPnet
         "seguro_social": etiqueta_seguro,
         "aporte_seg_social": round(aporte_essalud, 2),
+        "base_essalud": round(max(h['base_essalud'], p['rmv']), 2),  # base real, para mostrar en boleta
+        "tasa_essalud_pct": round(p['tasa_essalud'], 2),
+        "tasa_eps_pct": round(p['tasa_eps'], 2),
         "credito_eps_patronal": round(credito_eps_patronal, 2),  # informativo, ver nota arriba
         "ingresos": h['desglose_ingresos'], "descuentos": desglose_descuentos,
         "totales": {"ingreso": h['ingresos_totales'], "descuento": (pen['total_pension'] + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},

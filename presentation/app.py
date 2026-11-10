@@ -53,6 +53,12 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acceso_total BOOLEAN DEFAULT false",
             "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS modulos_restringidos TEXT DEFAULT '[]'",
             "ALTER TABLE usuario_empresa ADD COLUMN IF NOT EXISTS fecha_asignacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            # Seguridad de acceso: hash PBKDF2 (más largo que SHA-256), cambio de clave
+            # obligatorio y bloqueo temporal por intentos fallidos
+            "ALTER TABLE usuarios ALTER COLUMN password_hash TYPE VARCHAR(255)",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS debe_cambiar_password BOOLEAN DEFAULT false",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS intentos_fallidos INTEGER DEFAULT 0",
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_hasta TIMESTAMP",
             # Seguro social (lote anterior)
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seguro_social VARCHAR(20) DEFAULT 'ESSALUD'",
             # Cierre de planilla (lote anterior)
@@ -158,6 +164,83 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS usa_eps BOOLEAN DEFAULT false",
             "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS monto_eps_trabajador FLOAT DEFAULT 0",
             "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_eps_por_pagar VARCHAR(20)",
+            # Traslado de Personal entre empresas del mismo grupo económico
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS motivo_cese VARCHAR(20)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS empresa_destino_id INTEGER REFERENCES empresas(id)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS trabajador_origen_id INTEGER REFERENCES trabajadores(id)",
+            # Liquidación por Cese — documento persistido (Fase 1 del rediseño profesional)
+            """CREATE TABLE IF NOT EXISTS liquidaciones_cese (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+                trabajador_id INTEGER NOT NULL REFERENCES trabajadores(id),
+                fecha_generacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                generado_por VARCHAR(100),
+                fecha_ingreso_snapshot DATE NOT NULL,
+                fecha_cese_snapshot DATE NOT NULL,
+                sueldo_base_snapshot FLOAT NOT NULL,
+                incluye_sueldo_mes_cese BOOLEAN DEFAULT false,
+                monto_sueldo_proporcional FLOAT DEFAULT 0,
+                dias_laborados_mes_cese INTEGER DEFAULT 0,
+                dias_vacaciones_pendientes FLOAT DEFAULT 0,
+                monto_vacaciones_truncas FLOAT DEFAULT 0,
+                periodo_grati_ref VARCHAR(20),
+                meses_grati INTEGER DEFAULT 0,
+                monto_grati_trunca FLOAT DEFAULT 0,
+                monto_bono_9 FLOAT DEFAULT 0,
+                periodo_cts_ref VARCHAR(20),
+                meses_cts INTEGER DEFAULT 0,
+                base_cts FLOAT DEFAULT 0,
+                monto_cts_trunca FLOAT DEFAULT 0,
+                fecha_ultimo_deposito_cts DATE,
+                monto_prestamos_pendientes FLOAT DEFAULT 0,
+                monto_retencion_5ta FLOAT DEFAULT 0,
+                total_bruto FLOAT NOT NULL,
+                total_neto FLOAT NOT NULL,
+                estado VARCHAR(20) DEFAULT 'BORRADOR',
+                aprobado_por VARCHAR(100),
+                fecha_aprobacion TIMESTAMP,
+                fecha_pago DATE,
+                observaciones TEXT
+            )""",
+            # Asiento de Liquidación por Cese — cuentas para CTS/Gratificación trunca
+            # (nunca antes contabilizadas) y Vacaciones truncas por pagar.
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_cts_gasto VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_cts_por_pagar VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_gratificacion_gasto VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_gratificacion_por_pagar VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_vacaciones_por_pagar VARCHAR(20)",
+            # AFP/ONP sobre vacaciones truncas (y sueldo proporcional si se incluyó)
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS sistema_pension_snapshot VARCHAR(50)",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_pension_afp_onp FLOAT DEFAULT 0",
+            # Tratamiento tributario completo de vacaciones truncas (código SUNAT 0114:
+            # también afecto a 5ta y EsSalud) + Bono por Cese (código SUNAT 0906: exento)
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_essalud_vacaciones FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_bono_cese FLOAT DEFAULT 0",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_bono_cese_gasto VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_bono_cese_por_pagar VARCHAR(20)",
+            # Desglose de la tríada AFP de la liquidación — lo exige el .rem de PLAME
+            # (códigos 0608/0606/0601 van por separado, no como un solo total)
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_aporte_afp FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_prima_afp FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_comision_afp FLOAT DEFAULT 0",
+            # Gratificación ordinaria de referencia para el 1/6 de CTS (no la trunca)
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_referencia_cts FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_referencia_cts_fuente VARCHAR(20)",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_referencia_cts_periodo VARCHAR(10)",
+            # Desglose de bases imponibles y periodos efectivos para el PDF transparente
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS vac_devengados FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS vac_consumidos FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS vac_meses_completos INTEGER DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS vac_dias_sueltos FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_base_computable FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_factor FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_fecha_efectivo_ini DATE",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS grati_fecha_efectivo_fin DATE",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_remuneracion_base FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_factor FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_dias_sueltos INTEGER DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_fecha_efectivo_ini DATE",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_fecha_efectivo_fin DATE",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
@@ -195,6 +278,12 @@ inicializar_estado()
 # Si el usuario no ha iniciado sesión, mostramos solo la pantalla de login.
 if not st.session_state.get('usuario_logueado'):
     login.render()
+    st.stop()
+
+# Clave por defecto, recién asignada por un admin o antigua sin cambiar: no se
+# deja usar ningún módulo hasta que el usuario defina una contraseña propia.
+if st.session_state.get('debe_cambiar_password'):
+    login.render_cambio_password(obligatorio=True, key="cambio_pw_obligatorio")
     st.stop()
 # ─────────────────────────────────────────────────────────────────────────────
 
