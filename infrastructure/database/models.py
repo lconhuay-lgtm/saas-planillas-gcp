@@ -17,7 +17,12 @@ class Usuario(Base):
 
     id               = Column(Integer, primary_key=True, index=True)
     username         = Column(String(50), unique=True, nullable=False, index=True)
-    password_hash    = Column(String(64), nullable=False)
+    # PBKDF2 con sal (ver infrastructure/services/seguridad.py); los SHA-256 antiguos
+    # de 64 caracteres se migran solos en el primer login exitoso.
+    password_hash    = Column(String(255), nullable=False)
+    debe_cambiar_password = Column(Boolean, default=False, server_default='false')
+    intentos_fallidos = Column(Integer, default=0, server_default='0')
+    bloqueado_hasta  = Column(DateTime, nullable=True)
     rol              = Column(String(20), nullable=False)   # admin | supervisor | analista | consulta
     nombre_completo  = Column(String(100), nullable=True)
     email            = Column(String(100), nullable=True)
@@ -69,7 +74,13 @@ class Empresa(Base):
     fecha_registro = Column(DateTime, default=datetime.now)
 
     # Relaciones
-    trabajadores = relationship("Trabajador", back_populates="empresa", cascade="all, delete-orphan")
+    # foreign_keys explícito: Trabajador tiene DOS FK hacia empresas.id (empresa_id y
+    # empresa_destino_id, esta última para Traslado de Personal) — sin esto, SQLAlchemy
+    # no puede determinar solo cuál usar para esta relación.
+    trabajadores = relationship(
+        "Trabajador", back_populates="empresa", cascade="all, delete-orphan",
+        foreign_keys="Trabajador.empresa_id",
+    )
     conceptos = relationship("Concepto", back_populates="empresa", cascade="all, delete-orphan")
 
 
@@ -97,6 +108,16 @@ class Trabajador(Base):
     fecha_ingreso = Column(Date)
     fecha_cese = Column(Date, nullable=True)
     situacion = Column(String(50), default="ACTIVO")
+    # Motivo del cese (ej. "TRASLADO") — NULL/vacío para el cese manual de siempre
+    # (renuncia, despido, etc.), que no cambia de comportamiento.
+    motivo_cese = Column(String(20), nullable=True)
+    # Traslado de Personal entre empresas del mismo grupo económico: la empresa de
+    # ORIGEN guarda a qué empresa se fue (empresa_destino_id); el registro NUEVO creado
+    # en la empresa de DESTINO guarda de qué trabajador viene (trabajador_origen_id).
+    # Es solo trazabilidad/nota — NO afecta ningún cálculo de vacaciones/CTS/gratificación/
+    # 5ta, que siempre empiezan de cero en la empresa destino (decisión explícita del usuario).
+    empresa_destino_id = Column(Integer, ForeignKey("empresas.id"), nullable=True)
+    trabajador_origen_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=True)
     sueldo_base = Column(Float, nullable=False)
     # Tipo de contratación: 'PLANILLA' (5ta Cat.) o 'LOCADOR' (4ta Cat.)
     tipo_contrato = Column(String(20), default='PLANILLA', nullable=False, server_default='PLANILLA')
@@ -123,7 +144,7 @@ class Trabajador(Base):
     seguro_social = Column(String(20), default="ESSALUD", nullable=False, server_default="ESSALUD")
     
     # Relación Inversa
-    empresa = relationship("Empresa", back_populates="trabajadores")
+    empresa = relationship("Empresa", back_populates="trabajadores", foreign_keys=[empresa_id])
     vacaciones = relationship("RegistroVacaciones", backref="trabajador", cascade="all, delete-orphan")
 
 
@@ -407,6 +428,132 @@ class ConfiguracionContable(Base):
     # trabajador. NO recibe el crédito patronal (ver nota en generador_asiento_contable.py).
     cuenta_eps_por_pagar = Column(String(20), nullable=True)
 
+    # Asiento de Liquidación por Cese — CTS y Gratificación nunca se contabilizaron antes
+    # (julio/diciembre siempre estuvieron excluidos del asiento de planilla), por eso no
+    # reusan ninguna cuenta existente. Vacaciones truncas SÍ reusa cuenta_descanso_vacacional
+    # (mismo tipo de gasto que el descanso vacacional regular). Retención 5ta, préstamos y
+    # sueldo proporcional del mes de cese reusan sus cuentas ya existentes.
+    cuenta_cts_gasto = Column(String(20), nullable=True)
+    cuenta_cts_por_pagar = Column(String(20), nullable=True)
+    cuenta_gratificacion_gasto = Column(String(20), nullable=True)
+    cuenta_gratificacion_por_pagar = Column(String(20), nullable=True)
+    cuenta_vacaciones_por_pagar = Column(String(20), nullable=True)
+    # Bono por Cese — nunca contabilizado antes, cuentas propias (EsSalud sobre
+    # vacaciones truncas SÍ reusa cuenta_essalud_gasto/cuenta_essalud_pasivo de arriba).
+    cuenta_bono_cese_gasto = Column(String(20), nullable=True)
+    cuenta_bono_cese_por_pagar = Column(String(20), nullable=True)
+
     fecha_actualizacion = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     empresa = relationship("Empresa")
+
+
+class LiquidacionCese(Base):
+    """
+    Liquidación de Beneficios Sociales por cese — un DOCUMENTO persistido (no un
+    cálculo de pantalla que desaparece). Guarda snapshot de los datos usados al
+    momento del cálculo, cada componente por separado, y el estado del workflow
+    de aprobación (BORRADOR -> APROBADA -> PAGADA).
+    """
+    __tablename__ = "liquidaciones_cese"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False)
+
+    fecha_generacion = Column(DateTime, default=datetime.now)
+    generado_por = Column(String(100), nullable=True)
+
+    # Snapshot de los datos usados (para auditoría, aunque el trabajador cambie después)
+    fecha_ingreso_snapshot = Column(Date, nullable=False)
+    fecha_cese_snapshot = Column(Date, nullable=False)
+    sueldo_base_snapshot = Column(Float, nullable=False)
+
+    # Sueldo proporcional del mes de cese — NO incluido por defecto porque ya lo paga
+    # la planilla regular de ese mes; el checkbox existe solo para la empresa que NO
+    # corre planilla regular en el mes de cese (evita el riesgo de pago duplicado).
+    incluye_sueldo_mes_cese = Column(Boolean, default=False, server_default='false')
+    monto_sueldo_proporcional = Column(Float, default=0.0)
+    dias_laborados_mes_cese = Column(Integer, default=0)
+
+    dias_vacaciones_pendientes = Column(Float, default=0.0)
+    monto_vacaciones_truncas = Column(Float, default=0.0)
+    # Desglose del cálculo de vacaciones (dozavos y treintavos, D.S. 012-92-TR Art. 23)
+    # para que el PDF muestre la base imponible completa, no solo el resultado final.
+    vac_devengados = Column(Float, default=0.0)      # total acumulado desde el ingreso (bruto)
+    vac_consumidos = Column(Float, default=0.0)      # ya gozado/vendido, descontado del devengado
+    vac_meses_completos = Column(Integer, default=0)
+    vac_dias_sueltos = Column(Float, default=0.0)
+
+    periodo_grati_ref = Column(String(20), nullable=True)   # ej. "JUL-DIC 2026"
+    meses_grati = Column(Integer, default=0)
+    monto_grati_trunca = Column(Float, default=0.0)
+    monto_bono_9 = Column(Float, default=0.0)
+    # Base computable y periodo EFECTIVAMENTE laborado de la gratificación trunca —
+    # para mostrar en el PDF qué meses exactos corresponden y sobre qué base.
+    grati_base_computable = Column(Float, default=0.0)
+    grati_factor = Column(Float, default=0.0)
+    grati_fecha_efectivo_ini = Column(Date, nullable=True)
+    grati_fecha_efectivo_fin = Column(Date, nullable=True)
+
+    periodo_cts_ref = Column(String(20), nullable=True)     # ej. "MAY-OCT 2026"
+    meses_cts = Column(Integer, default=0)
+    base_cts = Column(Float, default=0.0)
+    monto_cts_trunca = Column(Float, default=0.0)
+    fecha_ultimo_deposito_cts = Column(Date, nullable=True)  # de dónde se tomó (DepositoCTS real)
+    # Desglose de la base CTS y del periodo EFECTIVAMENTE laborado — para mostrar en
+    # el PDF exactamente qué meses/días cubre el depósito truncado.
+    cts_remuneracion_base = Column(Float, default=0.0)  # sueldo + asig. familiar (sin el sexto)
+    cts_factor = Column(Float, default=0.0)
+    cts_dias_sueltos = Column(Integer, default=0)
+    cts_fecha_efectivo_ini = Column(Date, nullable=True)
+    cts_fecha_efectivo_fin = Column(Date, nullable=True)
+
+    # Gratificación ORDINARIA (no la trunca) usada para el "sexto" de la base de CTS —
+    # la del semestre que cae dentro del periodo CTS (julio en MAY-OCT, diciembre en
+    # NOV-ABR). "fuente": planilla (detectada) | estimado | manual (corregida a mano).
+    grati_referencia_cts = Column(Float, default=0.0)
+    grati_referencia_cts_fuente = Column(String(20), nullable=True)
+    grati_referencia_cts_periodo = Column(String(10), nullable=True)
+
+    monto_prestamos_pendientes = Column(Float, default=0.0)
+    monto_retencion_5ta = Column(Float, default=0.0)
+
+    # AFP/ONP sobre vacaciones truncas (y sueldo proporcional si se incluyó) — SÍ son
+    # remuneración computable para pensión, a diferencia de CTS (exonerada) y
+    # gratificación (exonerada por Ley 30334). sistema_pension_snapshot queda guardado
+    # para que el Asiento Contable sepa a qué cuenta (ONP o la AFP que corresponda)
+    # acreditar, aunque el trabajador cambie de sistema después.
+    sistema_pension_snapshot = Column(String(50), nullable=True)
+    monto_pension_afp_onp = Column(Float, default=0.0)
+
+    # Desglose de la tríada AFP (aporte/prima/comisión) — monto_pension_afp_onp ya
+    # trae el total, pero el PLAME (.rem) exige declarar cada componente por separado
+    # (códigos 0608/0606/0601). Queda en 0 si el trabajador está en ONP.
+    monto_aporte_afp = Column(Float, default=0.0)
+    monto_prima_afp = Column(Float, default=0.0)
+    monto_comision_afp = Column(Float, default=0.0)
+
+    # EsSalud patronal sobre vacaciones truncas — código SUNAT 0114, también afecto a
+    # EsSalud (a diferencia de CTS y gratificación). No afecta el neto del trabajador
+    # (es gasto/pasivo de la empresa), solo se guarda para el Asiento Contable.
+    monto_essalud_vacaciones = Column(Float, default=0.0)
+
+    # Bono/Incentivo por Cese — código SUNAT 0906, monto libre pactado con el
+    # trabajador. Completamente exento (no afecto AFP/ONP, 5ta, ni EsSalud) según el
+    # propio catálogo SUNAT — no requiere configurar nada más que el monto.
+    monto_bono_cese = Column(Float, default=0.0)
+
+    total_bruto = Column(Float, nullable=False)
+    total_neto = Column(Float, nullable=False)
+
+    # Workflow de aprobación
+    estado = Column(String(20), default="BORRADOR", server_default="BORRADOR")  # BORRADOR|APROBADA|PAGADA
+    aprobado_por = Column(String(100), nullable=True)
+    fecha_aprobacion = Column(DateTime, nullable=True)
+    fecha_pago = Column(Date, nullable=True)
+
+    observaciones = Column(Text, nullable=True)
+
+    empresa = relationship("Empresa")
+    trabajador = relationship("Trabajador", backref="liquidaciones")

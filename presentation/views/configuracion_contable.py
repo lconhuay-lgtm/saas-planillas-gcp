@@ -82,6 +82,23 @@ def render():
             )
             c_eps = st.text_input("EPS Por Pagar", value=_v('cuenta_eps_por_pagar'))
 
+            st.markdown("---")
+            st.markdown("##### Liquidación por Cese")
+            st.caption(
+                "CTS y Gratificación trunca nunca se contabilizaron antes (julio/diciembre "
+                "siempre estuvieron excluidos del asiento de planilla) — por eso necesitan "
+                "cuenta de gasto y de pasivo propias. Vacaciones truncas reutiliza la cuenta "
+                "de gasto \"Descanso Vacacional\" de arriba."
+            )
+            c9, c10 = st.columns(2)
+            c_cts_gasto = c9.text_input("CTS — Gasto (débito)", value=_v('cuenta_cts_gasto'))
+            c_cts_pasivo = c10.text_input("CTS Por Pagar (crédito)", value=_v('cuenta_cts_por_pagar'))
+            c_grati_gasto = c9.text_input("Gratificación Trunca — Gasto (débito)", value=_v('cuenta_gratificacion_gasto'))
+            c_grati_pasivo = c10.text_input("Gratificación Trunca Por Pagar (crédito)", value=_v('cuenta_gratificacion_por_pagar'))
+            c_vac_pasivo = c9.text_input("Vacaciones Truncas Por Pagar (crédito)", value=_v('cuenta_vacaciones_por_pagar'))
+            c_bonocese_gasto = c9.text_input("Bono por Cese — Gasto (débito)", value=_v('cuenta_bono_cese_gasto'))
+            c_bonocese_pasivo = c10.text_input("Bono por Cese Por Pagar (crédito)", value=_v('cuenta_bono_cese_por_pagar'))
+
             guardar = st.form_submit_button("💾 Guardar Configuración", type="primary", use_container_width=True)
 
         if guardar:
@@ -105,6 +122,13 @@ def render():
                 cfg.cuenta_remuneraciones_por_pagar = c_remun_pagar.strip()
                 cfg.cuenta_prestamos_personal = c_prestamos.strip()
                 cfg.cuenta_eps_por_pagar = c_eps.strip()
+                cfg.cuenta_cts_gasto = c_cts_gasto.strip()
+                cfg.cuenta_cts_por_pagar = c_cts_pasivo.strip()
+                cfg.cuenta_gratificacion_gasto = c_grati_gasto.strip()
+                cfg.cuenta_gratificacion_por_pagar = c_grati_pasivo.strip()
+                cfg.cuenta_vacaciones_por_pagar = c_vac_pasivo.strip()
+                cfg.cuenta_bono_cese_gasto = c_bonocese_gasto.strip()
+                cfg.cuenta_bono_cese_por_pagar = c_bonocese_pasivo.strip()
                 db.commit()
                 st.session_state['_msg_config_contable'] = "✅ Configuración contable actualizada correctamente."
                 st.rerun()

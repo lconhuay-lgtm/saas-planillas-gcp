@@ -1,8 +1,10 @@
 [server]
 # Cloud Run inyecta la variable PORT; Streamlit la toma del entorno
 headless = true
-enableCORS = false
-enableXsrfProtection = false
+# Protección XSRF activa (requiere CORS habilitado; Streamlit ignora XSRF si CORS=false).
+# Cloud Run con sessionAffinity mantiene la cookie XSRF en la misma instancia.
+enableCORS = true
+enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false

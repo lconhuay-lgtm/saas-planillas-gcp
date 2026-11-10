@@ -21,6 +21,11 @@ DATABASE_URL = DATABASE_URL.strip()
 # Neon y otros PaaS entregan 'postgres://' pero SQLAlchemy 2.x requiere 'postgresql://'
 DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# Driver explícito: SQLAlchemy 2.1 cambió el driver por defecto de "postgresql://"
+# a psycopg (v3), que no está instalado — la imagen usa psycopg2-binary.
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+
 # 2. Crear el Motor (Engine) de SQLAlchemy
 # pool_size reducido para Cloud Run: cada instancia crea su propio pool.
 # Con pool_size=2 y max_overflow=3 → máx 5 conexiones por instancia.

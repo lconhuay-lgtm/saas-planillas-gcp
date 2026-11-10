@@ -69,3 +69,109 @@ def enviar_boleta_por_correo(correo_destino, mes_anio, pdf_buffer, nombre_trabaj
         return True
     except Exception as e:
         return str(e)
+
+
+def enviar_liquidacion_cts_por_correo(correo_destino, nombre_trabajador, empresa_nombre,
+                                      pdf_buffer, periodo_label, config_smtp=None):
+    """Envía la hoja de liquidación del depósito de CTS (D.S. 001-97-TR Art. 29: el
+    empleador debe entregarla dentro de los 5 días hábiles del depósito). Mismo canal
+    y cifrado con DNI que las boletas."""
+    if config_smtp and config_smtp.get('user') and config_smtp.get('pass'):
+        smtp_server   = config_smtp.get('host', 'smtp.gmail.com')
+        smtp_port     = int(config_smtp.get('port', 587))
+        smtp_user     = config_smtp.get('user')
+        smtp_password = config_smtp.get('pass')
+    else:
+        smtp_server   = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port     = int(os.getenv("SMTP_PORT", 587))
+        smtp_user     = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if not smtp_user or not smtp_password:
+        return "Configuración SMTP incompleta (Secrets)."
+
+    msg = MIMEMultipart()
+    msg['From'] = f"{empresa_nombre} <{smtp_user}>"
+    msg['To'] = correo_destino
+    msg['Subject'] = f"Liquidación de Depósito CTS - {periodo_label} - {empresa_nombre}"
+
+    body = f"""
+    <html>
+    <body>
+        <p>Estimado/a <b>{nombre_trabajador}</b>,</p>
+        <p>Adjuntamos la liquidación de su depósito de Compensación por Tiempo de
+        Servicios (CTS) correspondiente al periodo <b>{periodo_label}</b>.</p>
+        <p>Por su seguridad y confidencialidad, el documento se encuentra encriptado.</p>
+        <p><b>La contraseña para abrir el archivo es su número de DNI.</b></p>
+        <br>
+        <p>Atentamente,<br>Departamento de Recursos Humanos<br>{empresa_nombre}</p>
+    </body>
+    </html>
+    """
+    msg.attach(MIMEText(body, 'html'))
+
+    nombre_pdf = f"Liquidacion_CTS_{periodo_label.replace(' ', '_').replace('–', '-')}.pdf"
+    part = MIMEApplication(pdf_buffer.read(), _subtype="pdf", Name=nombre_pdf)
+    part['Content-Disposition'] = f'attachment; filename="{nombre_pdf}"'
+    msg.attach(part)
+
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        return str(e)
+
+
+def enviar_liquidacion_por_correo(correo_destino, nombre_trabajador, empresa_nombre, pdf_buffer, config_smtp=None):
+    """Envía el PDF de Liquidación de Beneficios Sociales por correo (mismo canal
+    institucional que las boletas, encriptado con el DNI del trabajador)."""
+    if config_smtp and config_smtp.get('user') and config_smtp.get('pass'):
+        smtp_server   = config_smtp.get('host', 'smtp.gmail.com')
+        smtp_port     = int(config_smtp.get('port', 587))
+        smtp_user     = config_smtp.get('user')
+        smtp_password = config_smtp.get('pass')
+    else:
+        smtp_server   = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port     = int(os.getenv("SMTP_PORT", 587))
+        smtp_user     = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if not smtp_user or not smtp_password:
+        return "Configuración SMTP incompleta (Secrets)."
+
+    msg = MIMEMultipart()
+    msg['From'] = f"{empresa_nombre} <{smtp_user}>"
+    msg['To'] = correo_destino
+    msg['Subject'] = f"Liquidación de Beneficios Sociales - {empresa_nombre}"
+
+    body = f"""
+    <html>
+    <body>
+        <p>Estimado/a <b>{nombre_trabajador}</b>,</p>
+        <p>Adjuntamos su Liquidación de Beneficios Sociales por Cese.</p>
+        <p>Por su seguridad y confidencialidad, el documento se encuentra encriptado.</p>
+        <p><b>La contraseña para abrir el archivo es su número de DNI.</b></p>
+        <br>
+        <p>Atentamente,<br>Departamento de Recursos Humanos<br>{empresa_nombre}</p>
+    </body>
+    </html>
+    """
+    msg.attach(MIMEText(body, 'html'))
+
+    part = MIMEApplication(pdf_buffer.read(), Name="Liquidacion_Beneficios_Sociales.pdf")
+    part['Content-Disposition'] = 'attachment; filename="Liquidacion_Beneficios_Sociales.pdf"'
+    msg.attach(part)
+
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        return str(e)

@@ -2,7 +2,7 @@ import json
 import io
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 
 import calendar as _cal
 from infrastructure.database.connection import SessionLocal
@@ -254,12 +254,35 @@ def render():
 
             # Cargar conceptos para validación
             try:
+                import calendar as _cal_rep
                 from infrastructure.database.connection import SessionLocal as _SL
-                from infrastructure.database.models import Concepto as _Concepto, Trabajador as _Trab
+                from infrastructure.database.models import Concepto as _Concepto, Trabajador as _Trab, LiquidacionCese as _LiqCese
                 _db = _SL()
                 empresa_id_rep = st.session_state.get('empresa_activa_id')
                 conc_db  = _db.query(_Concepto).filter_by(empresa_id=empresa_id_rep).all()
                 trab_db  = _db.query(_Trab).filter_by(empresa_id=empresa_id_rep).all()
+
+                # Liquidaciones por Cese aprobadas cuya fecha de cese cae en este periodo:
+                # su AFP/ONP sobre vacaciones truncas (y sueldo prop. si aplica) también
+                # debe declararse en AFPnet (solo la porción AFP — ONP no va en este archivo).
+                _ultimo_dia_rep = _cal_rep.monthrange(anio_num, mes_num)[1]
+                liq_periodo_rep = _db.query(_LiqCese).filter(
+                    _LiqCese.empresa_id == empresa_id_rep,
+                    _LiqCese.estado != 'BORRADOR',
+                    _LiqCese.fecha_cese_snapshot >= date(anio_num, mes_num, 1),
+                    _LiqCese.fecha_cese_snapshot <= date(anio_num, mes_num, _ultimo_dia_rep),
+                ).all()
+                liquidaciones_afp_rep = {}
+                for _liq in liq_periodo_rep:
+                    if "AFP" not in str(_liq.sistema_pension_snapshot or '').upper():
+                        continue
+                    _trab_liq = _db.query(_Trab).filter_by(id=_liq.trabajador_id).first()
+                    if not _trab_liq:
+                        continue
+                    _base_extra = float(_liq.monto_vacaciones_truncas or 0.0) + float(_liq.monto_sueldo_proporcional or 0.0)
+                    if _base_extra > 0:
+                        liquidaciones_afp_rep[str(_trab_liq.num_doc)] = liquidaciones_afp_rep.get(str(_trab_liq.num_doc), 0.0) + _base_extra
+
                 _db.close()
                 df_conceptos_rep = pd.DataFrame([{
                     "Nombre del Concepto": c.nombre,
@@ -272,6 +295,7 @@ def render():
                     "Nombres y Apellidos": t.nombres,
                     "Tipo Doc.":        t.tipo_doc or "DNI",
                     "Fecha Ingreso":    t.fecha_ingreso,
+                    "Fecha Cese":       t.fecha_cese,
                     "CUSPP":            t.cuspp or '',
                     "Sistema Pensión":  t.sistema_pension or '',
                 } for t in trab_db])
@@ -279,6 +303,13 @@ def render():
                 st.error(f"Error cargando datos: {e_load}")
                 df_conceptos_rep = pd.DataFrame()
                 df_trabajadores_rep = pd.DataFrame()
+                liquidaciones_afp_rep = {}
+
+            if liquidaciones_afp_rep:
+                st.info(
+                    f"ℹ️ Se incluirán {len(liquidaciones_afp_rep)} Liquidación(es) por Cese de este "
+                    f"periodo (vacaciones truncas y demás conceptos afectos) en el PLAME y/o AFPnet."
+                )
 
             col_p, col_a = st.columns(2)
 
@@ -311,6 +342,7 @@ def render():
                             anio=anio_num, mes=mes_num,
                             df_planilla=df_planilla, auditoria_data=auditoria,
                             df_trabajadores=df_trabajadores_rep,
+                            liquidaciones_afp=liquidaciones_afp_rep,
                         )
                         nombre_afp = f"AFPnet_{sel_key.replace('-','_')}.xlsx"
                         st.download_button(

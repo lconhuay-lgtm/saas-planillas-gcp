@@ -153,6 +153,14 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
 
         seg_label  = data_aud.get('seguro_social', row.get('Seg. Social', 'ESSALUD'))
         aporte_seg = data_aud.get('aporte_seg_social', row.get('Aporte Seg. Social', row.get('EsSalud Patronal', 0.0)))
+        # Base real sobre la que se calculó el aporte (para mostrar en la boleta). Los
+        # periodos calculados ANTES de este cambio no tienen este campo — se usa el
+        # propio aporte como respaldo para no romper boletas viejas (solo afecta el
+        # texto "Base:", nunca el monto cobrado).
+        base_essalud_mostrar = float(data_aud.get('base_essalud', aporte_seg) or aporte_seg)
+        credito_eps_patronal = float(data_aud.get('credito_eps_patronal', 0.0) or 0.0)
+        tasa_eps_pct = data_aud.get('tasa_eps_pct')
+        tasa_essalud_pct = data_aud.get('tasa_essalud_pct')
         if seg_label == "SIS":        et_seg = "SIS  (S/ 15.00 fijo)"
         elif seg_label == "ESSALUD-EPS": et_seg = "ESSALUD-EPS"
         else:                            et_seg = "ESSALUD  (9%)"
@@ -308,15 +316,34 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             [Paragraph("<b>APORTES A CARGO DEL EMPLEADOR</b>",
                         ParagraphStyle('AH', fontName="Helvetica-Bold", fontSize=8, textColor=C_WHITE)),
              "", ""],
-            [et_seg, f"Base: S/ {aporte_seg:,.2f}", f"S/ {aporte_seg:,.2f}"],
         ]
-        t_apo = Table(apo_data, colWidths=[W * 0.5, W * 0.3, W * 0.2])
-        t_apo.setStyle(TableStyle([
+        # EsSalud-EPS: desglosar en 2 líneas (lo que va a SUNAT + lo que cubre el
+        # crédito EPS) usando las tasas realmente configuradas — nunca hardcodeadas,
+        # porque el % del beneficio depende del tamaño de planilla de cada empresa.
+        es_desglose_eps = (
+            seg_label == "ESSALUD-EPS" and credito_eps_patronal > 0
+            and tasa_eps_pct is not None and tasa_essalud_pct is not None
+        )
+        if es_desglose_eps:
+            apo_data.append([
+                f"ESSALUD ({tasa_eps_pct:.2f}%)", f"Base: S/ {base_essalud_mostrar:,.2f}",
+                f"S/ {aporte_seg:,.2f}",
+            ])
+            apo_data.append([
+                f"EPS ({max(tasa_essalud_pct - tasa_eps_pct, 0):.2f}%)", f"Base: S/ {base_essalud_mostrar:,.2f}",
+                f"S/ {credito_eps_patronal:,.2f}",
+            ])
+            apo_data.append([
+                Paragraph("<b>TOTAL APORTE (Ley 26790)</b>", ParagraphStyle('TA', fontName="Helvetica-Bold", fontSize=8, textColor=C_WHITE)),
+                "",
+                Paragraph(f"<b>S/ {aporte_seg + credito_eps_patronal:,.2f}</b>", ParagraphStyle('TA2', fontName="Helvetica-Bold", fontSize=8, textColor=C_WHITE, alignment=TA_RIGHT)),
+            ])
+        else:
+            apo_data.append([et_seg, f"Base: S/ {base_essalud_mostrar:,.2f}", f"S/ {aporte_seg:,.2f}"])
+
+        apo_style = [
             ('BACKGROUND',    (0,0), (-1,0),  C_GRAY),
             ('SPAN',          (0,0), (-1,0)),
-            ('BACKGROUND',    (0,1), (-1,1),  C_LIGHT),
-            ('FONTNAME',      (0,1), (-1,1),  'Helvetica'),
-            ('FONTNAME',      (2,1), (2,1),   'Helvetica-Bold'),
             ('FONTSIZE',      (0,0), (-1,-1), 8),
             ('ALIGN',         (2,0), (2,-1),  'RIGHT'),
             ('ALIGN',         (0,0), (1,-1),  'LEFT'),
@@ -326,7 +353,23 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             ('BOTTOMPADDING', (0,0), (-1,-1), 4),
             ('BOX',           (0,0), (-1,-1), 0.8, C_STEEL),
             ('INNERGRID',     (0,0), (-1,-1), 0.25, C_BORDER),
-        ]))
+        ]
+        if es_desglose_eps:
+            apo_style += [
+                ('BACKGROUND', (0,1), (-1,2), C_LIGHT),
+                ('FONTNAME',   (0,1), (-1,2), 'Helvetica'),
+                ('FONTNAME',   (2,1), (2,2),  'Helvetica-Bold'),
+                ('BACKGROUND', (0,3), (-1,3), C_TOTAL),
+                ('SPAN',       (0,3), (1,3)),
+            ]
+        else:
+            apo_style += [
+                ('BACKGROUND', (0,1), (-1,1), C_LIGHT),
+                ('FONTNAME',   (0,1), (-1,1), 'Helvetica'),
+                ('FONTNAME',   (2,1), (2,1),  'Helvetica-Bold'),
+            ]
+        t_apo = Table(apo_data, colWidths=[W * 0.5, W * 0.3, W * 0.2])
+        t_apo.setStyle(TableStyle(apo_style))
         elements.append(t_apo)
         elements.append(Spacer(1, 8))
 

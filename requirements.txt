@@ -1,12 +1,13 @@
 # Interfaz Gráfica y Web
-streamlit>=1.32.0
+streamlit>=1.36.0
 
 # Base de Datos y ORM
-SQLAlchemy>=2.0.28
+SQLAlchemy>=2.0.28,<2.1
 psycopg2-binary>=2.9.9
 
 # Variables de entorno y utilidades
 python-dotenv>=1.0.1
+python-dateutil>=2.8.2
 
 # Manipulación de datos
 pandas>=2.0.0

@@ -1,3 +1,5 @@
+import html
+
 import streamlit as st
 
 _ROL_LABEL = {
@@ -19,14 +21,18 @@ def render_sidebar():
 
         st.markdown(
             f"<div style='background:#1E4D8C;border-radius:8px;padding:10px 12px;margin-bottom:8px'>"
-            f"<span style='color:#90CAF9;font-size:0.75rem;font-weight:600;letter-spacing:0.05em'>{icono_rol} {rol_label.upper()}</span><br>"
-            f"<span style='color:#FFFFFF;font-size:0.92rem;font-weight:700'>{usuario_nombre}</span>"
+            f"<span style='color:#90CAF9;font-size:0.75rem;font-weight:600;letter-spacing:0.05em'>{icono_rol} {html.escape(rol_label.upper())}</span><br>"
+            f"<span style='color:#FFFFFF;font-size:0.92rem;font-weight:700'>{html.escape(usuario_nombre)}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
+        with st.expander("🔑 Cambiar contraseña"):
+            from presentation.views.login import render_cambio_password
+            render_cambio_password(key="cambio_pw_sidebar")
+
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
-            for key in ['usuario_logueado', 'usuario_rol', 'usuario_nombre',
+            for key in ['usuario_logueado', 'usuario_rol', 'usuario_nombre', 'debe_cambiar_password',
                         'empresa_activa_id', 'empresa_activa_nombre',
                         'empresa_activa_ruc', 'empresa_activa_domicilio',
                         'empresa_activa_representante', 'empresa_activa_regimen',
@@ -105,9 +111,17 @@ def render_sidebar():
         if usuario_rol == 'admin':
             opciones.append("Gestión de Usuarios")
 
+        # Navegación forzada desde otro módulo (ej. botón "Generar Liquidación" tras un
+        # Traslado de Personal) — solo se aplica si la vista destino está disponible para
+        # este usuario (no está en sus módulos restringidos).
+        _forzar = st.session_state.pop('_forzar_navegacion', None)
+        if _forzar in opciones:
+            st.session_state['sidebar_nav'] = _forzar
+
         menu = st.radio(
             "Navegación",
             opciones,
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            key="sidebar_nav",
         )
         return menu
