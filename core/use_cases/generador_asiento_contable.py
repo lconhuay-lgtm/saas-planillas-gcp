@@ -28,6 +28,7 @@ import pandas as pd
 
 from infrastructure.database.models import PlanillaMensual, Concepto, ConfiguracionContable
 from core.domain import seguros_empleador as seg_emp
+from core.use_cases import numeracion_vouchers as _nv
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
@@ -365,12 +366,14 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
                 # Vacaciones gozadas: Debe = pasivo provisionado (se cancela) + gasto por el resto
                 canc = vac_cancel[dni]
                 _glosa_v = f"{glosa_asiento} - VACACIONES"
+                # El pasivo que se cancela es la partida de vacaciones del ejercicio (mismo Num.Doc que sus provisiones)
+                _doc_v = _nv.doc_vacaciones(anio_num)
                 filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pv.CUENTA_PASIVO, ''), canc, 0.0,
-                                    num_doc_asiento, _glosa_v, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                                    _doc_v, _glosa_v, cod_prov_clie=dni, ruc=dni, r_social=nombre))
                 resto = round(monto - canc, 2)
                 if resto > 0:
                     filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_descanso_vacacional', ''), resto, 0.0,
-                                        num_doc_asiento, _glosa_v, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                                        _doc_v, _glosa_v, cod_prov_clie=dni, ruc=dni, r_social=nombre))
                 d["debe"] += monto
                 debe_ingresos_trab += monto
                 continue
@@ -405,8 +408,9 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             if g_pag["provisionado"] == 0 and (anio_num, mes_num) == _pg.INICIO_PROVISION:
                 _glosa_g += " (REGULARIZACION)"
             if g_pag["provisionado"] > 0:
+                # Cancela la partida del semestre (mismo Num.Doc que sus provisiones mensuales)
                 filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pg.CUENTA_PASIVO, ''),
-                                    g_pag["provisionado"], 0.0, num_doc_asiento, _glosa_g,
+                                    g_pag["provisionado"], 0.0, _nv.doc_gratificacion(_sem_pago, anio_num), _glosa_g,
                                     cod_prov_clie=dni, ruc=dni, r_social=nombre))
                 d["debe"] += g_pag["provisionado"]
             if g_pag["ajuste"] > 0:
@@ -556,7 +560,6 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             detalle_diagnostico=detalle,
         )
 
-    from core.use_cases import numeracion_vouchers as _nv
     _nv.numerar_filas(db, empresa_id, periodo_key, _nv.CLAVE_PLANILLA, filas)
     df_out = pd.DataFrame(filas, columns=COLUMNAS_SISCONT)
     buffer = io.BytesIO()

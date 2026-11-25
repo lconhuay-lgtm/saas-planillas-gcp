@@ -26,6 +26,28 @@ def clave_liquidacion(liquidacion_id: int) -> str:
     return f"LIQ-{liquidacion_id}"
 
 
+# ── Num.Doc: UNA obligación por periodo y trabajador ─────────────────────────────
+# El Num.Voucher identifica el asiento de cada mes; el Num.Doc enlaza los movimientos de una misma
+# obligación (junto con el DNI del trabajador). Todas las provisiones de un periodo comparten
+# documento, para que el pago (depósito de CTS, planilla de diciembre, liquidación) se aplique
+# contra una sola partida abierta por trabajador y no contra un documento por cada mes.
+
+def doc_cts(etiqueta_periodo: str) -> str:
+    """'MAY-OCT-2026' -> 'CTS-MAYOCT-2026' (año = el del depósito)."""
+    ini, fin, anio = str(etiqueta_periodo).split('-')
+    return f"CTS-{ini}{fin}-{anio}"
+
+
+def doc_gratificacion(semestre: str, anio: int) -> str:
+    """('JUL-DIC', 2026) -> 'GRA-JULDIC-2026'."""
+    return f"GRA-{str(semestre).replace('-', '')}-{anio}"
+
+
+def doc_vacaciones(anio: int) -> str:
+    """Una partida de vacaciones por ejercicio: 'VAC-2026'."""
+    return f"VAC-{anio}"
+
+
 def numero_voucher(db, empresa_id: int, periodo_key: str, clave: str) -> int:
     """Número de voucher del asiento `clave` en el mes `periodo_key` ("MM-YYYY"); lo crea si no existe."""
     for _ in range(3):   # reintento por si dos generaciones simultáneas piden el mismo número

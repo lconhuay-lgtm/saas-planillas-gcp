@@ -223,13 +223,14 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
         )
 
     fecha_asiento = datetime.date(anio, mes, calendar.monthrange(anio, mes)[1]).strftime('%d/%m/%Y')
-    num_doc = f"PC{mes:02d}-{anio}"
+    from core.use_cases import numeracion_vouchers as _nvd
     glosa_prov = f"PROVISION CTS {MESES_ES.get(mes, '')} {anio} ({periodo_de_mes(anio, mes)})"
     if (anio, mes) == INICIO_PROVISION:
         glosa_prov += " - REGULARIZACION MAY-JUL"
     glosa_aj = f"AJUSTE CTS POR DEPOSITO {MESES_ES.get(mes, '')} {anio}"
 
-    def _lineas(f, monto, glosa):
+    def _lineas(f, monto, glosa, periodo_cts):
+        num_doc = _nvd.doc_cts(periodo_cts)      # todo el periodo CTS comparte documento (provisión y ajuste)
         kw = dict(cod_prov_clie=f["dni"], ruc=f["dni"], r_social=f["nombre"])
         if monto > 0:
             return [_fila(11, 1, fecha_asiento, cuenta_gasto, monto, 0.0, num_doc, glosa, **kw),
@@ -240,9 +241,9 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
     filas = []
     for f in movimientos:
         if abs(f["delta_provision"]) > 0.004:
-            filas += _lineas(f, f["delta_provision"], glosa_prov)
+            filas += _lineas(f, f["delta_provision"], glosa_prov, f["periodo_cts"])
         if abs(f["delta_ajuste"]) > 0.004:
-            filas += _lineas(f, f["delta_ajuste"], glosa_aj)
+            filas += _lineas(f, f["delta_ajuste"], glosa_aj, f["periodo_cierre"])
 
     if round(sum(x["Monto Debe"] for x in filas) - sum(x["Monto Haber"] for x in filas), 2) != 0:
         raise AsientoContableError(

@@ -92,6 +92,63 @@ def test_regenerar_un_asiento_conserva_su_numero(db):
     assert _voucher(pg.generar_asiento_provision(db, e, "07-2026")) == {2}
 
 
+def _planilla_agosto(db):
+    j = db.query(m.PlanillaMensual).filter_by(empresa_id=db.empresa_id, periodo_key="07-2026").one()
+    db.add(m.PlanillaMensual(empresa_id=db.empresa_id, periodo_key="08-2026", estado="CERRADA",
+                             resultado_json=j.resultado_json, auditoria_json=j.auditoria_json))
+    db.commit()
+
+
+def _docs_pasivo(buf, cuenta):
+    df = _excel(buf)
+    return set(df[df["Cuenta"] == cuenta]["Num.Doc"].tolist())
+
+
+def test_las_provisiones_de_un_periodo_comparten_un_solo_num_doc(db):
+    """Julio y agosto: el pasivo de cada tipo queda en UN documento, no uno por mes."""
+    e = db.empresa_id
+    _planilla_agosto(db)
+    assert _docs_pasivo(pc.generar_asiento_provision(db, e, "07-2026"), "415301") == {"CTS-MAYOCT-2026"}
+    assert _docs_pasivo(pc.generar_asiento_provision(db, e, "08-2026"), "415301") == {"CTS-MAYOCT-2026"}
+    assert _docs_pasivo(pg.generar_asiento_provision(db, e, "07-2026"), "415101") == {"GRA-JULDIC-2026"}
+    assert _docs_pasivo(pg.generar_asiento_provision(db, e, "08-2026"), "415101") == {"GRA-JULDIC-2026"}
+    assert _docs_pasivo(pv.generar_asiento_provision(db, e, "07-2026"), "415201") == {"VAC-2026"}
+    assert _docs_pasivo(pv.generar_asiento_provision(db, e, "08-2026"), "415201") == {"VAC-2026"}
+
+
+def test_helpers_de_num_doc():
+    assert nv.doc_cts("MAY-OCT-2026") == "CTS-MAYOCT-2026"
+    assert nv.doc_cts("NOV-ABR-2027") == "CTS-NOVABR-2027"
+    assert nv.doc_gratificacion("JUL-DIC", 2026) == "GRA-JULDIC-2026"
+    assert nv.doc_vacaciones(2026) == "VAC-2026"
+
+
+def test_la_liquidacion_cancela_cada_pasivo_contra_el_documento_de_su_provision(db):
+    """El Debe de la liquidación lleva el mismo Num.Doc que las provisiones que cancela."""
+    from core.use_cases.generador_asiento_liquidacion import generar_asiento_liquidacion
+    e = db.empresa_id
+    tid = db.query(m.Trabajador).filter_by(num_doc=DNI).one().id
+    db.add(m.ProvisionVacaciones(empresa_id=e, trabajador_id=tid, periodo_key="09-2026", saldo=1800.0,
+                                 monto_provision=1800.0, cancelado=0.0))
+    db.add(m.ProvisionGratificacion(empresa_id=e, trabajador_id=tid, periodo_key="09-2026", semestre="JUL-DIC-2026",
+                                    monto_grati=500.0, monto_bono=45.0))
+    db.add(m.ProvisionCTS(empresa_id=e, trabajador_id=tid, periodo_key="09-2026", periodo_cts="MAY-OCT-2026",
+                          tipo="PROVISION", monto=400.0))
+    liq = m.LiquidacionCese(
+        empresa_id=e, trabajador_id=tid, estado="APROBADA",
+        fecha_ingreso_snapshot=datetime.date(2026, 1, 1), fecha_cese_snapshot=datetime.date(2026, 10, 15),
+        sueldo_base_snapshot=3000.0, monto_vacaciones_truncas=2000.0, monto_grati_trunca=500.0, monto_bono_9=45.0,
+        monto_cts_trunca=450.0, periodo_grati_ref="JUL-DIC 2026", periodo_cts_ref="MAY-OCT (dep. 2026)",
+        total_bruto=2995.0, total_neto=2995.0)
+    db.add(liq)
+    db.commit()
+    df = _excel(generar_asiento_liquidacion(db, e, liq.id))
+    debe = df[df["Monto Debe"] > 0]
+    assert set(debe[debe["Cuenta"] == "415201"]["Num.Doc"]) == {"VAC-2026"}
+    assert set(debe[debe["Cuenta"] == "415101"]["Num.Doc"]) == {"GRA-JULDIC-2026"}
+    assert set(debe[debe["Cuenta"] == "415301"]["Num.Doc"]) == {"CTS-MAYOCT-2026"}
+
+
 def test_la_numeracion_es_por_mes_y_por_empresa(db):
     e = db.empresa_id
     assert nv.numero_voucher(db, e, "07-2026", "A") == 1

@@ -18,6 +18,7 @@ import io
 import pandas as pd
 
 from infrastructure.database.models import LiquidacionCese, Trabajador, Concepto, ConfiguracionContable
+from core.use_cases import numeracion_vouchers as _nv
 from core.use_cases.generador_asiento_contable import (
     AsientoContableError, _fila, COLUMNAS_SISCONT, _RUC_SUNAT, _NOMBRE_SUNAT,
     _AFP_CUENTA_ATTR, _AFP_RUC_RSOCIAL,
@@ -129,7 +130,8 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         # cancela contra el pasivo y solo la diferencia es gasto (o recuperación si sobró). Sin
         # provisiones registradas el comportamiento es el de siempre (todo a gasto).
         from core.use_cases import provision_vacaciones as _pv   # import diferido (evita ciclo)
-        prov_vac = _pv.saldo_vigente_trabajador(db, empresa_id, liq.trabajador_id)
+        saldo_libro_vac = _pv.saldo_vigente_trabajador(db, empresa_id, liq.trabajador_id)
+        prov_vac = saldo_libro_vac
         # + días de ejercicios anteriores al corte: su provisión ya está en la contabilidad de la
         # empresa (fuera del libro del sistema), así que también se cancelan contra el pasivo.
         valor_previo = _pv.valor_saldo_previo_al_corte(
@@ -138,8 +140,17 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         # Tope: lo realmente pagado (el libro del sistema puede exceder, y eso ya se trataba como recuperación)
         prov_vac = round(max(prov_vac, min(prov_vac + valor_previo, liq.monto_vacaciones_truncas)), 2)
         ajuste_vac = round(liq.monto_vacaciones_truncas - prov_vac, 2)
-        if prov_vac > 0:
-            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, prov_vac, 0.0,
+        # La parte del libro cancela la partida de vacaciones del ejercicio (mismo Num.Doc que sus
+        # provisiones); la de años anteriores al corte vive en la contabilidad de la empresa, con sus
+        # propios documentos, así que va con el documento de esta liquidación.
+        parte_libro = round(min(saldo_libro_vac, prov_vac), 2)
+        parte_previa = round(prov_vac - parte_libro, 2)
+        if parte_libro > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, parte_libro, 0.0,
+                                _nv.doc_vacaciones(liq.fecha_cese_snapshot.year), glosa_asiento,
+                                cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if parte_previa > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, parte_previa, 0.0,
                                 num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
         if ajuste_vac > 0:
             filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_gasto, ajuste_vac, 0.0,
@@ -157,16 +168,20 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         _sem, _anio = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_ref', None), liq.fecha_cese_snapshot)
         _prov_g, _prov_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem, _anio)
         prov_grati = round(_prov_g + _prov_b, 2)
+        # Cada semestre provisionado se cancela contra su propia partida (Num.Doc del semestre)
+        partidas_grati = [(_nv.doc_gratificacion(_sem, _anio), prov_grati)]
         # Lo provisionado del semestre ENE-JUN (si hay) también se cancela contra la gratificación pendiente
         if (getattr(liq, 'monto_grati_anterior', 0) or 0) > 0:
             _sem_a, _anio_a = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_anterior_ref', None), liq.fecha_cese_snapshot)
             if (_sem_a, _anio_a) != (_sem, _anio):
                 _pa_g, _pa_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem_a, _anio_a)
+                partidas_grati.append((_nv.doc_gratificacion(_sem_a, _anio_a), round(_pa_g + _pa_b, 2)))
                 prov_grati = round(prov_grati + _pa_g + _pa_b, 2)
         ajuste_grati = round(monto_grati_bruto - prov_grati, 2)
-        if prov_grati > 0:
-            filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, prov_grati, 0.0,
-                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        for _doc_g, _monto_g in partidas_grati:
+            if _monto_g > 0:
+                filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, _monto_g, 0.0,
+                                    _doc_g, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
         if ajuste_grati > 0:
             filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, ajuste_grati, 0.0,
                                 num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
@@ -183,7 +198,7 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         ajuste_cts = round(liq.monto_cts_trunca - prov_cts, 2)
         if prov_cts > 0:
             filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_pasivo, prov_cts, 0.0,
-                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                                _nv.doc_cts(_etq_cts), glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
         if ajuste_cts > 0:
             filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, ajuste_cts, 0.0,
                                 num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
@@ -259,7 +274,6 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
             f"No se generó el archivo — este es un error interno, no de configuración."
         )
 
-    from core.use_cases import numeracion_vouchers as _nv
     _nv.numerar_filas(db, empresa_id, liq.fecha_cese_snapshot.strftime('%m-%Y'),
                       _nv.clave_liquidacion(liq.id), filas)
     df_out = pd.DataFrame(filas, columns=COLUMNAS_SISCONT)

@@ -214,6 +214,8 @@ def test_diciembre_cancela_lo_provisionado_y_solo_la_diferencia_es_gasto(db):
     assert _totales(df, "415101") == (2725.0, 3270.0)          # se cancela la provisión; lo pagado se acredita
     assert _totales(df, "621201") == (545.0, 0.0)              # solo el mes que faltaba (3270 − 2725)
     assert _cuadra(df)
+    cancela = df[(df["Cuenta"] == "415101") & (df["Monto Debe"] > 0)]
+    assert set(cancela["Num.Doc"]) == {"GRA-JULDIC-2026"}      # mismo documento que sus provisiones mensuales
 
 
 def test_diciembre_con_provision_completa_no_genera_gasto_extra(db):

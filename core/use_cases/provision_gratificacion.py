@@ -282,7 +282,8 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
         )
 
     fecha_asiento = datetime.date(anio, mes, calendar.monthrange(anio, mes)[1]).strftime('%d/%m/%Y')
-    num_doc = f"PG{mes:02d}-{anio}"
+    from core.use_cases import numeracion_vouchers as _nv
+    num_doc = _nv.doc_gratificacion(semestre_de_mes(mes), anio)     # mismo documento todo el semestre
     glosa = f"PROVISION GRATIFICACION {MESES_ES.get(mes, '')} {anio} ({semestre_de_mes(mes)} {anio})"
 
     filas = []
