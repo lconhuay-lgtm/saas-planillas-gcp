@@ -50,6 +50,10 @@ ENTIDADES = {
     SCTR_PENSION: {ASEGURADORA: "Aseguradora privada", ONP: "ONP"},
 }
 
+# Nombre corto para columnas angostas (boleta, resumen de la sábana): los largos de
+# ENTIDADES no caben en una celda y se pisan con la columna vecina.
+ENTIDAD_CORTA = {ASEGURADORA: "Aseguradora", EPS: "EPS", ESSALUD: "EsSalud", ONP: "ONP"}
+
 # Entidad por defecto cuando el trabajador no tiene una guardada
 ENTIDAD_DEFECTO = {
     VIDA_LEY: ASEGURADORA,

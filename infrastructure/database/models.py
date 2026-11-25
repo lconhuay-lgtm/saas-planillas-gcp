@@ -498,6 +498,71 @@ class ProvisionGratificacion(Base):
     trabajador = relationship("Trabajador")
 
 
+class ProvisionVacaciones(Base):
+    """
+    Libro de provisiones de vacaciones: el SALDO CONTABLE del pasivo "Vacaciones por pagar"
+    de cada trabajador al cierre de cada mes provisionado. A diferencia de la gratificación
+    (que se paga y se cancela en bloque cada semestre), las vacaciones se van consumiendo al
+    gozarse, por eso aquí lo que importa es el saldo vigente:
+
+        saldo(M) = valor de los días de vacaciones devengados y aún no gozados al cierre de M
+        provisión(M) = saldo(M) − (saldo(M−1) − cancelado(M))
+
+    `cancelado` es el pago de vacaciones gozadas del mes que se absorbe contra el pasivo (no es
+    gasto otra vez). El asiento de planilla y el de liquidación leen de aquí lo ya registrado.
+    """
+    __tablename__ = "provisiones_vacaciones"
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'trabajador_id', 'periodo_key', name='uq_provision_vac'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False, index=True)
+    periodo_key = Column(String(10), nullable=False)       # mes provisionado, "MM-YYYY"
+    dias_saldo = Column(Float, default=0.0)                # días devengados no gozados al cierre del mes
+    remuneracion_diaria = Column(Float, default=0.0)       # sueldo / 30 con el que se valorizó
+    cancelado = Column(Float, default=0.0)                 # vacaciones gozadas del mes contra el pasivo
+    monto_provision = Column(Float, default=0.0)           # delta contabilizado ese mes (puede ser negativo)
+    saldo = Column(Float, default=0.0)                     # saldo contable del pasivo al cierre del mes
+    fecha_generacion = Column(DateTime, default=datetime.now)
+    generado_por = Column(String(100), nullable=True)
+
+    trabajador = relationship("Trabajador")
+
+
+class ProvisionCTS(Base):
+    """
+    Libro de provisiones de CTS: una fila por trabajador, mes provisionado y periodo CTS.
+
+    `monto` es el DELTA contabilizado (puede ser negativo). El acumulado de un periodo CTS
+    (p. ej. "MAY-OCT-2026", donde el año es el del depósito) es la suma de sus filas:
+      - tipo PROVISION: el avance mensual = CTS "al corte" (lo que se pagaría si cesara ese mes)
+        menos lo ya provisionado.
+      - tipo AJUSTE: en mayo/noviembre, la diferencia entre lo provisionado y el depósito REAL
+        (DepositoCTS), para que el pasivo quede exactamente en lo depositado.
+    El asiento de la liquidación por cese descuenta de aquí lo ya provisionado del periodo.
+    """
+    __tablename__ = "provisiones_cts"
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'trabajador_id', 'periodo_key', 'periodo_cts', name='uq_provision_cts'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False, index=True)
+    periodo_key = Column(String(10), nullable=False)       # mes en que se contabilizó, "MM-YYYY"
+    periodo_cts = Column(String(20), nullable=False)       # "NOV-ABR-2027" / "MAY-OCT-2026" (año del depósito)
+    tipo = Column(String(10), default="PROVISION")         # PROVISION | AJUSTE
+    monto = Column(Float, default=0.0)
+    base_cts = Column(Float, default=0.0)                  # snapshot, para auditar
+    meses_computados = Column(Integer, default=0)
+    fecha_generacion = Column(DateTime, default=datetime.now)
+    generado_por = Column(String(100), nullable=True)
+
+    trabajador = relationship("Trabajador")
+
+
 class LiquidacionCese(Base):
     """
     Liquidación de Beneficios Sociales por cese — un DOCUMENTO persistido (no un
@@ -539,6 +604,12 @@ class LiquidacionCese(Base):
     meses_grati = Column(Integer, default=0)
     monto_grati_trunca = Column(Float, default=0.0)
     monto_bono_9 = Column(Float, default=0.0)
+    # Gratificación ORDINARIA del semestre anterior que seguía sin cargar cuando el cese ocurre en
+    # julio (ENE-JUN) o enero (JUL-DIC del año anterior): se incluye solo si el usuario lo confirma al liquidar. Es una deuda
+    # distinta de la trunca (otro semestre, otro código PLAME: 0301 / 0302).
+    monto_grati_anterior = Column(Float, default=0.0)
+    monto_bono_anterior = Column(Float, default=0.0)
+    periodo_grati_anterior_ref = Column(String(20), nullable=True)   # ej. "ENE-JUN 2026" o "JUL-DIC 2026"
     # Base computable y periodo EFECTIVAMENTE laborado de la gratificación trunca —
     # para mostrar en el PDF qué meses exactos corresponden y sobre qué base.
     grati_base_computable = Column(Float, default=0.0)

@@ -232,6 +232,21 @@ def generar_pdf_liquidacion(empresa_info, trabajador, liquidacion) -> io.BytesIO
     elements.append(_tabla_memoria(f"{_sig_letra()}. BONIFICACIÓN EXTRAORDINARIA", filas_bono9, formula_bono9, "TOTAL BONIFICACIÓN EXTRAORDINARIA", liquidacion.monto_bono_9))
     elements.append(Spacer(1, 6))
 
+    # D.4b Gratificación ordinaria del semestre anterior (ENE-JUN) pagada con la liquidación por cese en julio
+    _grati_ant = getattr(liquidacion, 'monto_grati_anterior', 0) or 0
+    _bono_ant = getattr(liquidacion, 'monto_bono_anterior', 0) or 0
+    if _grati_ant > 0:
+        filas_ant = [
+            ("Semestre de gratificación pendiente de pago", getattr(liquidacion, 'periodo_grati_anterior_ref', None) or "ENE-JUN"),
+            ("Gratificación ordinaria del semestre (no cargada en planilla)", f"S/ {_grati_ant:,.2f}"),
+            ("Bonificación Extraordinaria (Ley 30334)", f"S/ {_bono_ant:,.2f}"),
+        ]
+        elements.append(_tabla_memoria(
+            f"{_sig_letra()}. GRATIFICACIÓN DEL SEMESTRE ANTERIOR PENDIENTE", filas_ant,
+            "Gratificación del semestre completo + bonificación extraordinaria",
+            "TOTAL GRATIFICACIÓN PENDIENTE", round(_grati_ant + _bono_ant, 2)))
+        elements.append(Spacer(1, 6))
+
     # D.5 CTS truncada
     cts_ini = getattr(liquidacion, 'cts_fecha_efectivo_ini', None)
     cts_fin = getattr(liquidacion, 'cts_fecha_efectivo_fin', None)
@@ -305,11 +320,13 @@ def generar_pdf_liquidacion(empresa_info, trabajador, liquidacion) -> io.BytesIO
     # D.9 Retención de 5ta Categoría (si aplica)
     if liquidacion.monto_retencion_5ta > 0:
         tiene_deducciones = True
-        base_gravada_5ta = round(liquidacion.monto_vacaciones_truncas + liquidacion.monto_grati_trunca + liquidacion.monto_bono_9, 2)
+        _ant_5ta = round((getattr(liquidacion, 'monto_grati_anterior', 0) or 0) + (getattr(liquidacion, 'monto_bono_anterior', 0) or 0), 2)
+        base_gravada_5ta = round(liquidacion.monto_vacaciones_truncas + liquidacion.monto_grati_trunca + liquidacion.monto_bono_9 + _ant_5ta, 2)
         filas_5ta = [
             ("Vacaciones truncas (afecta, código SUNAT 0114)", f"S/ {liquidacion.monto_vacaciones_truncas:,.2f}"),
             ("Gratificación trunca (afecta)", f"S/ {liquidacion.monto_grati_trunca:,.2f}"),
             ("Bonificación Extraordinaria (afecta)", f"S/ {liquidacion.monto_bono_9:,.2f}"),
+            *([("Gratificación del semestre anterior + bono (afecta)", f"S/ {_ant_5ta:,.2f}")] if _ant_5ta > 0 else []),
             ("Base gravada total", f"S/ {base_gravada_5ta:,.2f}"),
         ]
         elements.append(_tabla_memoria(

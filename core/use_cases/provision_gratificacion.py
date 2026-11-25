@@ -37,6 +37,20 @@ from core.use_cases.calculo_beneficios_sociales import (
 from core.use_cases.generador_asiento_contable import (
     AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES,
 )
+from core.use_cases.valorizacion_beneficios import valorizar_gratificacion_al
+from core.use_cases.calculo_liquidacion_cese import rmv_vigente
+from core.domain.exceptions import ReglaNegocioError
+
+
+def rmv_al(db, empresa_id: int, fecha: datetime.date, trabajador) -> float:
+    """RMV vigente a la fecha, solo si el trabajador tiene asignación familiar (10 % de la RMV);
+    si no, no hace falta y no se exige tener Parámetros Legales cargados."""
+    if not getattr(trabajador, 'asig_fam', False):
+        return 0.0
+    try:
+        return rmv_vigente(db, empresa_id, fecha)
+    except ReglaNegocioError as e:
+        raise AsientoContableError(str(e))
 
 # Primer mes que se provisiona (corte acordado: julio 2026). Mes anterior = sin provisión.
 INICIO_PROVISION = (2026, 7)
@@ -76,9 +90,19 @@ def etiqueta_semestre(semestre: str, anio: int) -> str:
     return f"{semestre}-{anio}"
 
 
+def motivo_no_provisionable(periodo_key: str):
+    """None si el periodo se puede provisionar; si no, el motivo (listo para mostrar)."""
+    if _anio_mes(periodo_key) < INICIO_PROVISION:
+        return "La provisión de gratificación arranca en julio 2026 (corte acordado); este periodo es anterior."
+    if _anio_mes(periodo_key)[1] == 12:
+        return ("En diciembre se paga la gratificación del semestre: el asiento de planilla ya reconoce "
+                "como gasto lo que falte por provisionar, así que diciembre no se provisiona aparte.")
+    return None
+
+
 def es_provisionable(periodo_key: str) -> bool:
-    """True si el periodo es igual o posterior al corte (julio 2026)."""
-    return _anio_mes(periodo_key) >= INICIO_PROVISION
+    """True si el periodo es igual o posterior al corte (julio 2026) y no es diciembre."""
+    return motivo_no_provisionable(periodo_key) is None
 
 
 def semestre_desde_ref(ref, fecha_cese) -> tuple:
@@ -164,11 +188,9 @@ def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:
       objetivo_grati, objetivo_bono, ya_provisionado, delta_grati, delta_bono, delta_total}]
     No escribe nada.
     """
-    if not es_provisionable(periodo_key):
-        raise AsientoContableError(
-            f"La provisión de gratificación arranca en julio 2026 (corte acordado); "
-            f"{periodo_key} es anterior."
-        )
+    motivo = motivo_no_provisionable(periodo_key)
+    if motivo:
+        raise AsientoContableError(motivo)
     planilla = _planilla_cerrada(db, empresa_id, periodo_key)
     auditoria = json.loads(planilla.auditoria_json or '{}')
 
@@ -182,11 +204,6 @@ def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:
     fecha_acogimiento = getattr(empresa, 'fecha_acogimiento', None)
     factor_voluntario = getattr(empresa, 'factor_proyeccion_grati', None)
 
-    computables = {
-        c.nombre for c in db.query(Concepto).filter_by(
-            empresa_id=empresa_id, tipo='INGRESO', computable_grati=True).all()
-    } - _NO_COMPUTABLES
-
     previo = provisiones_acumuladas(db, empresa_id, sem, anio, antes_de_mes=mes)
 
     filas = []
@@ -195,19 +212,17 @@ def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:
         if not t or (t.tipo_contrato or 'PLANILLA') == 'LOCADOR':
             continue
 
-        ingresos = (info or {}).get('ingresos', {}) or {}
+        # Gratificación AL CORTE con el MISMO motor que la liquidación por cese (cese simulado al
+        # último día del mes): fija vigente al corte + asignación familiar con la RMV del mes +
+        # variables regulares (≥ 3 meses del semestre, promediadas). Nunca más de lo que se
+        # calcularía liquidando ese día. Sueldo = el de la planilla de ese mes (snapshot).
         sueldo = float((info or {}).get('sueldo_base_nominal') or 0) or float(t.sueldo_base or 0)
-        asig_fam = float(ingresos.get('Asignación Familiar', 0) or 0)
-        extras = sum(float(v or 0) for k, v in ingresos.items() if k in computables)
-        base = sueldo + asig_fam + extras
-
-        fecha_ingreso = t.fecha_ingreso or sem_ini
-        meses = _meses_completos(fecha_ingreso, t.fecha_cese, sem_ini, fin_mes)
-        regimen_trab = determinar_regimen_trabajador(fecha_ingreso, regimen_empresa, fecha_acogimiento)
-        factor = factor_grati_aplicable(obtener_factores_regimen(regimen_trab)['grati'], factor_voluntario)
-
-        objetivo_grati = round(base * factor * meses / 6.0, 2)
-        objetivo_bono = round(objetivo_grati * tasa_bono_extraordinario(bool(t.eps)), 2)
+        res = valorizar_gratificacion_al(
+            db, empresa_id, t, fin_mes, rmv_al(db, empresa_id, fin_mes, t), regimen_empresa,
+            fecha_acogimiento=fecha_acogimiento, factor_override=factor_voluntario, sueldo=sueldo,
+        )
+        base, meses, factor = res['base_computable'], res['meses_computados'], res['factor_grati']
+        objetivo_grati, objetivo_bono = res['monto_grati'], res['bono_9pct']
         prev_g, prev_b = previo.get(t.id, (0.0, 0.0))
         delta_g = round(objetivo_grati - prev_g, 2)
         delta_b = round(objetivo_bono - prev_b, 2)

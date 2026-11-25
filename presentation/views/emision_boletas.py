@@ -350,7 +350,7 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
             _ap = _aportes_emp.get(_clave_seg)
             if not _ap or float(_ap.get('monto', 0) or 0) <= 0:
                 continue
-            _ent = seg_emp.ENTIDADES[_clave_seg].get(_ap.get('entidad'), '')
+            _ent = seg_emp.ENTIDAD_CORTA.get(_ap.get('entidad'), '')
             _txt = _ap.get('etiqueta', seg_emp.ETIQUETAS[_clave_seg])
             if _clave_seg != seg_emp.VIDA_LEY and _ent:
                 _txt = f"{_txt} ({_ent})"

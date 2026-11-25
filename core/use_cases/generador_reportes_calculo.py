@@ -324,7 +324,7 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
         resumen_data.append(["", "", ""])
         total_seguros_emp = 0.0
         for _s, _ent, _n, _tot in resumen_seguros:
-            _nom_ent = seg_emp.ENTIDADES[_s].get(_ent, _ent)
+            _nom_ent = seg_emp.ENTIDAD_CORTA.get(_ent, _ent)
             _etq = seg_emp.ETIQUETAS[_s].upper()
             _txt = _etq if _s == seg_emp.VIDA_LEY else f"{_etq} - {_nom_ent.upper()}"
             resumen_data.append([f"APORTE {_txt} (EMPLEADOR)", f"{_n} trabajador(es)", f"{_tot:,.2f}"])

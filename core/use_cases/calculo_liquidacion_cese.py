@@ -23,6 +23,7 @@ from core.use_cases.calculo_beneficios_sociales import (
     calcular_gratificacion_trabajador, calcular_cts_trabajador,
     rango_cts, rango_grati, periodo_keys_rango, meses_con_servicio,
     dias_no_computables_cts, extras_computables_cts, extras_computables_regulares,
+    SEMESTRES_GRATI,
 )
 from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 from core.domain.exceptions import ReglaNegocioError
@@ -106,6 +107,78 @@ def _obtener_grati_referencia_cts(db, trabajador, empresa_id, periodo_cts, anio_
         regimen_empresa=regimen_empresa, fecha_acogimiento=fecha_acogimiento, factor_override=factor_override,
     )
     return {'monto': rg['monto_grati'], 'fuente': 'estimado', 'periodo_key_ref': periodo_key_ref}
+
+
+def grati_ya_pagada_en_planilla(db, empresa_id, trabajador_id, semestre: str, anio: int) -> float:
+    """
+    Monto de gratificación del semestre que YA está pagado (o registrado para pagarse) en la
+    planilla del mes de pago de ese semestre (julio para ENE-JUN, diciembre para JUL-DIC).
+    Se lee de VariablesMes — donde el módulo "Gratificaciones y CTS" la deja para que el motor
+    de planilla la pague — así se evita pagarla de nuevo como "trunca" en la liquidación
+    (p. ej. un cese a fines de diciembre, después de la gratificación de diciembre).
+    """
+    import json as _json
+    from infrastructure.database.models import VariablesMes
+    mes_pago = SEMESTRES_GRATI[semestre]['mes_pago']
+    v = db.query(VariablesMes).filter_by(
+        empresa_id=empresa_id, trabajador_id=trabajador_id, periodo_key=f"{mes_pago:02d}-{anio}",
+    ).first()
+    if not v:
+        return 0.0
+    try:
+        return float(_json.loads(v.conceptos_json or '{}').get(SEMESTRES_GRATI[semestre]['concepto_json_key'], 0.0) or 0.0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+# Mes de cese -> (semestre anterior cuya gratificación podría seguir sin cargar, desfase de año, mes y día
+# de corte). La gratificación de julio paga ENE-JUN; la de diciembre paga JUL-DIC (del año anterior si el
+# cese es en enero). Fuera de esos meses la gratificación del semestre anterior ya debió pagarse.
+_SEMESTRE_ANTERIOR_AL_CESE = {
+    7: ('ENE-JUN', 0, 6, 30),
+    1: ('JUL-DIC', -1, 12, 31),
+}
+
+
+def grati_anterior_pendiente(db, empresa_id, trabajador, fecha_cese, regimen_empresa,
+                             fecha_acogimiento=None, factor_override=None, rmv=None):
+    """
+    Gratificación ORDINARIA del semestre anterior que sigue SIN cargar cuando el cese ocurre en
+    julio (semestre enero–junio) o en enero (semestre julio–diciembre del año anterior).
+
+    La gratificación se carga en el módulo "Gratificaciones y CTS", que solo lista trabajadores
+    ACTIVOS: quien cesa justo después del cierre del semestre y antes de que se cargue se iría sin
+    cobrarla, y es una deuda legal. Esta función la detecta y la calcula (semestre completo, al
+    cierre del semestre, con el mismo motor de siempre) para que la liquidación pueda ofrecerla.
+
+    Devuelve None si no aplica: el cese no es en julio/enero, la gratificación ya está cargada/pagada
+    en planilla (no se duplica), o no corresponde (ingresó después del semestre, régimen sin gratificación).
+    Si aplica: {periodo_ref, monto_grati, bono_9, total, meses, base_computable}.
+    """
+    cfg = _SEMESTRE_ANTERIOR_AL_CESE.get(fecha_cese.month)
+    if not cfg:
+        return None
+    semestre, desfase, mes_corte, dia_corte = cfg
+    anio = fecha_cese.year + desfase
+    corte = datetime.date(anio, mes_corte, dia_corte)
+    if not trabajador.fecha_ingreso or trabajador.fecha_ingreso > corte:
+        return None
+    if grati_ya_pagada_en_planilla(db, empresa_id, trabajador.id, semestre, anio) > 0:
+        return None
+    from core.use_cases.valorizacion_beneficios import valorizar_gratificacion_al   # import diferido (ciclo)
+    if rmv is None:
+        rmv = rmv_vigente(db, empresa_id, fecha_cese)
+    res = valorizar_gratificacion_al(
+        db, empresa_id, trabajador, corte, rmv, regimen_empresa,
+        fecha_acogimiento=fecha_acogimiento, factor_override=factor_override,
+    )
+    if not res['aplica'] or res['monto_grati'] <= 0:
+        return None
+    return {
+        'periodo_ref': f"{semestre} {anio}", 'monto_grati': res['monto_grati'], 'bono_9': res['bono_9pct'],
+        'total': round(res['monto_grati'] + res['bono_9pct'], 2), 'meses': res['meses_computados'],
+        'base_computable': res['base_computable'],
+    }
 
 
 def saldo_prestamos_pendientes(db, trabajador_id, empresa_id) -> float:
@@ -229,7 +302,7 @@ def _retencion_5ta_liquidacion(db, trabajador, empresa_id, fecha_cese, monto_gra
 def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa,
                           fecha_acogimiento=None, factor_override=None,
                           incluye_sueldo_mes_cese=False, monto_bono_cese=0.0,
-                          grati_referencia_cts=None) -> dict:
+                          grati_referencia_cts=None, incluir_grati_anterior=False) -> dict:
     """
     Calcula la Liquidación de Beneficios Sociales completa de un trabajador.
 
@@ -272,7 +345,11 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
     # 2. Vacaciones truncas — saldo REAL del Kardex de Vacaciones
     saldo_vac = calcular_saldo_vacacional(trabajador_sim, trabajador.vacaciones, fecha_calculo=fecha_cese)
     dias_vac_pend = float(saldo_vac.get('saldo', 0.0) or 0.0)
-    monto_vac_truncas = round((sueldo_base / 30.0) * dias_vac_pend, 2)
+    # Base de valorización compartida con la provisión mensual (valorizacion_vacaciones.py):
+    # hoy solo sueldo; con BASE_VACACIONAL_COMPUTABLE activo suma asignación familiar y variables.
+    from core.use_cases.valorizacion_vacaciones import valorizar_remuneracion_vacacional
+    rem_vac = valorizar_remuneracion_vacacional(db, empresa_id, trabajador, fecha_cese, sueldo_base, rmv)
+    monto_vac_truncas = round((rem_vac['base_mensual'] / 30.0) * dias_vac_pend, 2)
 
     # 3. Gratificación trunca — mismo motor que "Gratificaciones y CTS"
     # Incluye el promedio de conceptos "Computable Grati" regulares del semestre.
@@ -296,6 +373,21 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
     )
     monto_grati_trunca = res_grati['monto_grati']
     monto_bono_9 = res_grati['bono_9pct']
+
+    # Si la gratificación de ese semestre ya se pagó (o está registrada para pagarse) en
+    # planilla, la liquidación NO la vuelve a pagar como trunca: sería un pago duplicado.
+    grati_ya_pagada = grati_ya_pagada_en_planilla(db, empresa_id, trabajador.id, semestre_grati, anio_grati)
+    if grati_ya_pagada > 0:
+        monto_grati_trunca = 0.0
+        monto_bono_9 = 0.0
+
+    # Cese en julio/enero con la gratificación del semestre anterior todavía sin cargar: se DETECTA siempre
+    # (para avisar) pero solo se paga si el usuario lo confirma (`incluir_grati_anterior`).
+    grati_ant = grati_anterior_pendiente(
+        db, empresa_id, trabajador, fecha_cese, regimen_empresa, fecha_acogimiento, factor_override, rmv,
+    )
+    monto_grati_ant = grati_ant['monto_grati'] if (grati_ant and incluir_grati_anterior) else 0.0
+    monto_bono_ant = grati_ant['bono_9'] if (grati_ant and incluir_grati_anterior) else 0.0
 
     # 4. CTS trunca — mismo motor que "Gratificaciones y CTS". El "sexto" usa la
     # gratificación ORDINARIA del semestre que cae dentro del periodo CTS (julio para
@@ -343,7 +435,8 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
     # 6. Retención de 5ta sobre la porción gravada — vacaciones truncas (código SUNAT
     # 0114) TAMBIÉN están afectas, junto con grati trunca + bono 9%. CTS y Bono por
     # Cese (código 0906) son inafectos. Un solo cálculo sobre el monto combinado.
-    monto_gravado_5ta = monto_vac_truncas + monto_grati_trunca + monto_bono_9
+    monto_gravado_5ta = (monto_vac_truncas + monto_grati_trunca + monto_bono_9
+                         + monto_grati_ant + monto_bono_ant)
     res_5ta = _retencion_5ta_liquidacion(db, trabajador, empresa_id, fecha_cese, monto_gravado_5ta)
     monto_retencion_5ta = res_5ta['retencion']
 
@@ -368,7 +461,7 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
 
     total_bruto = round(
         monto_sueldo_prop + monto_vac_truncas + monto_grati_trunca + monto_bono_9
-        + monto_cts_trunca + monto_bono_cese, 2
+        + monto_grati_ant + monto_bono_ant + monto_cts_trunca + monto_bono_cese, 2
     )
     total_neto = round(total_bruto - saldo_prestamos - monto_retencion_5ta - monto_pension_afp_onp, 2)
 
@@ -389,6 +482,15 @@ def calcular_liquidacion(db, trabajador, empresa_id, fecha_cese, regimen_empresa
         'meses_grati': res_grati['meses_computados'],
         'monto_grati_trunca': monto_grati_trunca,
         'monto_bono_9': monto_bono_9,
+        # >0 = la gratificación del semestre ya se pagó en planilla y NO se incluye como trunca
+        'grati_ya_pagada_planilla': grati_ya_pagada,
+        # Gratificación del semestre anterior pendiente (cese en julio/enero): `grati_anterior_pendiente` es lo que
+        # se DETECTÓ (None si no aplica); los montos solo son > 0 si el usuario la incluyó.
+        'grati_anterior_pendiente': grati_ant,
+        'incluye_grati_anterior': bool(grati_ant and incluir_grati_anterior),
+        'monto_grati_anterior': monto_grati_ant,
+        'monto_bono_anterior': monto_bono_ant,
+        'periodo_grati_anterior_ref': grati_ant['periodo_ref'] if (grati_ant and incluir_grati_anterior) else None,
         'grati_base_computable': res_grati['base_computable'],
         'grati_factor': res_grati['factor_grati'],
         'grati_fecha_efectivo_ini': res_grati['fecha_efectivo_ini'],
@@ -487,6 +589,9 @@ def generar_liquidacion_borrador_automatica(
         meses_grati=liq['meses_grati'],
         monto_grati_trunca=liq['monto_grati_trunca'],
         monto_bono_9=liq['monto_bono_9'],
+        monto_grati_anterior=liq['monto_grati_anterior'],
+        monto_bono_anterior=liq['monto_bono_anterior'],
+        periodo_grati_anterior_ref=liq['periodo_grati_anterior_ref'],
         grati_base_computable=liq['grati_base_computable'],
         grati_factor=liq['grati_factor'],
         grati_fecha_efectivo_ini=liq['grati_fecha_efectivo_ini'],

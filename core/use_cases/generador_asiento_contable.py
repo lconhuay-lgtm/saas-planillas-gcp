@@ -275,6 +275,13 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     if any(v["provisionado"] > 0 for v in grati_trab.values()):
         _cuenta_fija(_pg.CUENTA_PASIVO, "Gratificación Por Pagar (Configuración Contable)")
 
+    # Vacaciones gozadas en el mes: se cancelan contra lo provisionado (libro de vacaciones) y
+    # solo el resto es gasto. Sin libro en uso (o antes del corte) todo sigue siendo gasto.
+    from core.use_cases import provision_vacaciones as _pv
+    vac_cancel = _pv.cancelaciones_planilla(db, empresa_id, periodo_key, auditoria_data)
+    if any(v > 0 for v in vac_cancel.values()):
+        _cuenta_fija(_pv.CUENTA_PASIVO, "Vacaciones Por Pagar (Configuración Contable)")
+
     # Seguros a cargo del empleador (Vida Ley / SCTR): solo se exigen las cuentas de los
     # seguros que tienen monto este mes.
     totales_seguros_check = seg_emp.totales_por_seguro(auditoria_data)
@@ -353,6 +360,19 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         for nombre_c, monto in ingresos.items():
             monto = float(monto or 0)
             if monto <= 0 or nombre_c in _CONCEPTOS_GRATI_EXCLUIDOS:
+                continue
+            if nombre_c == _pv.CLAVE_PAGO_VACACIONES and vac_cancel.get(dni, 0) > 0:
+                # Vacaciones gozadas: Debe = pasivo provisionado (se cancela) + gasto por el resto
+                canc = vac_cancel[dni]
+                _glosa_v = f"{glosa_asiento} - VACACIONES"
+                filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pv.CUENTA_PASIVO, ''), canc, 0.0,
+                                    num_doc_asiento, _glosa_v, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                resto = round(monto - canc, 2)
+                if resto > 0:
+                    filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_descanso_vacacional', ''), resto, 0.0,
+                                        num_doc_asiento, _glosa_v, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                d["debe"] += monto
+                debe_ingresos_trab += monto
                 continue
             if nombre_c.startswith("Sueldo Base"):
                 cuenta = cuenta_sueldo

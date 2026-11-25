@@ -252,7 +252,11 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str, incluir_apor
         conceptos_liq = [
             ("0114", liq.monto_vacaciones_truncas),
             ("0305", liq.monto_grati_trunca),
-            ("0303", liq.monto_bono_9),
+            # Gratificación ordinaria del semestre anterior pendiente: 0301 (julio, ENE-JUN) o 0302
+            # (diciembre, JUL-DIC — cese en enero). El bono extraordinario va en UNA sola línea 0303 (trunca + pendiente).
+            (("0302" if str(getattr(liq, "periodo_grati_anterior_ref", "") or "").startswith("JUL-DIC") else "0301"),
+             getattr(liq, "monto_grati_anterior", 0) or 0),
+            ("0303", (liq.monto_bono_9 or 0) + (getattr(liq, "monto_bono_anterior", 0) or 0)),
             ("0401", liq.monto_cts_trunca),
             ("0906", liq.monto_bono_cese),
         ]

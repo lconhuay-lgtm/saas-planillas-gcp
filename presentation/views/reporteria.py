@@ -691,7 +691,7 @@ def render():
             f"La provisión arranca en julio 2026. 🔧 `{_pg.VERSION_PROVISION}`"
         )
         if not _pg.es_provisionable(sel_key):
-            st.info("ℹ️ La provisión de gratificación arranca en **julio 2026**; este periodo es anterior al corte.")
+            st.info(f"ℹ️ {_pg.motivo_no_provisionable(sel_key)}")
         elif estado_sel != "CERRADA":
             st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
         else:
@@ -754,6 +754,170 @@ def render():
                             st.warning(f"ℹ️ {_e_prov.mensaje}")
                     except Exception as _e_prov2:
                         st.error(f"Error inesperado al generar la provisión: {_e_prov2}")
+
+        # ── Provisión mensual de vacaciones ────────────────────────────────────────
+        from core.use_cases import provision_vacaciones as _pv
+        st.markdown("---")
+        st.markdown("### 🏖️ Provisión Mensual de Vacaciones")
+        st.caption(
+            "Provisiona cada mes el valor de las vacaciones devengadas y no gozadas (días del Kardex × "
+            "sueldo/30). Las vacaciones gozadas se cancelan contra este pasivo en el asiento de planilla y "
+            "las vacaciones truncas en la liquidación. **El primer mes (julio 2026) registra de golpe todo el "
+            "saldo acumulado** (ajuste de corte). Se registran en orden, mes a mes. "
+            f"🔧 `{_pv.VERSION_PROVISION_VAC}`"
+        )
+        if not _pv.es_provisionable(sel_key):
+            st.info(f"ℹ️ {_pv.motivo_no_provisionable(sel_key)}")
+        elif estado_sel != "CERRADA":
+            st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
+        else:
+            try:
+                _prev_v = _pv.calcular_provision_mes(db, empresa_id, sel_key)
+            except _ACE as _e_prev_v:
+                st.warning(f"ℹ️ {_e_prev_v.mensaje}")
+                _prev_v = []
+            _pend_v = [f for f in _prev_v if abs(f["delta"]) > 0.004]
+            _reg_v = next((r for r in _pv.resumen_libro(db, empresa_id, int(sel_key[3:])) if r[0] == sel_key), None)
+            if _reg_v:
+                st.success(
+                    f"✅ La provisión de vacaciones de este periodo ya fue **registrada** el "
+                    f"{_reg_v[4].strftime('%d/%m/%Y %H:%M') if _reg_v[4] else '—'}: "
+                    f"S/ {_reg_v[2]:,.2f} del mes · saldo total S/ {_reg_v[3]:,.2f} ({_reg_v[1]} trabajador(es))."
+                )
+            if not _pend_v and not _reg_v:
+                st.success("✅ No hay provisión de vacaciones pendiente en este periodo.")
+            elif _pend_v:
+                _tot_v = sum(f["delta"] for f in _pend_v)
+                _can_v = sum(f["cancelado"] for f in _pend_v)
+                v1, v2 = st.columns(2)
+                v1.metric("Vacaciones a provisionar", f"S/ {_tot_v:,.2f}")
+                v2.metric("Gozadas (cancelan pasivo)", f"S/ {_can_v:,.2f}")
+                with st.expander(f"Detalle por trabajador ({len(_pend_v)})"):
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "DNI": f["dni"], "Trabajador": f["nombre"], "Días devengados no gozados": f["dias_saldo"],
+                            "Rem. diaria": f["remuneracion_diaria"], "Saldo objetivo": f["objetivo"],
+                            "Saldo previo": f["saldo_previo"], "Gozadas": f["cancelado"], "A provisionar": f["delta"],
+                        } for f in _pend_v]),
+                        use_container_width=True, hide_index=True,
+                    )
+                _etq_v = ("🔁 Regenerar Provisión de Vacaciones (reemplaza la ya registrada)" if _reg_v
+                          else "🏖️ Generar Provisión de Vacaciones y Registrarla (Excel)")
+                if st.button(_etq_v, type="primary", use_container_width=True, key="btn_gen_provision_vac"):
+                    try:
+                        with st.spinner("Armando el asiento de provisión de vacaciones..."):
+                            buf_pv = _pv.generar_asiento_provision(
+                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'))
+                        st.success("✅ Provisión de vacaciones registrada y asiento cuadrado (Debe = Haber).")
+                        st.download_button(
+                            f"📥 Descargar PROVISION_VAC_{sel_key}.xlsx", data=buf_pv,
+                            file_name=f"ASIENTO_PROVISION_VAC_{sel_key}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, key="dl_provision_vac",
+                        )
+                    except _ACE as _e_pv:
+                        if _e_pv.cuentas_faltantes:
+                            st.error(f"⚠️ **No se puede generar la provisión de vacaciones** — {_e_pv.mensaje}")
+                            for _c in _e_pv.cuentas_faltantes:
+                                st.markdown(f"- {_c}")
+                            st.info("Vaya a **Configuración Contable** para completar las cuentas y vuelva a intentarlo.")
+                        else:
+                            st.warning(f"ℹ️ {_e_pv.mensaje}")
+                    except Exception as _e_pv2:
+                        st.error(f"Error inesperado al generar la provisión de vacaciones: {_e_pv2}")
+
+        # ── Provisión mensual de CTS ───────────────────────────────────────────────
+        from core.use_cases import provision_cts as _pc
+        st.markdown("---")
+        st.markdown("### 💼 Provisión Mensual de CTS")
+        st.caption(
+            "Provisiona cada mes la CTS **al corte**: lo que se pagaría si el trabajador cesara el último día "
+            "del mes, calculado con el mismo motor de la liquidación (remuneración variable solo si se percibió en "
+            "≥ 3 meses del semestre; no se proyecta el futuro). **Julio 2026 registra de golpe lo devengado del "
+            "periodo MAY-OCT** (ajuste de corte). En mayo y noviembre se ajusta contra el **depósito real** y empieza "
+            f"el periodo nuevo. 🔧 `{_pc.VERSION_PROVISION_CTS}`"
+        )
+        if not _pc.es_provisionable(sel_key):
+            st.info(f"ℹ️ {_pc.motivo_no_provisionable(sel_key)}")
+        elif estado_sel != "CERRADA":
+            st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
+        else:
+            try:
+                _prev_c = _pc.calcular_provision_mes(db, empresa_id, sel_key)
+            except _ACE as _e_prev_c:
+                st.warning(f"ℹ️ {_e_prev_c.mensaje}")
+                _prev_c = []
+            _pend_c = [f for f in _prev_c if abs(f["delta_provision"]) > 0.004 or abs(f["delta_ajuste"]) > 0.004]
+            _reg_c = next((r for r in _pc.resumen_libro(db, empresa_id, int(sel_key[3:])) if r[0] == sel_key), None)
+            if _reg_c:
+                st.success(
+                    f"✅ La provisión de CTS de este periodo ya fue **registrada** el "
+                    f"{_reg_c[4].strftime('%d/%m/%Y %H:%M') if _reg_c[4] else '—'}: provisión S/ {_reg_c[2]:,.2f}"
+                    f" · ajuste por depósito S/ {_reg_c[3]:,.2f} ({_reg_c[1]} trabajador(es))."
+                )
+            if not _pend_c and not _reg_c:
+                st.success("✅ No hay provisión de CTS pendiente en este periodo.")
+            elif _pend_c:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("CTS a provisionar", f"S/ {sum(f['delta_provision'] for f in _pend_c):,.2f}")
+                c2.metric("Ajuste por depósito", f"S/ {sum(f['delta_ajuste'] for f in _pend_c):,.2f}")
+                c3.metric("Total CTS del mes", f"S/ {sum(f['delta_total'] for f in _pend_c):,.2f}")
+                with st.expander(f"Detalle por trabajador ({len(_pend_c)})"):
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "DNI": f["dni"], "Trabajador": f["nombre"], "Periodo CTS": f["periodo_cts"],
+                            "Base CTS": f["base_cts"], "Meses": f["meses"], "CTS al corte": f["objetivo"],
+                            "Ya provisionado": f["ya_provisionado"], "A provisionar": f["delta_provision"],
+                            "Depósito real": f["deposito"], "Ajuste": f["delta_ajuste"],
+                        } for f in _pend_c]),
+                        use_container_width=True, hide_index=True,
+                    )
+                _etq_c = ("🔁 Regenerar Provisión de CTS (reemplaza la ya registrada)" if _reg_c
+                          else "💼 Generar Provisión de CTS y Registrarla (Excel)")
+                if st.button(_etq_c, type="primary", use_container_width=True, key="btn_gen_provision_cts"):
+                    try:
+                        with st.spinner("Armando el asiento de provisión de CTS..."):
+                            buf_pc = _pc.generar_asiento_provision(
+                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'))
+                        st.success("✅ Provisión de CTS registrada y asiento cuadrado (Debe = Haber).")
+                        st.download_button(
+                            f"📥 Descargar PROVISION_CTS_{sel_key}.xlsx", data=buf_pc,
+                            file_name=f"ASIENTO_PROVISION_CTS_{sel_key}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, key="dl_provision_cts",
+                        )
+                    except _ACE as _e_pc:
+                        if _e_pc.cuentas_faltantes:
+                            st.error(f"⚠️ **No se puede generar la provisión de CTS** — {_e_pc.mensaje}")
+                            for _c in _e_pc.cuentas_faltantes:
+                                st.markdown(f"- {_c}")
+                            st.info("Vaya a **Configuración Contable** para completar las cuentas y vuelva a intentarlo.")
+                        else:
+                            st.warning(f"ℹ️ {_e_pc.mensaje}")
+                    except Exception as _e_pc2:
+                        st.error(f"Error inesperado al generar la provisión de CTS: {_e_pc2}")
+
+        _libro_c = _pc.resumen_libro(db, empresa_id, int(sel_key[3:]))
+        if _libro_c:
+            with st.expander(f"📚 Provisiones de CTS registradas en {sel_key[3:]}"):
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Periodo": p, "Trabajadores": n, "Provisión": a, "Ajuste por depósito": b,
+                        "Registrada": fch.strftime('%d/%m/%Y %H:%M') if fch else "",
+                    } for p, n, a, b, fch in _libro_c]),
+                    use_container_width=True, hide_index=True,
+                )
+
+        _libro_v = _pv.resumen_libro(db, empresa_id, int(sel_key[3:]))
+        if _libro_v:
+            with st.expander(f"📚 Provisiones de vacaciones registradas en {sel_key[3:]}"):
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Periodo": p, "Trabajadores": n, "Provisión del mes": a, "Saldo total": s_,
+                        "Registrada": fch.strftime('%d/%m/%Y %H:%M') if fch else "",
+                    } for p, n, a, s_, fch in _libro_v]),
+                    use_container_width=True, hide_index=True,
+                )
 
         _libro = _pg.resumen_libro(db, empresa_id, int(sel_key[3:]))
         if _libro:

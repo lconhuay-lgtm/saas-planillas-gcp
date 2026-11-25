@@ -57,7 +57,12 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
     glosa_asiento = f"LIQUIDACION DE BENEFICIOS SOCIALES - {nombre}"
 
     tiene_vac = liq.monto_vacaciones_truncas > 0
-    tiene_grati = (liq.monto_grati_trunca + liq.monto_bono_9) > 0
+    # Gratificación = trunca + bono 9 % del semestre de cese, más (si el usuario la incluyó al cesar
+    # en julio) la gratificación enero–junio pendiente con su bono. Todo es el mismo pasivo.
+    grati_bruta_total = round(
+        liq.monto_grati_trunca + liq.monto_bono_9
+        + (getattr(liq, 'monto_grati_anterior', 0) or 0) + (getattr(liq, 'monto_bono_anterior', 0) or 0), 2)
+    tiene_grati = grati_bruta_total > 0
     tiene_cts = liq.monto_cts_trunca > 0
     tiene_sueldo = liq.incluye_sueldo_mes_cese and liq.monto_sueldo_proporcional > 0
     tiene_5ta = liq.monto_retencion_5ta > 0
@@ -120,10 +125,23 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
 
     # ── DEBE: gasto de cada componente, por su monto BRUTO completo ──────────
     if tiene_vac:
-        filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_gasto, liq.monto_vacaciones_truncas, 0.0,
-                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        # Saldo de "Vacaciones por pagar" ya provisionado mes a mes (libro de vacaciones): se
+        # cancela contra el pasivo y solo la diferencia es gasto (o recuperación si sobró). Sin
+        # provisiones registradas el comportamiento es el de siempre (todo a gasto).
+        from core.use_cases import provision_vacaciones as _pv   # import diferido (evita ciclo)
+        prov_vac = _pv.saldo_vigente_trabajador(db, empresa_id, liq.trabajador_id)
+        ajuste_vac = round(liq.monto_vacaciones_truncas - prov_vac, 2)
+        if prov_vac > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, prov_vac, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if ajuste_vac > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_gasto, ajuste_vac, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        elif ajuste_vac < 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_gasto, 0.0, -ajuste_vac,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
     if tiene_grati:
-        monto_grati_bruto = liq.monto_grati_trunca + liq.monto_bono_9
+        monto_grati_bruto = grati_bruta_total
         # Lo ya provisionado mes a mes en el semestre (libro de provisiones) se cancela
         # contra el pasivo; solo la diferencia es gasto (o recuperación si sobró). Sin
         # provisiones registradas (p. ej. semestres anteriores al corte de julio 2026) el
@@ -132,6 +150,12 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         _sem, _anio = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_ref', None), liq.fecha_cese_snapshot)
         _prov_g, _prov_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem, _anio)
         prov_grati = round(_prov_g + _prov_b, 2)
+        # Lo provisionado del semestre ENE-JUN (si hay) también se cancela contra la gratificación pendiente
+        if (getattr(liq, 'monto_grati_anterior', 0) or 0) > 0:
+            _sem_a, _anio_a = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_anterior_ref', None), liq.fecha_cese_snapshot)
+            if (_sem_a, _anio_a) != (_sem, _anio):
+                _pa_g, _pa_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem_a, _anio_a)
+                prov_grati = round(prov_grati + _pa_g + _pa_b, 2)
         ajuste_grati = round(monto_grati_bruto - prov_grati, 2)
         if prov_grati > 0:
             filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, prov_grati, 0.0,
@@ -143,8 +167,22 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
             filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, 0.0, -ajuste_grati,
                                 num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
     if tiene_cts:
-        filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, liq.monto_cts_trunca, 0.0,
-                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        # Lo ya provisionado mes a mes del periodo CTS (libro de CTS) se cancela contra el pasivo;
+        # solo la diferencia es gasto (o recuperación si sobró). Sin provisiones registradas
+        # (periodos anteriores al corte de julio 2026) todo va a gasto, como siempre.
+        from core.use_cases import provision_cts as _pc   # import diferido (evita ciclo)
+        _etq_cts = _pc.periodo_desde_ref(getattr(liq, 'periodo_cts_ref', None), liq.fecha_cese_snapshot)
+        prov_cts = _pc.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _etq_cts)
+        ajuste_cts = round(liq.monto_cts_trunca - prov_cts, 2)
+        if prov_cts > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_pasivo, prov_cts, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if ajuste_cts > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, ajuste_cts, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        elif ajuste_cts < 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, 0.0, -ajuste_cts,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
     if tiene_sueldo:
         filas.append(_fila(11, 1, fecha_asiento, cuenta_sueldo, liq.monto_sueldo_proporcional, 0.0,
                             num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
@@ -172,7 +210,7 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, 0.0, monto_vac_neto,
                             num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
 
-    monto_grati_neto = ((liq.monto_grati_trunca + liq.monto_bono_9) - ret5ta_de_grati) if tiene_grati else 0.0
+    monto_grati_neto = (grati_bruta_total - ret5ta_de_grati) if tiene_grati else 0.0
     if tiene_grati and monto_grati_neto > 0:
         filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, 0.0, monto_grati_neto,
                             num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))

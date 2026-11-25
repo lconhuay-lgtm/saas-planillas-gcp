@@ -5,6 +5,7 @@ from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, LiquidacionCese
 from core.use_cases.calculo_liquidacion_cese import (
     calcular_liquidacion, _periodo_cts_de_fecha, _obtener_grati_referencia_cts, rmv_vigente,
+    grati_anterior_pendiente,
 )
 from core.domain.exceptions import ReglaNegocioError
 from core.use_cases.generador_pdf_liquidacion import generar_pdf_liquidacion
@@ -120,6 +121,32 @@ def render():
             key=f"liq_grati_ref_{t.id}_{fecha_cese_inp.isoformat()}",
         )
 
+        # Cese en julio o enero: ¿la gratificación del semestre anterior sigue sin cargar? (deuda legal que
+        # se pagaría junto con la liquidación). Se detecta siempre; se paga solo si se marca la casilla.
+        incluir_grati_ant = False
+        try:
+            grati_ant_det = grati_anterior_pendiente(
+                db, empresa_id, t, fecha_cese_inp, regimen_empresa,
+                fecha_acogimiento=fecha_acogimiento, factor_override=factor_grati_empresa, rmv=rmv_prev,
+            )
+        except ReglaNegocioError:
+            grati_ant_det = None
+        if grati_ant_det:
+            st.warning(
+                f"⚠️ **Gratificación {grati_ant_det['periodo_ref']} sin cargar.** El cese es en "
+                f"{'julio' if fecha_cese_inp.month == 7 else 'enero'} y no hay gratificación de ese semestre "
+                f"registrada para este trabajador en planilla. Es una deuda "
+                f"legal: **S/ {grati_ant_det['monto_grati']:,.2f}** + bonificación extraordinaria "
+                f"**S/ {grati_ant_det['bono_9']:,.2f}** (total S/ {grati_ant_det['total']:,.2f})."
+            )
+            incluir_grati_ant = st.checkbox(
+                f"Incluir la gratificación {grati_ant_det['periodo_ref']} pendiente en esta liquidación "
+                f"(S/ {grati_ant_det['total']:,.2f})",
+                value=False, key=f"liq_incluir_grati_ant_{t.id}_{fecha_cese_inp.isoformat()}",
+                help="Si no la marca, no se paga nada de esto. Márquela solo si esa gratificación NO se va a "
+                     "pagar por otra vía (el módulo de Gratificaciones solo lista trabajadores activos).",
+            )
+
         st.markdown("---")
 
         if st.button("🧮 Calcular Liquidación", type="primary", use_container_width=True):
@@ -132,6 +159,7 @@ def render():
                         fecha_acogimiento=fecha_acogimiento, factor_override=factor_grati_empresa,
                         incluye_sueldo_mes_cese=incluye_sueldo_mes, monto_bono_cese=bono_cese_input,
                         grati_referencia_cts=grati_ref_input,
+                        incluir_grati_anterior=incluir_grati_ant,
                     )
                 except ReglaNegocioError as e_regla:
                     st.error(f"❌ {e_regla}")
@@ -145,6 +173,12 @@ def render():
             st.success(f"**Total neto a pagar al trabajador: S/ {liq['total_neto']:,.2f}**")
             if liq.get('aviso_5ta'):
                 st.warning(f"⚠️ {liq['aviso_5ta']}")
+            if liq.get('grati_ya_pagada_planilla', 0) > 0:
+                st.info(
+                    f"ℹ️ La gratificación del semestre **{liq['periodo_grati_ref']}** ya fue pagada en planilla "
+                    f"(S/ {liq['grati_ya_pagada_planilla']:,.2f}); por eso la liquidación **no** la incluye como "
+                    f"trunca ni paga la bonificación extraordinaria de nuevo."
+                )
             st.markdown("---")
             st.markdown("#### Desglose de Liquidación")
 
@@ -158,6 +192,13 @@ def render():
                     (f"Vacaciones truncas ({liq['dias_vacaciones_pendientes']:.0f} días)", liq['monto_vacaciones_truncas']),
                     (f"Gratificación trunca ({liq['meses_grati']} mes(es), {liq['periodo_grati_ref']})", liq['monto_grati_trunca']),
                     ("Bonificación Extraordinaria (Ley 30334)", liq['monto_bono_9']),
+                ]
+                if liq.get('incluye_grati_anterior'):
+                    items += [
+                        (f"Gratificación {liq['periodo_grati_anterior_ref']} pendiente", liq['monto_grati_anterior']),
+                        ("Bonificación Extraordinaria (gratificación pendiente)", liq['monto_bono_anterior']),
+                    ]
+                items += [
                     (f"CTS trunca ({liq['meses_cts']} meses, {liq['periodo_cts_ref']})", liq['monto_cts_trunca']),
                 ]
                 if liq['monto_bono_cese'] > 0:
@@ -236,6 +277,9 @@ def render():
                         meses_grati=liq['meses_grati'],
                         monto_grati_trunca=liq['monto_grati_trunca'],
                         monto_bono_9=liq['monto_bono_9'],
+                        monto_grati_anterior=liq.get('monto_grati_anterior', 0.0),
+                        monto_bono_anterior=liq.get('monto_bono_anterior', 0.0),
+                        periodo_grati_anterior_ref=liq.get('periodo_grati_anterior_ref'),
                         grati_base_computable=liq['grati_base_computable'],
                         grati_factor=liq['grati_factor'],
                         grati_fecha_efectivo_ini=liq['grati_fecha_efectivo_ini'],

@@ -255,6 +255,10 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_salud_pasivo VARCHAR(20)",
             "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_pension_gasto VARCHAR(20)",
             "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_pension_pasivo VARCHAR(20)",
+            # Liquidación por cese en julio: gratificación enero–junio pendiente (opcional)
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_grati_anterior FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS monto_bono_anterior FLOAT DEFAULT 0",
+            "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS periodo_grati_anterior_ref VARCHAR(20)",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:
