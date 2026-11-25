@@ -43,13 +43,14 @@ def render():
             return (getattr(cfg, campo, '') or '') if cfg else ''
 
         with st.form("form_config_contable"):
-            st.markdown("##### Remuneraciones y horas")
+            st.markdown("##### Remuneraciones y horas — cuentas de GASTO (débito)")
+            st.caption("El gasto de «Descanso Vacacional» (vacaciones) se configura junto a su cuenta por pagar, "
+                       "en la sección «Vacaciones» más abajo.")
             c1, c2 = st.columns(2)
-            c_he25 = c1.text_input("Horas Extras 25%", value=_v('cuenta_horas_extra_25'))
-            c_he35 = c2.text_input("Horas Extras 35%", value=_v('cuenta_horas_extra_35'))
-            c_dvac = c1.text_input("Descanso Vacacional", value=_v('cuenta_descanso_vacacional'))
-            c_dmed = c2.text_input("Descanso Médico", value=_v('cuenta_descanso_medico'))
-            c_lgoce = c1.text_input("Licencia con Goce", value=_v('cuenta_licencia_goce'))
+            c_he25 = c1.text_input("Horas Extras 25% — Gasto (débito)", value=_v('cuenta_horas_extra_25'))
+            c_he35 = c2.text_input("Horas Extras 35% — Gasto (débito)", value=_v('cuenta_horas_extra_35'))
+            c_dmed = c1.text_input("Descanso Médico — Gasto (débito)", value=_v('cuenta_descanso_medico'))
+            c_lgoce = c2.text_input("Licencia con Goce — Gasto (débito)", value=_v('cuenta_licencia_goce'))
 
             st.markdown("---")
             st.markdown("##### EsSalud")
@@ -58,20 +59,20 @@ def render():
             c_ess_pasivo = c4.text_input("EsSalud — Por Pagar (crédito)", value=_v('cuenta_essalud_pasivo'))
 
             st.markdown("---")
-            st.markdown("##### Pensiones y retenciones")
+            st.markdown("##### Pensiones y retenciones — cuentas de PASIVO (crédito)")
             c5, c6 = st.columns(2)
-            c_onp = c5.text_input("ONP", value=_v('cuenta_onp'))
-            c_5ta = c6.text_input("Retención 5ta Categoría", value=_v('cuenta_retencion_5ta'))
-            c_habitat = c5.text_input("AFP Habitat", value=_v('cuenta_afp_habitat'))
-            c_integra = c6.text_input("AFP Integra", value=_v('cuenta_afp_integra'))
-            c_prima = c5.text_input("AFP Prima", value=_v('cuenta_afp_prima'))
-            c_profuturo = c6.text_input("AFP Profuturo", value=_v('cuenta_afp_profuturo'))
+            c_onp = c5.text_input("ONP — Por Pagar (crédito)", value=_v('cuenta_onp'))
+            c_5ta = c6.text_input("Retención 5ta Categoría — Por Pagar (crédito)", value=_v('cuenta_retencion_5ta'))
+            c_habitat = c5.text_input("AFP Habitat — Por Pagar (crédito)", value=_v('cuenta_afp_habitat'))
+            c_integra = c6.text_input("AFP Integra — Por Pagar (crédito)", value=_v('cuenta_afp_integra'))
+            c_prima = c5.text_input("AFP Prima — Por Pagar (crédito)", value=_v('cuenta_afp_prima'))
+            c_profuturo = c6.text_input("AFP Profuturo — Por Pagar (crédito)", value=_v('cuenta_afp_profuturo'))
 
             st.markdown("---")
-            st.markdown("##### Pagos y cuentas por cobrar")
+            st.markdown("##### Pagos y cuentas por cobrar — cuentas de PASIVO / ACTIVO (crédito)")
             c7, c8 = st.columns(2)
-            c_remun_pagar = c7.text_input("Remuneraciones por Pagar (neto)", value=_v('cuenta_remuneraciones_por_pagar'))
-            c_prestamos = c8.text_input("Préstamos al Personal (por cobrar)", value=_v('cuenta_prestamos_personal'))
+            c_remun_pagar = c7.text_input("Remuneraciones por Pagar — Neto (crédito)", value=_v('cuenta_remuneraciones_por_pagar'))
+            c_prestamos = c8.text_input("Préstamos al Personal — Por Cobrar (crédito)", value=_v('cuenta_prestamos_personal'))
 
             st.markdown("---")
             st.markdown("##### EPS (Ley 26790)")
@@ -80,7 +81,7 @@ def render():
                 "Maestro de Personal — recibe ese monto, que se le debe a la aseguradora "
                 "privada (no a SUNAT)."
             )
-            c_eps = st.text_input("EPS Por Pagar", value=_v('cuenta_eps_por_pagar'))
+            c_eps = st.text_input("EPS — Por Pagar (crédito)", value=_v('cuenta_eps_por_pagar'))
 
             st.markdown("---")
             st.markdown("##### Seguros a Cargo del Empleador (Vida Ley y SCTR)")
@@ -98,29 +99,49 @@ def render():
             c_sp_pasivo = c12.text_input("SCTR Pensión — Por Pagar (crédito)", value=_v('cuenta_sctr_pension_pasivo'))
 
             st.markdown("---")
-            st.markdown("##### Liquidación por Cese")
+            st.markdown("##### Provisiones, pagos y liquidación: Vacaciones, Gratificación, CTS y Bono por Cese")
             st.caption(
-                "CTS y Gratificación trunca nunca se contabilizaron antes (julio/diciembre "
-                "siempre estuvieron excluidos del asiento de planilla) — por eso necesitan "
-                "cuenta de gasto y de pasivo propias. Vacaciones truncas reutiliza la cuenta "
-                "de gasto \"Descanso Vacacional\" de arriba."
+                "Cada beneficio necesita DOS cuentas distintas: el **gasto** (débito, cuenta 62…) y el "
+                "**pasivo / por pagar** (crédito, cuenta 41…). Se usan en las provisiones mensuales, en el pago "
+                "(planilla de julio/diciembre y depósito) y en la liquidación por cese. El gasto y el pasivo "
+                "de un mismo beneficio **no pueden ser la misma cuenta**."
             )
             c9, c10 = st.columns(2)
-            c_cts_gasto = c9.text_input("CTS — Gasto (débito)", value=_v('cuenta_cts_gasto'))
-            c_cts_pasivo = c10.text_input("CTS Por Pagar (crédito)", value=_v('cuenta_cts_por_pagar'))
+            c_dvac = c9.text_input(
+                "Vacaciones — Gasto (débito) · «Descanso Vacacional»", value=_v('cuenta_descanso_vacacional'),
+                help="Gasto de las vacaciones gozadas en planilla, de la provisión mensual y de las vacaciones truncas.")
+            c_vac_pasivo = c10.text_input(
+                "Vacaciones — Por Pagar (crédito)", value=_v('cuenta_vacaciones_por_pagar'),
+                help="Pasivo de la provisión de vacaciones y de las vacaciones truncas de la liquidación.")
             c_grati_gasto = c9.text_input(
                 "Gratificación — Gasto (débito)", value=_v('cuenta_gratificacion_gasto'),
                 help="Gratificación completa (julio/diciembre), provisión mensual y gratificación trunca de la liquidación.")
             c_grati_pasivo = c10.text_input(
-                "Gratificación Por Pagar (crédito)", value=_v('cuenta_gratificacion_por_pagar'),
+                "Gratificación — Por Pagar (crédito)", value=_v('cuenta_gratificacion_por_pagar'),
                 help="Pasivo de la gratificación completa, de su provisión mensual y de la trunca de la liquidación.")
-            c_vac_pasivo = c9.text_input("Vacaciones Truncas Por Pagar (crédito)", value=_v('cuenta_vacaciones_por_pagar'))
+            c_cts_gasto = c9.text_input("CTS — Gasto (débito)", value=_v('cuenta_cts_gasto'))
+            c_cts_pasivo = c10.text_input("CTS — Por Pagar (crédito)", value=_v('cuenta_cts_por_pagar'))
             c_bonocese_gasto = c9.text_input("Bono por Cese — Gasto (débito)", value=_v('cuenta_bono_cese_gasto'))
-            c_bonocese_pasivo = c10.text_input("Bono por Cese Por Pagar (crédito)", value=_v('cuenta_bono_cese_por_pagar'))
+            c_bonocese_pasivo = c10.text_input("Bono por Cese — Por Pagar (crédito)", value=_v('cuenta_bono_cese_por_pagar'))
 
             guardar = st.form_submit_button("💾 Guardar Configuración", type="primary", use_container_width=True)
 
         if guardar:
+            # El gasto y el pasivo de un mismo concepto deben ser cuentas distintas (si no, el asiento repite
+            # la misma cuenta en el Debe y en el Haber y no registra nada).
+            _pares = [
+                ("EsSalud", c_ess_gasto, c_ess_pasivo), ("Vida Ley", c_vl_gasto, c_vl_pasivo),
+                ("SCTR Salud", c_ss_gasto, c_ss_pasivo), ("SCTR Pensión", c_sp_gasto, c_sp_pasivo),
+                ("Vacaciones", c_dvac, c_vac_pasivo), ("Gratificación", c_grati_gasto, c_grati_pasivo),
+                ("CTS", c_cts_gasto, c_cts_pasivo), ("Bono por Cese", c_bonocese_gasto, c_bonocese_pasivo),
+            ]
+            _repetidas = [f"**{n}**: gasto y pasivo tienen la misma cuenta ({g.strip()})"
+                          for n, g, p in _pares if g.strip() and g.strip() == p.strip()]
+            if _repetidas:
+                st.error("❌ No se guardó. La cuenta de gasto y la de pasivo deben ser distintas:")
+                for _m in _repetidas:
+                    st.markdown(f"- {_m}")
+                return
             try:
                 if not cfg:
                     cfg = ConfiguracionContable(empresa_id=empresa_id)

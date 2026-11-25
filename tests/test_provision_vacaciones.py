@@ -122,6 +122,16 @@ def _antiguo(db, ingreso=datetime.date(2025, 1, 1)):
     db.commit()
 
 
+def test_gasto_y_pasivo_con_la_misma_cuenta_se_rechazan_con_aviso(db):
+    """Si ambas cuentas son iguales (p. ej. 6215), el asiento repetiría la cuenta en Debe y Haber: no se genera."""
+    _config(db, cuenta_vacaciones_por_pagar="621301")        # igual que el gasto (621301)
+    _planilla(db, "07-2026")
+    with pytest.raises(AsientoContableError) as exc:
+        pv.generar_asiento_provision(db, db.empresa_id, "07-2026")
+    assert any("la misma" in c for c in exc.value.cuentas_faltantes)
+    assert db.query(m.ProvisionVacaciones).count() == 0      # y no registra nada en el libro
+
+
 def test_julio_no_provisiona_el_saldo_de_anios_anteriores(db):
     """Ya está provisionado en la contabilidad: solo se reconoce el devengo ene-jul 2026 (17.5 días)."""
     _antiguo(db)
@@ -250,7 +260,7 @@ def test_provision_sin_cuentas_avisa_y_no_registra_nada(db):
     _planilla(db, "07-2026")
     with pytest.raises(AsientoContableError) as ei:
         pv.generar_asiento_provision(db, db.empresa_id, "07-2026")
-    assert any("Vacaciones Por Pagar" in c for c in ei.value.cuentas_faltantes)
+    assert any("Vacaciones — Por Pagar" in c for c in ei.value.cuentas_faltantes)
     assert db.query(m.ProvisionVacaciones).count() == 0
 
 

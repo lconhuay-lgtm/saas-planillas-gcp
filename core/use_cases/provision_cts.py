@@ -30,7 +30,7 @@ from infrastructure.database.models import (
     Trabajador, Empresa, ConfiguracionContable, ProvisionCTS, DepositoCTS,
 )
 from core.use_cases.generador_asiento_contable import (
-    AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES,
+    AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES, aviso_cuentas_repetidas,
 )
 from core.use_cases.calculo_liquidacion_cese import _periodo_cts_de_fecha
 from core.use_cases.calculo_beneficios_sociales import rango_cts, meses_con_servicio
@@ -267,7 +267,10 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
     if not cuenta_gasto:
         faltantes.append("CTS — Gasto (Configuración Contable)")
     if not cuenta_pasivo:
-        faltantes.append("CTS Por Pagar (Configuración Contable)")
+        faltantes.append("CTS — Por Pagar (crédito) (Configuración Contable)")
+    _rep = aviso_cuentas_repetidas("CTS", cuenta_gasto, cuenta_pasivo)
+    if _rep:
+        faltantes.append(_rep)
     if faltantes:
         raise AsientoContableError(
             "Faltan cuentas contables por configurar antes de generar la provisión.",

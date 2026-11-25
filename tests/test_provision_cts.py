@@ -227,7 +227,7 @@ def test_sin_cuentas_avisa_cuales_faltan_y_no_registra_nada(db):
     with pytest.raises(AsientoContableError) as ei:
         pc.generar_asiento_provision(db, db.empresa_id, "07-2026")
     assert any("CTS — Gasto" in c for c in ei.value.cuentas_faltantes)
-    assert any("CTS Por Pagar" in c for c in ei.value.cuentas_faltantes)
+    assert any("CTS — Por Pagar" in c for c in ei.value.cuentas_faltantes)
     assert db.query(m.ProvisionCTS).count() == 0
 
 

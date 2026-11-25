@@ -35,7 +35,7 @@ from infrastructure.database.models import (
 )
 from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 from core.use_cases.generador_asiento_contable import (
-    AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES,
+    AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES, aviso_cuentas_repetidas,
 )
 from core.use_cases.provision_gratificacion import INICIO_PROVISION, _planilla_cerrada, rmv_al
 from core.use_cases import valorizacion_vacaciones as vv
@@ -270,9 +270,12 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
     cuenta_pasivo = ((getattr(cfg, CUENTA_PASIVO, None) if cfg else None) or "").strip()
     faltantes = []
     if con_asiento and not cuenta_gasto:
-        faltantes.append("Descanso Vacacional — Gasto (Configuración Contable)")
+        faltantes.append("Vacaciones — Gasto (débito) · Descanso Vacacional (Configuración Contable)")
     if con_asiento and not cuenta_pasivo:
-        faltantes.append("Vacaciones Por Pagar (Configuración Contable)")
+        faltantes.append("Vacaciones — Por Pagar (crédito) (Configuración Contable)")
+    _rep = aviso_cuentas_repetidas("Vacaciones", cuenta_gasto, cuenta_pasivo) if con_asiento else None
+    if _rep:
+        faltantes.append(_rep)
     if faltantes:
         raise AsientoContableError(
             "Faltan cuentas contables por configurar antes de generar la provisión.",

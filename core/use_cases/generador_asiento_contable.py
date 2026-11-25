@@ -122,6 +122,16 @@ class AsientoContableError(Exception):
         self.detalle_diagnostico = detalle_diagnostico or []
 
 
+def aviso_cuentas_repetidas(etiqueta: str, cuenta_gasto: str, cuenta_pasivo: str):
+    """Texto de aviso si el gasto y el pasivo de un mismo beneficio tienen la MISMA cuenta (el asiento
+    repetiría esa cuenta en el Debe y en el Haber y no registraría nada); None si están bien."""
+    g, p = (cuenta_gasto or "").strip(), (cuenta_pasivo or "").strip()
+    if g and p and g == p:
+        return (f"{etiqueta}: la cuenta de gasto y la de pasivo son la misma ({g}); deben ser distintas "
+                f"(Configuración Contable)")
+    return None
+
+
 def _fila(origen, num_voucher, fecha, cuenta, debe, haber, num_doc, glosa,
           cod_prov_clie="", ruc="", r_social=""):
     fila = {c: "" for c in COLUMNAS_SISCONT}
@@ -215,7 +225,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
 
     if necesita["he25"]: _cuenta_fija('cuenta_horas_extra_25', "Horas Extras 25% (Configuración Contable)")
     if necesita["he35"]: _cuenta_fija('cuenta_horas_extra_35', "Horas Extras 35% (Configuración Contable)")
-    if necesita["dvac"]: _cuenta_fija('cuenta_descanso_vacacional', "Descanso Vacacional (Configuración Contable)")
+    if necesita["dvac"]: _cuenta_fija('cuenta_descanso_vacacional', "Vacaciones — Gasto (débito) · Descanso Vacacional (Configuración Contable)")
     if necesita["dmed"]: _cuenta_fija('cuenta_descanso_medico', "Descanso Médico (Configuración Contable)")
     if necesita["lgoce"]: _cuenta_fija('cuenta_licencia_goce', "Licencia con Goce (Configuración Contable)")
 
@@ -274,14 +284,20 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     if any(v["ajuste"] != 0 for v in grati_trab.values()):
         _cuenta_fija(_pg.CUENTA_GASTO, "Gratificación — Gasto (Configuración Contable)")
     if grati_trab:   # lo pagado se acredita a "Gratificaciones por pagar" (y lo provisionado se debita de ella)
-        _cuenta_fija(_pg.CUENTA_PASIVO, "Gratificación Por Pagar (Configuración Contable)")
+        _cuenta_fija(_pg.CUENTA_PASIVO, "Gratificación — Por Pagar (crédito) (Configuración Contable)")
+        _rep_g = aviso_cuentas_repetidas("Gratificación", getattr(cfg, _pg.CUENTA_GASTO, ''), getattr(cfg, _pg.CUENTA_PASIVO, ''))
+        if _rep_g:
+            faltantes.add(_rep_g)
 
     # Vacaciones gozadas en el mes: se cancelan contra lo provisionado (libro de vacaciones) y
     # solo el resto es gasto. Sin libro en uso (o antes del corte) todo sigue siendo gasto.
     from core.use_cases import provision_vacaciones as _pv
     vac_cancel = _pv.cancelaciones_planilla(db, empresa_id, periodo_key, auditoria_data)
     if any(v > 0 for v in vac_cancel.values()):
-        _cuenta_fija(_pv.CUENTA_PASIVO, "Vacaciones Por Pagar (Configuración Contable)")
+        _cuenta_fija(_pv.CUENTA_PASIVO, "Vacaciones — Por Pagar (crédito) (Configuración Contable)")
+        _rep_v = aviso_cuentas_repetidas("Vacaciones", getattr(cfg, _pv.CUENTA_GASTO, ''), getattr(cfg, _pv.CUENTA_PASIVO, ''))
+        if _rep_v:
+            faltantes.add(_rep_v)
 
     # Seguros a cargo del empleador (Vida Ley / SCTR): solo se exigen las cuentas de los
     # seguros que tienen monto este mes.

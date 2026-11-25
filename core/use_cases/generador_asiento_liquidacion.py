@@ -21,7 +21,7 @@ from infrastructure.database.models import LiquidacionCese, Trabajador, Concepto
 from core.use_cases import numeracion_vouchers as _nv
 from core.use_cases.generador_asiento_contable import (
     AsientoContableError, _fila, COLUMNAS_SISCONT, _RUC_SUNAT, _NOMBRE_SUNAT,
-    _AFP_CUENTA_ATTR, _AFP_RUC_RSOCIAL,
+    _AFP_CUENTA_ATTR, _AFP_RUC_RSOCIAL, aviso_cuentas_repetidas,
 )
 
 VERSION_GENERADOR_LIQ = "2026-11-25-r1"
@@ -81,8 +81,11 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
     cuenta_bono_cese_gasto = cuenta_bono_cese_pasivo = ""
 
     if tiene_vac:
-        cuenta_vac_gasto = _cuenta('cuenta_descanso_vacacional', "Descanso Vacacional (Configuración Contable)")
-        cuenta_vac_pasivo = _cuenta('cuenta_vacaciones_por_pagar', "Vacaciones Truncas Por Pagar (Configuración Contable)")
+        cuenta_vac_gasto = _cuenta('cuenta_descanso_vacacional', "Vacaciones — Gasto (débito) · Descanso Vacacional (Configuración Contable)")
+        cuenta_vac_pasivo = _cuenta('cuenta_vacaciones_por_pagar', "Vacaciones — Por Pagar (crédito) (Configuración Contable)")
+        _rep_v = aviso_cuentas_repetidas("Vacaciones", cuenta_vac_gasto, cuenta_vac_pasivo)
+        if _rep_v:
+            faltantes.add(_rep_v)
     if tiene_grati:
         cuenta_grati_gasto = _cuenta('cuenta_gratificacion_gasto', "Gratificación — Gasto (Configuración Contable)")
         cuenta_grati_pasivo = _cuenta('cuenta_gratificacion_por_pagar', "Gratificación Por Pagar (Configuración Contable)")

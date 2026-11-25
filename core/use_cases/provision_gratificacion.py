@@ -35,7 +35,7 @@ from core.use_cases.calculo_beneficios_sociales import (
     SEMESTRES_GRATI, _meses_completos, factor_grati_aplicable, tasa_bono_extraordinario,
 )
 from core.use_cases.generador_asiento_contable import (
-    AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES,
+    AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES, aviso_cuentas_repetidas,
 )
 from core.use_cases.valorizacion_beneficios import valorizar_gratificacion_al
 from core.use_cases.calculo_liquidacion_cese import rmv_vigente
@@ -274,7 +274,10 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
     if not cuenta_gasto:
         faltantes.append("Gratificación — Gasto (Configuración Contable)")
     if not cuenta_pasivo:
-        faltantes.append("Gratificación Por Pagar (Configuración Contable)")
+        faltantes.append("Gratificación — Por Pagar (crédito) (Configuración Contable)")
+    _rep = aviso_cuentas_repetidas("Gratificación", cuenta_gasto, cuenta_pasivo)
+    if _rep:
+        faltantes.append(_rep)
     if faltantes:
         raise AsientoContableError(
             "Faltan cuentas contables por configurar antes de generar la provisión.",
