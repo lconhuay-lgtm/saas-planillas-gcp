@@ -33,6 +33,7 @@ from core.use_cases.generador_asiento_contable import (
     AsientoContableError, _fila, COLUMNAS_SISCONT, MESES_ES,
 )
 from core.use_cases.calculo_liquidacion_cese import _periodo_cts_de_fecha
+from core.use_cases.calculo_beneficios_sociales import rango_cts, meses_con_servicio
 from core.use_cases.valorizacion_beneficios import valorizar_cts_al
 from core.use_cases.provision_gratificacion import INICIO_PROVISION, _planilla_cerrada, rmv_al
 
@@ -40,7 +41,7 @@ from core.use_cases.provision_gratificacion import INICIO_PROVISION, _planilla_c
 CUENTA_GASTO = 'cuenta_cts_gasto'
 CUENTA_PASIVO = 'cuenta_cts_por_pagar'
 
-VERSION_PROVISION_CTS = "2026-11-25-r2"
+VERSION_PROVISION_CTS = "2026-11-25-r3"
 
 
 # ── Helpers de periodo ───────────────────────────────────────────────────────────
@@ -121,13 +122,55 @@ def resumen_libro(db, empresa_id: int, anio: int) -> list:
     )
 
 
+# ── Regularización ÚNICA del periodo NOV-ABR (solo julio 2026) ───────────────────
+
+PERIODO_REG = "NOV-ABR-2026"                 # periodo CTS que se regulariza (depósito de mayo 2026)
+INICIO_REG = datetime.date(2026, 1, 1)       # solo enero–abril 2026: nov–dic 2025 ya están en la contabilidad
+FIN_REG = datetime.date(2026, 4, 30)
+
+
+def _regularizacion_nov_abr(db, empresa_id, t, sueldo, regimen_empresa, fecha_acogimiento, factor_voluntario):
+    """
+    Ajuste puntual de julio 2026: la CTS de NOV-ABR (depósito de mayo 2026) sigue SIN PAGAR y nunca se
+    provisionó enero–abril 2026. Devuelve (monto, fuente): la parte de enero–abril de lo que se debe.
+
+    Lo que se debe: el depósito de mayo 2026 ya calculado y registrado (DepositoCTS) si existe; si no,
+    la CTS al 30/04/2026 con el mismo motor de la liquidación. La parte de enero–abril es proporcional
+    a los meses con servicio (enero–abril ÷ noviembre–abril); noviembre–diciembre 2025 no se tocan.
+    """
+    ini_per, fin_per = rango_cts('NOV-ABR', 2026)
+    m_total = meses_con_servicio(t.fecha_ingreso, getattr(t, 'fecha_cese', None), ini_per, fin_per)
+    m_reg = meses_con_servicio(t.fecha_ingreso, getattr(t, 'fecha_cese', None), INICIO_REG, FIN_REG)
+    if m_total <= 0 or m_reg <= 0:
+        return 0.0, None
+    dep = db.query(DepositoCTS).filter_by(
+        empresa_id=empresa_id, trabajador_id=t.id, periodo_key_deposito="05-2026").first()
+    if dep and float(dep.monto or 0) > 0:
+        total, fuente = float(dep.monto), "depósito registrado (05-2026)"
+    else:
+        res = valorizar_cts_al(
+            db, empresa_id, t, FIN_REG, rmv_al(db, empresa_id, FIN_REG, t), regimen_empresa,
+            fecha_acogimiento=fecha_acogimiento, factor_override=factor_voluntario, sueldo=sueldo,
+        )
+        total, fuente = float(res['monto_cts']), "CTS al 30/04/2026 (motor)"
+    return round(total * min(1.0, m_reg / m_total), 2), fuente
+
+
 # ── Cálculo de la provisión del mes ──────────────────────────────────────────────
 
-def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:
+def reg_nov_abr_registrada(db, empresa_id: int) -> bool:
+    """True si la regularización de NOV-ABR (ene–abr 2026) ya quedó registrada en el libro."""
+    return db.query(ProvisionCTS).filter_by(empresa_id=empresa_id, periodo_cts=PERIODO_REG).first() is not None
+
+
+def calcular_provision_mes(db, empresa_id: int, periodo_key: str, incluir_reg_nov_abr: bool = False) -> list:
     """
     Por trabajador de planilla: [{dni, nombre, trabajador_id, periodo_cts, base_cts, meses,
     objetivo, ya_provisionado, delta_provision, periodo_cierre, deposito, provisionado_cierre,
-    delta_ajuste, delta_total}]. No escribe nada.
+    delta_ajuste, reg_periodo, reg_monto, reg_fuente, delta_total}]. No escribe nada.
+
+    `incluir_reg_nov_abr`: OPCIÓN del usuario (solo tiene efecto en julio 2026): incluir la CTS de
+    enero–abril 2026 del periodo NOV-ABR, si la empresa no la provisionó.
     """
     motivo = motivo_no_provisionable(periodo_key)
     if motivo:
@@ -172,6 +215,12 @@ def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:
             dep, prov_c = depositos[t.id], provisionado_cierre.get(t.id, 0.0)
             delta_aj = round(dep - prov_c, 2)
 
+        # Ajuste puntual: SOLO en julio 2026 (nunca se repite)
+        reg, reg_fuente = (0.0, None)
+        if incluir_reg_nov_abr and (anio, mes) == INICIO_PROVISION:
+            reg, reg_fuente = _regularizacion_nov_abr(
+                db, empresa_id, t, sueldo, regimen_empresa, fecha_acogimiento, factor_voluntario)
+
         filas.append({
             "dni": str(dni), "nombre": (info or {}).get('nombres') or t.nombres, "trabajador_id": t.id,
             "periodo_cts": etiqueta, "base_cts": res['base_cts'], "meses": res['meses_computados'],
@@ -179,14 +228,16 @@ def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:
             "delta_provision": round(objetivo - previo_t, 2),
             "periodo_cierre": cierre if delta_aj or dep is not None else None,
             "deposito": dep, "provisionado_cierre": prov_c, "delta_ajuste": delta_aj,
-            "delta_total": round((objetivo - previo_t) + delta_aj, 2),
+            "reg_periodo": PERIODO_REG if reg > 0 else None, "reg_monto": reg, "reg_fuente": reg_fuente,
+            "delta_total": round((objetivo - previo_t) + delta_aj + reg, 2),
         })
     return filas
 
 
 # ── Asiento de provisión (Excel SISCONT) + registro en el libro ──────────────────
 
-def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_por: str = None) -> io.BytesIO:
+def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_por: str = None,
+                              incluir_reg_nov_abr: bool = False) -> io.BytesIO:
     """
     Genera el voucher PC{mm}-{año} (gasto CTS al débito / CTS por pagar al crédito, por trabajador)
     con la provisión del mes y, en mayo/noviembre, el ajuste contra el depósito real; y REGISTRA ambos
@@ -203,8 +254,9 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
             f"No se puede regenerar {periodo_key} sin invalidarlas."
         )
 
-    filas_calc = calcular_provision_mes(db, empresa_id, periodo_key)
-    movimientos = [f for f in filas_calc if abs(f["delta_provision"]) > 0.004 or abs(f["delta_ajuste"]) > 0.004]
+    filas_calc = calcular_provision_mes(db, empresa_id, periodo_key, incluir_reg_nov_abr=incluir_reg_nov_abr)
+    movimientos = [f for f in filas_calc
+                   if abs(f["delta_provision"]) > 0.004 or abs(f["delta_ajuste"]) > 0.004 or f["reg_monto"] > 0.004]
     if not movimientos:
         raise AsientoContableError(f"No hay provisión de CTS pendiente en {periodo_key} (nada que contabilizar).")
 
@@ -228,6 +280,7 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
     if (anio, mes) == INICIO_PROVISION:
         glosa_prov += " - REGULARIZACION MAY-JUL"
     glosa_aj = f"AJUSTE CTS POR DEPOSITO {MESES_ES.get(mes, '')} {anio}"
+    glosa_reg = f"PROVISION CTS {MESES_ES.get(mes, '')} {anio} ({PERIODO_REG}) - REGULARIZACION ENE-ABR 2026"
 
     def _lineas(f, monto, glosa, periodo_cts):
         num_doc = _nvd.doc_cts(periodo_cts)      # todo el periodo CTS comparte documento (provisión y ajuste)
@@ -244,6 +297,8 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
             filas += _lineas(f, f["delta_provision"], glosa_prov, f["periodo_cts"])
         if abs(f["delta_ajuste"]) > 0.004:
             filas += _lineas(f, f["delta_ajuste"], glosa_aj, f["periodo_cierre"])
+        if f["reg_monto"] > 0.004:
+            filas += _lineas(f, f["reg_monto"], glosa_reg, f["reg_periodo"])
 
     if round(sum(x["Monto Debe"] for x in filas) - sum(x["Monto Haber"] for x in filas), 2) != 0:
         raise AsientoContableError(
@@ -265,6 +320,12 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
                 db.add(ProvisionCTS(
                     empresa_id=empresa_id, trabajador_id=f["trabajador_id"], periodo_key=periodo_key,
                     periodo_cts=f["periodo_cierre"], tipo="AJUSTE", monto=f["delta_ajuste"],
+                    generado_por=generado_por,
+                ))
+            if f["reg_monto"] > 0.004:
+                db.add(ProvisionCTS(
+                    empresa_id=empresa_id, trabajador_id=f["trabajador_id"], periodo_key=periodo_key,
+                    periodo_cts=f["reg_periodo"], tipo="PROVISION", monto=f["reg_monto"],
                     generado_por=generado_por,
                 ))
         db.commit()

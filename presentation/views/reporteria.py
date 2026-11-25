@@ -835,7 +835,8 @@ def render():
             "Provisiona cada mes la CTS **al corte**: lo que se pagaría si el trabajador cesara el último día "
             "del mes, calculado con el mismo motor de la liquidación (remuneración variable solo si se percibió en "
             "≥ 3 meses del semestre; no se proyecta el futuro). **Julio 2026 registra de golpe lo devengado del "
-            "periodo MAY-OCT** (ajuste de corte). En mayo y noviembre se ajusta contra el **depósito real** y empieza "
+            "periodo MAY-OCT** (ajuste de corte) y, **si usted lo marca** (casilla de abajo), por única vez la CTS de enero a abril 2026 del "
+            "periodo NOV-ABR (si sigue sin pagar y no se provisionó). En mayo y noviembre se ajusta contra el **depósito real** y empieza "
             f"el periodo nuevo. 🔧 `{_pc.VERSION_PROVISION_CTS}`"
         )
         if not _pc.es_provisionable(sel_key):
@@ -843,12 +844,25 @@ def render():
         elif estado_sel != "CERRADA":
             st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
         else:
+            # Opción ÚNICA de julio 2026: la CTS de NOV-ABR (ene–abr 2026) sigue sin pagar y puede no estar
+            # provisionada. Solo el usuario sabe si la empresa ya la reconoció, así que se pregunta.
+            _inc_reg = False
+            if (int(sel_key[3:]), int(sel_key[:2])) == _pc.INICIO_PROVISION:
+                _inc_reg = st.checkbox(
+                    "Incluir regularización de **enero a abril 2026** (CTS del periodo NOV-ABR, aún sin pagar)",
+                    value=_pc.reg_nov_abr_registrada(db, empresa_id), key=f"cts_incluir_reg_{empresa_id}",
+                    help="Marque esta casilla solo si la empresa NO provisionó la CTS de enero a abril 2026. "
+                         "Se calcula con el depósito de mayo ya registrado (o con la CTS al 30/04/2026) y solo "
+                         "la parte de enero a abril: noviembre–diciembre 2025 no se tocan. Es un ajuste único de "
+                         "este mes: no vuelve a aparecer en meses posteriores.",
+                )
             try:
-                _prev_c = _pc.calcular_provision_mes(db, empresa_id, sel_key)
+                _prev_c = _pc.calcular_provision_mes(db, empresa_id, sel_key, incluir_reg_nov_abr=_inc_reg)
             except _ACE as _e_prev_c:
                 st.warning(f"ℹ️ {_e_prev_c.mensaje}")
                 _prev_c = []
-            _pend_c = [f for f in _prev_c if abs(f["delta_provision"]) > 0.004 or abs(f["delta_ajuste"]) > 0.004]
+            _pend_c = [f for f in _prev_c if abs(f["delta_provision"]) > 0.004 or abs(f["delta_ajuste"]) > 0.004
+                       or f["reg_monto"] > 0.004]
             _reg_c = next((r for r in _pc.resumen_libro(db, empresa_id, int(sel_key[3:])) if r[0] == sel_key), None)
             if _reg_c:
                 st.success(
@@ -859,10 +873,16 @@ def render():
             if not _pend_c and not _reg_c:
                 st.success("✅ No hay provisión de CTS pendiente en este periodo.")
             elif _pend_c:
-                c1, c2, c3 = st.columns(3)
+                _tiene_reg = any(f["reg_monto"] > 0.004 for f in _pend_c)
+                c1, c2, c3, c4 = st.columns(4) if _tiene_reg else (*st.columns(3), None)
                 c1.metric("CTS a provisionar", f"S/ {sum(f['delta_provision'] for f in _pend_c):,.2f}")
                 c2.metric("Ajuste por depósito", f"S/ {sum(f['delta_ajuste'] for f in _pend_c):,.2f}")
-                c3.metric("Total CTS del mes", f"S/ {sum(f['delta_total'] for f in _pend_c):,.2f}")
+                if c4 is not None:
+                    c3.metric("Regulariz. NOV-ABR (ene–abr)", f"S/ {sum(f['reg_monto'] for f in _pend_c):,.2f}",
+                              help="Ajuste ÚNICO de julio 2026: CTS de enero a abril 2026 aún sin pagar ni provisionar.")
+                    c4.metric("Total CTS del mes", f"S/ {sum(f['delta_total'] for f in _pend_c):,.2f}")
+                else:
+                    c3.metric("Total CTS del mes", f"S/ {sum(f['delta_total'] for f in _pend_c):,.2f}")
                 with st.expander(f"Detalle por trabajador ({len(_pend_c)})"):
                     st.dataframe(
                         pd.DataFrame([{
@@ -870,6 +890,8 @@ def render():
                             "Base CTS": f["base_cts"], "Meses": f["meses"], "CTS al corte": f["objetivo"],
                             "Ya provisionado": f["ya_provisionado"], "A provisionar": f["delta_provision"],
                             "Depósito real": f["deposito"], "Ajuste": f["delta_ajuste"],
+                            **({"Regulariz. NOV-ABR": f["reg_monto"], "Fuente regulariz.": f["reg_fuente"]}
+                               if _tiene_reg else {}),
                         } for f in _pend_c]),
                         use_container_width=True, hide_index=True,
                     )
@@ -879,7 +901,8 @@ def render():
                     try:
                         with st.spinner("Armando el asiento de provisión de CTS..."):
                             buf_pc = _pc.generar_asiento_provision(
-                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'))
+                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'),
+                                incluir_reg_nov_abr=_inc_reg)
                         st.success("✅ Provisión de CTS registrada y asiento cuadrado (Debe = Haber).")
                         st.download_button(
                             f"📥 Descargar PROVISION_CTS_{sel_key}.xlsx", data=buf_pc,

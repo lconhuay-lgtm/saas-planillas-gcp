@@ -99,6 +99,73 @@ def test_julio_provisiona_de_golpe_lo_devengado_del_periodo(db):
     assert f["base_cts"] == 3500.0 and f["objetivo"] == 875.0 and f["delta_provision"] == 875.0
 
 
+# ── Regularización ÚNICA de NOV-ABR (solo julio 2026) ────────────────────────────
+
+def _deposito_mayo(db, monto):
+    db.add(m.DepositoCTS(empresa_id=db.empresa_id, trabajador_id=db.tid, periodo_label="NOV 2025 – ABR 2026",
+                         periodo_key_deposito="05-2026", monto=monto, estado="PENDIENTE"))
+    db.commit()
+
+
+def test_julio_regulariza_una_sola_vez_la_cts_pendiente_de_nov_abr(db):
+    """Trabajador de 01/01/2026: 4 meses (ene–abr) de NOV-ABR, todos sin provisionar."""
+    _planilla(db, "07-2026")
+    f = pc.calcular_provision_mes(db, db.empresa_id, "07-2026", incluir_reg_nov_abr=True)[0]
+    assert f["reg_periodo"] == "NOV-ABR-2026" and f["reg_monto"] > 0
+    assert f["delta_total"] == round(f["delta_provision"] + f["reg_monto"], 2)
+
+
+def test_agosto_en_adelante_no_vuelve_a_regularizar(db):
+    _planilla(db, "08-2026")
+    f = pc.calcular_provision_mes(db, db.empresa_id, "08-2026", incluir_reg_nov_abr=True)[0]
+    assert f["reg_monto"] == 0.0 and f["reg_periodo"] is None
+
+
+def test_la_regularizacion_usa_el_deposito_registrado_si_existe(db):
+    _deposito_mayo(db, 1200.0)
+    _planilla(db, "07-2026")
+    f = pc.calcular_provision_mes(db, db.empresa_id, "07-2026", incluir_reg_nov_abr=True)[0]
+    assert f["reg_monto"] == 1200.0 and "depósito" in f["reg_fuente"]      # ingresó en enero: ene–abr = todo el periodo
+
+
+def test_solo_se_regulariza_enero_a_abril_no_noviembre_diciembre_2025(db):
+    """Ingresó el 01/11/2025: 6 meses en NOV-ABR, de los que solo 4 (ene–abr) se regularizan → 4/6 del depósito."""
+    t = db.query(m.Trabajador).filter_by(id=db.tid).one()
+    t.fecha_ingreso = datetime.date(2025, 11, 1)
+    db.commit()
+    _deposito_mayo(db, 1500.0)
+    _planilla(db, "07-2026")
+    assert pc.calcular_provision_mes(db, db.empresa_id, "07-2026", incluir_reg_nov_abr=True)[0]["reg_monto"] == 1000.0
+
+
+def test_el_asiento_de_julio_incluye_la_regularizacion_con_su_documento_y_cuadra(db):
+    _config(db)
+    _deposito_mayo(db, 1200.0)
+    _planilla(db, "07-2026")
+    df = _excel(pc.generar_asiento_provision(db, db.empresa_id, "07-2026", incluir_reg_nov_abr=True))
+    reg = df[df["Num.Doc"] == "CTS-NOVABR-2026"]
+    assert round(reg["Monto Debe"].sum(), 2) == 1200.0 and round(reg["Monto Haber"].sum(), 2) == 1200.0
+    assert df["Glosa"].str.contains("REGULARIZACION ENE-ABR").any()
+    assert _cuadra(df)
+    assert pc.provision_de_trabajador(db, db.empresa_id, db.tid, "NOV-ABR-2026") == 1200.0
+
+
+def test_la_regularizacion_es_opcional_y_por_defecto_no_se_incluye(db):
+    _deposito_mayo(db, 1200.0)
+    _planilla(db, "07-2026")
+    f = pc.calcular_provision_mes(db, db.empresa_id, "07-2026")[0]
+    assert f["reg_monto"] == 0.0 and f["reg_periodo"] is None
+    assert not pc.reg_nov_abr_registrada(db, db.empresa_id)
+
+
+def test_se_recuerda_si_la_regularizacion_ya_se_registro(db):
+    _config(db)
+    _deposito_mayo(db, 1200.0)
+    _planilla(db, "07-2026")
+    pc.generar_asiento_provision(db, db.empresa_id, "07-2026", incluir_reg_nov_abr=True)
+    assert pc.reg_nov_abr_registrada(db, db.empresa_id)
+
+
 def test_la_provision_coincide_con_lo_que_pagaria_la_liquidacion_ese_dia(db):
     """La regla de oro: provisión == CTS trunca si el trabajador cesara el último día del mes."""
     _planilla(db, "08-2026")
