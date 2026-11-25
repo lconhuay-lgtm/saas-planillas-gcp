@@ -12,9 +12,10 @@ CONSUMIENDO al gozarse, así que el libro guarda el SALDO del pasivo, no solo de
     cancelado(M) = min(pago de "Descanso Vacacional" en la planilla de M, saldo(M−1))
     provisión(M) = objetivo(M) − (saldo(M−1) − cancelado(M))        saldo(M) = objetivo(M)
 
-El primer mes (julio 2026) no tiene saldo previo, así que provisiona de golpe TODO el saldo
-acumulado de vacaciones pendientes: es la regularización "ajuste en julio". Los meses anteriores
-al corte no se tocan.
+El primer mes (julio 2026) no tiene saldo previo, así que provisiona de golpe el devengo de
+enero a julio 2026: es la regularización "ajuste en julio". El saldo de ejercicios ANTERIORES
+(al 31/12/2025) NO se provisiona: la empresa ya lo tiene provisionado en su contabilidad y
+volver a reconocerlo duplicaría el gasto (ver `_dias_saldo`). Los meses anteriores al corte no se tocan.
 
 Días devengados: el Kardex (`calcular_saldo_vacacional`), recortado a lo registrado hasta el cierre
 del mes (un registro de vacaciones posterior no debe alterar la provisión de un mes ya cerrado).
@@ -46,7 +47,7 @@ CUENTA_PASIVO = 'cuenta_vacaciones_por_pagar'
 # Nombre con que el motor de planilla guarda lo pagado por vacaciones gozadas (auditoria.ingresos)
 CLAVE_PAGO_VACACIONES = "Descanso Vacacional"
 
-VERSION_PROVISION_VAC = "2026-11-25-r1"
+VERSION_PROVISION_VAC = "2026-11-25-r2"
 
 
 # ── Helpers de periodo ───────────────────────────────────────────────────────────
@@ -141,15 +142,57 @@ def cancelaciones_planilla(db, empresa_id: int, periodo_key: str, auditoria_data
 
 # ── Cálculo de la provisión del mes ──────────────────────────────────────────────
 
-def _dias_saldo(t, fin_mes: datetime.date) -> float:
-    """Días devengados no gozados al cierre del mes, según el Kardex pero recortado a ese cierre."""
-    registros = [r for r in (t.vacaciones or []) if r.fecha_inicio and r.fecha_inicio <= fin_mes]
-    cese = t.fecha_cese if (t.fecha_cese and t.fecha_cese <= fin_mes) else None
+def _kardex_al(t, fecha: datetime.date) -> dict:
+    """Kardex del trabajador recortado a `fecha` (un registro posterior no altera meses ya cerrados)."""
+    registros = [r for r in (t.vacaciones or []) if r.fecha_inicio and r.fecha_inicio <= fecha]
+    cese = t.fecha_cese if (t.fecha_cese and t.fecha_cese <= fecha) else None
     sim = types.SimpleNamespace(
         fecha_ingreso=t.fecha_ingreso, fecha_cese=cese,
         dias_vacaciones_anuales=getattr(t, 'dias_vacaciones_anuales', None) or 30,
     )
-    return max(0.0, float(calcular_saldo_vacacional(sim, registros, fecha_calculo=fin_mes).get('saldo', 0.0) or 0.0))
+    return calcular_saldo_vacacional(sim, registros, fecha_calculo=fecha)
+
+
+def _dias_saldo(t, fin_mes: datetime.date) -> float:
+    """
+    Días a PROVISIONAR al cierre del mes: devengo desde el corte (enero 2026), sin el saldo de
+    ejercicios anteriores, que ya está provisionado en la contabilidad de la empresa.
+
+    Los días gozados desde el corte consumen primero ese saldo viejo (el más antiguo se goza antes);
+    solo si lo agotan empiezan a restar del devengo nuevo:
+
+        viejo_restante = max(0, saldo al 31/12/2025 − consumidos desde 01/01/2026)
+        a provisionar  = max(0, saldo al cierre − viejo_restante)
+    """
+    actual = _kardex_al(t, fin_mes)
+    return max(0.0, float(actual.get('saldo', 0.0) or 0.0) - _dias_viejos_restantes(t, fin_mes, actual))
+
+
+def _dias_viejos_restantes(t, fecha: datetime.date, actual: dict = None) -> float:
+    """Días del saldo previo al corte (ya provisionados en la contabilidad) que siguen sin gozarse a `fecha`."""
+    fin_previo = datetime.date(INICIO_PROVISION[0] - 1, 12, 31)
+    actual = actual if actual is not None else _kardex_al(t, fecha)
+    previo = _kardex_al(t, fin_previo)
+    saldo_previo = max(0.0, float(previo.get('saldo', 0.0) or 0.0))
+    consumidos_desde_corte = max(0.0, float(actual.get('consumidos', 0.0) or 0.0) - float(previo.get('consumidos', 0.0) or 0.0))
+    return max(0.0, saldo_previo - consumidos_desde_corte)
+
+
+def valor_saldo_previo_al_corte(db, trabajador_id: int, fecha: datetime.date,
+                                dias_pagados: float, monto_pagado: float) -> float:
+    """
+    Valor (a la tasa diaria de la liquidación) de los días de ejercicios anteriores al corte que
+    aún no se gozaron. Esa provisión vive en la contabilidad de la empresa, no en el libro del
+    sistema: al liquidar, se cancela contra el pasivo y no se vuelve a llevar a gasto.
+    Nunca supera lo que realmente se paga (`monto_pagado`).
+    """
+    if not dias_pagados or dias_pagados <= 0 or not monto_pagado or monto_pagado <= 0:
+        return 0.0
+    t = db.query(Trabajador).filter_by(id=trabajador_id).first()
+    if not t or not t.fecha_ingreso or fecha < datetime.date(INICIO_PROVISION[0], INICIO_PROVISION[1], 1):
+        return 0.0
+    dias = min(_dias_viejos_restantes(t, fecha), dias_pagados)
+    return round(min(dias * (monto_pagado / dias_pagados), monto_pagado), 2)
 
 
 def calcular_provision_mes(db, empresa_id: int, periodo_key: str) -> list:

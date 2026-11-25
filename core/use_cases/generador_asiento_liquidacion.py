@@ -130,6 +130,13 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         # provisiones registradas el comportamiento es el de siempre (todo a gasto).
         from core.use_cases import provision_vacaciones as _pv   # import diferido (evita ciclo)
         prov_vac = _pv.saldo_vigente_trabajador(db, empresa_id, liq.trabajador_id)
+        # + días de ejercicios anteriores al corte: su provisión ya está en la contabilidad de la
+        # empresa (fuera del libro del sistema), así que también se cancelan contra el pasivo.
+        valor_previo = _pv.valor_saldo_previo_al_corte(
+            db, liq.trabajador_id, liq.fecha_cese_snapshot,
+            liq.dias_vacaciones_pendientes, liq.monto_vacaciones_truncas)
+        # Tope: lo realmente pagado (el libro del sistema puede exceder, y eso ya se trataba como recuperación)
+        prov_vac = round(max(prov_vac, min(prov_vac + valor_previo, liq.monto_vacaciones_truncas)), 2)
         ajuste_vac = round(liq.monto_vacaciones_truncas - prov_vac, 2)
         if prov_vac > 0:
             filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, prov_vac, 0.0,

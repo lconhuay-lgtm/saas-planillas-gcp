@@ -115,6 +115,37 @@ def test_julio_provisiona_de_golpe_todo_el_saldo_acumulado(db):
     assert f["saldo_previo"] == 0.0 and f["objetivo"] == 1750.0 and f["delta"] == 1750.0
 
 
+def _antiguo(db, ingreso=datetime.date(2025, 1, 1)):
+    """El trabajador ingresó antes del corte: al 31/12/2025 ya tenía 30 días devengados (12 meses)."""
+    t = db.query(m.Trabajador).filter_by(id=db.tid).one()
+    t.fecha_ingreso = ingreso
+    db.commit()
+
+
+def test_julio_no_provisiona_el_saldo_de_anios_anteriores(db):
+    """Ya está provisionado en la contabilidad: solo se reconoce el devengo ene-jul 2026 (17.5 días)."""
+    _antiguo(db)
+    _planilla(db, "07-2026")
+    f = pv.calcular_provision_mes(db, db.empresa_id, "07-2026")[0]
+    assert f["dias_saldo"] == 17.5 and f["objetivo"] == 1750.0 and f["delta"] == 1750.0
+
+
+def test_dias_gozados_consumen_primero_el_saldo_viejo(db):
+    """Con 30 días viejos, gozar 10 en 2026 no reduce lo provisionado (sale del saldo viejo)."""
+    _antiguo(db)
+    _vacaciones_gozadas(db, datetime.date(2026, 3, 2), 10)
+    _planilla(db, "07-2026")
+    assert pv.calcular_provision_mes(db, db.empresa_id, "07-2026")[0]["dias_saldo"] == 17.5
+
+
+def test_gozar_mas_que_el_saldo_viejo_resta_del_devengo_nuevo(db):
+    """30 viejos + 17.5 devengados − 40 gozados = 7.5 de saldo; el viejo se agotó, queda devengo nuevo."""
+    _antiguo(db)
+    _vacaciones_gozadas(db, datetime.date(2026, 3, 2), 40)
+    _planilla(db, "07-2026")
+    assert pv.calcular_provision_mes(db, db.empresa_id, "07-2026")[0]["dias_saldo"] == 7.5
+
+
 def test_agosto_provisiona_el_devengo_del_mes(db):
     _config(db)
     _planilla(db, "07-2026")
@@ -262,6 +293,20 @@ def test_liquidacion_si_el_saldo_excedio_se_recupera_gasto(db):
     liq = _liquidacion(db, 2000.0)
     df = _excel(generar_asiento_liquidacion(db, db.empresa_id, liq.id))
     assert _totales(df, "621301") == (0.0, 300.0)
+    assert _cuadra(df)
+
+
+def test_liquidacion_cancela_tambien_el_saldo_provisionado_antes_del_corte(db):
+    """30 días de 2025 (ya provisionados en su contabilidad) + 10 de 2026 en el libro: todo es pasivo, 0 gasto."""
+    _config(db)
+    _antiguo(db)
+    _libro(db, "09-2026", saldo=1000.0)
+    liq = _liquidacion(db, 4000.0)
+    liq.dias_vacaciones_pendientes = 40.0                                 # 100 por día
+    db.commit()
+    df = _excel(generar_asiento_liquidacion(db, db.empresa_id, liq.id))
+    assert _totales(df, "415201") == (4000.0, 4000.0)
+    assert df[df["Cuenta"] == "621301"].empty
     assert _cuadra(df)
 
 

@@ -760,10 +760,11 @@ def render():
         st.markdown("---")
         st.markdown("### 🏖️ Provisión Mensual de Vacaciones")
         st.caption(
-            "Provisiona cada mes el valor de las vacaciones devengadas y no gozadas (días del Kardex × "
-            "sueldo/30). Las vacaciones gozadas se cancelan contra este pasivo en el asiento de planilla y "
-            "las vacaciones truncas en la liquidación. **El primer mes (julio 2026) registra de golpe todo el "
-            "saldo acumulado** (ajuste de corte). Se registran en orden, mes a mes. "
+            "Provisiona cada mes el valor de las vacaciones devengadas y no gozadas (días × sueldo/30). "
+            "Las vacaciones gozadas se cancelan contra este pasivo en el asiento de planilla y las "
+            "vacaciones truncas en la liquidación. **El primer mes (julio 2026) registra de golpe el devengo "
+            "de enero a julio 2026** (ajuste de corte); el saldo de años anteriores NO se provisiona porque "
+            "ya está en la contabilidad de la empresa. Se registran en orden, mes a mes. "
             f"🔧 `{_pv.VERSION_PROVISION_VAC}`"
         )
         if not _pv.es_provisionable(sel_key):
