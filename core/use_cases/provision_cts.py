@@ -271,6 +271,8 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
         db.rollback()
         raise
 
+    from core.use_cases import numeracion_vouchers as _nv
+    _nv.numerar_filas(db, empresa_id, periodo_key, _nv.CLAVE_PROV_CTS, filas)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         pd.DataFrame(filas, columns=COLUMNAS_SISCONT).to_excel(writer, index=False, sheet_name='Asiento')

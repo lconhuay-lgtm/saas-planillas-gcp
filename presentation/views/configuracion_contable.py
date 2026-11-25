@@ -108,8 +108,12 @@ def render():
             c9, c10 = st.columns(2)
             c_cts_gasto = c9.text_input("CTS — Gasto (débito)", value=_v('cuenta_cts_gasto'))
             c_cts_pasivo = c10.text_input("CTS Por Pagar (crédito)", value=_v('cuenta_cts_por_pagar'))
-            c_grati_gasto = c9.text_input("Gratificación Trunca — Gasto (débito)", value=_v('cuenta_gratificacion_gasto'))
-            c_grati_pasivo = c10.text_input("Gratificación Trunca Por Pagar (crédito)", value=_v('cuenta_gratificacion_por_pagar'))
+            c_grati_gasto = c9.text_input(
+                "Gratificación — Gasto (débito)", value=_v('cuenta_gratificacion_gasto'),
+                help="Gratificación completa (julio/diciembre), provisión mensual y gratificación trunca de la liquidación.")
+            c_grati_pasivo = c10.text_input(
+                "Gratificación Por Pagar (crédito)", value=_v('cuenta_gratificacion_por_pagar'),
+                help="Pasivo de la gratificación completa, de su provisión mensual y de la trunca de la liquidación.")
             c_vac_pasivo = c9.text_input("Vacaciones Truncas Por Pagar (crédito)", value=_v('cuenta_vacaciones_por_pagar'))
             c_bonocese_gasto = c9.text_input("Bono por Cese — Gasto (débito)", value=_v('cuenta_bono_cese_gasto'))
             c_bonocese_pasivo = c10.text_input("Bono por Cese Por Pagar (crédito)", value=_v('cuenta_bono_cese_por_pagar'))

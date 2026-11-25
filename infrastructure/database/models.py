@@ -563,6 +563,26 @@ class ProvisionCTS(Base):
     trabajador = relationship("Trabajador")
 
 
+class VoucherAsiento(Base):
+    """
+    Número de voucher (Num.Voucher del asiento SISCONT) asignado a cada asiento generado, por empresa
+    y mes contable. `clave` identifica el tipo de asiento (PLANILLA, PROV-GRATI, PROV-VAC, PROV-CTS,
+    LIQ-{id}); regenerar un asiento conserva su número. Ver core/use_cases/numeracion_vouchers.py.
+    """
+    __tablename__ = "vouchers_asiento"
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'periodo_key', 'clave', name='uq_voucher_clave'),
+        UniqueConstraint('empresa_id', 'periodo_key', 'num_voucher', name='uq_voucher_numero'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    periodo_key = Column(String(10), nullable=False)       # mes contable del asiento, "MM-YYYY"
+    clave = Column(String(30), nullable=False)
+    num_voucher = Column(Integer, nullable=False)
+    fecha_asignacion = Column(DateTime, default=datetime.now)
+
+
 class LiquidacionCese(Base):
     """
     Liquidación de Beneficios Sociales por cese — un DOCUMENTO persistido (no un

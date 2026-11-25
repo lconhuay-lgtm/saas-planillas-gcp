@@ -83,8 +83,8 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
         cuenta_vac_gasto = _cuenta('cuenta_descanso_vacacional', "Descanso Vacacional (Configuración Contable)")
         cuenta_vac_pasivo = _cuenta('cuenta_vacaciones_por_pagar', "Vacaciones Truncas Por Pagar (Configuración Contable)")
     if tiene_grati:
-        cuenta_grati_gasto = _cuenta('cuenta_gratificacion_gasto', "Gratificación Trunca — Gasto (Configuración Contable)")
-        cuenta_grati_pasivo = _cuenta('cuenta_gratificacion_por_pagar', "Gratificación Trunca Por Pagar (Configuración Contable)")
+        cuenta_grati_gasto = _cuenta('cuenta_gratificacion_gasto', "Gratificación — Gasto (Configuración Contable)")
+        cuenta_grati_pasivo = _cuenta('cuenta_gratificacion_por_pagar', "Gratificación Por Pagar (Configuración Contable)")
     if tiene_cts:
         cuenta_cts_gasto = _cuenta('cuenta_cts_gasto', "CTS — Gasto (Configuración Contable)")
         cuenta_cts_pasivo = _cuenta('cuenta_cts_por_pagar', "CTS Por Pagar (Configuración Contable)")
@@ -259,6 +259,9 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
             f"No se generó el archivo — este es un error interno, no de configuración."
         )
 
+    from core.use_cases import numeracion_vouchers as _nv
+    _nv.numerar_filas(db, empresa_id, liq.fecha_cese_snapshot.strftime('%m-%Y'),
+                      _nv.clave_liquidacion(liq.id), filas)
     df_out = pd.DataFrame(filas, columns=COLUMNAS_SISCONT)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:

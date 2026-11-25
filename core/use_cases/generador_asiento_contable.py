@@ -10,7 +10,7 @@ Alcance (confirmado con el usuario):
     en ese mes (el "ajuste en julio").
   - Solo trabajadores de Planilla (5ta categoría) — los locadores (4ta) no entran aquí,
     ellos emiten recibo por honorarios y se registran directo en el sistema contable.
-  - Un solo voucher (Num.Voucher=1) por planilla del mes — sin asiento de pago, sin
+  - Un solo voucher por planilla del mes (su Num.Voucher lo asigna numeracion_vouchers.py según el orden de generación) — sin asiento de pago, sin
     CTS/vacaciones/gratificación, sin liquidación de cesados (fases futuras).
   - Granularidad: el gasto y el neto a pagar van por trabajador; los aportes/tributos
     (ONP, AFP, EsSalud, 5ta) van totalizados por empresa.
@@ -556,6 +556,8 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             detalle_diagnostico=detalle,
         )
 
+    from core.use_cases import numeracion_vouchers as _nv
+    _nv.numerar_filas(db, empresa_id, periodo_key, _nv.CLAVE_PLANILLA, filas)
     df_out = pd.DataFrame(filas, columns=COLUMNAS_SISCONT)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
