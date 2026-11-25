@@ -201,7 +201,7 @@ def test_julio_2026_sin_provision_reconoce_todo_el_pago_como_gasto(db):
     _planilla(db, "07-2026", con_grati=3000.0, con_bono=270.0)
     df = _excel(generar_asiento_planilla(db, db.empresa_id, "07-2026"))
     assert _totales(df, "621201") == (3270.0, 0.0)             # gasto por todo lo pagado
-    assert _totales(df, "415101") == (0.0, 0.0)                # sin provisión que cancelar
+    assert _totales(df, "415101") == (0.0, 3270.0)             # sin provisión: lo pagado se acredita a grati por pagar
     assert _cuadra(df)
 
 
@@ -211,7 +211,7 @@ def test_diciembre_cancela_lo_provisionado_y_solo_la_diferencia_es_gasto(db):
         _libro(db, f"{mes}-2026", 500.0, 45.0)                  # 5 meses × 545 = 2725
     _planilla(db, "12-2026", con_grati=3000.0, con_bono=270.0)
     df = _excel(generar_asiento_planilla(db, db.empresa_id, "12-2026"))
-    assert _totales(df, "415101") == (2725.0, 0.0)             # se cancela la provisión
+    assert _totales(df, "415101") == (2725.0, 3270.0)          # se cancela la provisión; lo pagado se acredita
     assert _totales(df, "621201") == (545.0, 0.0)              # solo el mes que faltaba (3270 − 2725)
     assert _cuadra(df)
 
@@ -222,7 +222,7 @@ def test_diciembre_con_provision_completa_no_genera_gasto_extra(db):
         _libro(db, f"{mes}-2026", 500.0, 45.0)                  # 6 meses = 3270 = lo pagado
     _planilla(db, "12-2026", con_grati=3000.0, con_bono=270.0)
     df = _excel(generar_asiento_planilla(db, db.empresa_id, "12-2026"))
-    assert _totales(df, "415101") == (3270.0, 0.0)
+    assert _totales(df, "415101") == (3270.0, 3270.0)
     assert _totales(df, "621201") == (0.0, 0.0)
     assert _cuadra(df)
 
@@ -233,7 +233,7 @@ def test_diciembre_si_la_provision_excedio_lo_pagado_se_recupera_el_gasto(db):
         _libro(db, f"{mes}-2026", 600.0, 54.0)                  # 3924 provisionado > 3270 pagado
     _planilla(db, "12-2026", con_grati=3000.0, con_bono=270.0)
     df = _excel(generar_asiento_planilla(db, db.empresa_id, "12-2026"))
-    assert _totales(df, "415101") == (3924.0, 0.0)
+    assert _totales(df, "415101") == (3924.0, 3270.0)
     assert _totales(df, "621201") == (0.0, 654.0)              # recuperación de gasto
     assert _cuadra(df)
 

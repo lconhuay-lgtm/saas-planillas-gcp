@@ -31,7 +31,7 @@ from core.domain import seguros_empleador as seg_emp
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-11-25-r1"
+VERSION_GENERADOR = "2026-11-25-r2"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
@@ -272,7 +272,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         grati_trab[str(_dni_g)] = {"pagado": _pagado, "provisionado": _prov, "ajuste": round(_pagado - _prov, 2)}
     if any(v["ajuste"] != 0 for v in grati_trab.values()):
         _cuenta_fija(_pg.CUENTA_GASTO, "Gratificación — Gasto (Configuración Contable)")
-    if any(v["provisionado"] > 0 for v in grati_trab.values()):
+    if grati_trab:   # lo pagado se acredita a "Gratificaciones por pagar" (y lo provisionado se debita de ella)
         _cuenta_fija(_pg.CUENTA_PASIVO, "Gratificación Por Pagar (Configuración Contable)")
 
     # Vacaciones gozadas en el mes: se cancelan contra lo provisionado (libro de vacaciones) y
@@ -400,7 +400,10 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         # (Haber a gasto). El total pagado entra a "Remuneraciones por Pagar" vía el residual.
         g_pag = grati_trab.get(dni)
         if g_pag:
-            _glosa_g = f"{glosa_asiento} - GRATIFICACION"
+            # La glosa dice QUÉ semestre se paga; en el mes de corte (sin provisión previa) es la regularización
+            _glosa_g = f"{glosa_asiento} - GRATIFICACION {_sem_pago} {anio_num}"
+            if g_pag["provisionado"] == 0 and (anio_num, mes_num) == _pg.INICIO_PROVISION:
+                _glosa_g += " (REGULARIZACION)"
             if g_pag["provisionado"] > 0:
                 filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pg.CUENTA_PASIVO, ''),
                                     g_pag["provisionado"], 0.0, num_doc_asiento, _glosa_g,
@@ -486,6 +489,16 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             debe_ingresos_trab - onp_trab - ret5ta_trab
             - credito_pension_trab - credito_prestamos_dinamicos - credito_eps_trab
         )
+        # La gratificación (+ bono) pagada se acredita a "Gratificaciones por pagar" y no a
+        # Remuneraciones por Pagar: es el pasivo contra el que se pagó/provisionó. Si las deducciones
+        # del trabajador superaran lo demás, el faltante se toma de este crédito (siempre cuadra).
+        if g_pag and monto_remun_pagar > 0:
+            credito_grati = round(min(g_pag["pagado"], monto_remun_pagar), 2)
+            filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pg.CUENTA_PASIVO, ''),
+                                0.0, credito_grati, num_doc_asiento, _glosa_g,
+                                cod_prov_clie=dni, ruc=dni, r_social=nombre))
+            d["haber"] += credito_grati
+            monto_remun_pagar = round(monto_remun_pagar - credito_grati, 2)
         if monto_remun_pagar > 0:
             filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_remuneraciones_por_pagar', ''),
                                 0.0, monto_remun_pagar, num_doc_asiento, glosa_asiento,

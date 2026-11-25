@@ -67,7 +67,7 @@ CLAVE_BONO_PAGADO = "Bono Ext. 9%"
 # Conceptos que nunca son "remuneración computable regular" para la base de la provisión
 _NO_COMPUTABLES = {CLAVE_GRATI_PAGADA, CLAVE_BONO_PAGADO, "Asignación Familiar"}
 
-VERSION_PROVISION = "2026-11-25-r1"
+VERSION_PROVISION = "2026-11-25-r2"
 
 
 # ── Helpers de periodo / semestre ────────────────────────────────────────────────
@@ -283,7 +283,7 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
 
     fecha_asiento = datetime.date(anio, mes, calendar.monthrange(anio, mes)[1]).strftime('%d/%m/%Y')
     num_doc = f"PG{mes:02d}-{anio}"
-    glosa = f"PROVISION GRATIFICACION {MESES_ES.get(mes, '')} {anio}"
+    glosa = f"PROVISION GRATIFICACION {MESES_ES.get(mes, '')} {anio} ({semestre_de_mes(mes)} {anio})"
 
     filas = []
     for f in filas_calc:

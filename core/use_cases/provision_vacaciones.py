@@ -282,6 +282,8 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
     fecha_asiento = datetime.date(anio, mes, calendar.monthrange(anio, mes)[1]).strftime('%d/%m/%Y')
     num_doc = f"PV{mes:02d}-{anio}"
     glosa = f"PROVISION VACACIONES {MESES_ES.get(mes, '')} {anio}"
+    if (anio, mes) == INICIO_PROVISION:
+        glosa += " - REGULARIZACION ENE-JUL"
 
     filas = []
     for f in con_asiento:

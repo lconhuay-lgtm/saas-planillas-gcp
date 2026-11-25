@@ -40,7 +40,7 @@ from core.use_cases.provision_gratificacion import INICIO_PROVISION, _planilla_c
 CUENTA_GASTO = 'cuenta_cts_gasto'
 CUENTA_PASIVO = 'cuenta_cts_por_pagar'
 
-VERSION_PROVISION_CTS = "2026-11-25-r1"
+VERSION_PROVISION_CTS = "2026-11-25-r2"
 
 
 # ── Helpers de periodo ───────────────────────────────────────────────────────────
@@ -224,7 +224,9 @@ def generar_asiento_provision(db, empresa_id: int, periodo_key: str, generado_po
 
     fecha_asiento = datetime.date(anio, mes, calendar.monthrange(anio, mes)[1]).strftime('%d/%m/%Y')
     num_doc = f"PC{mes:02d}-{anio}"
-    glosa_prov = f"PROVISION CTS {MESES_ES.get(mes, '')} {anio}"
+    glosa_prov = f"PROVISION CTS {MESES_ES.get(mes, '')} {anio} ({periodo_de_mes(anio, mes)})"
+    if (anio, mes) == INICIO_PROVISION:
+        glosa_prov += " - REGULARIZACION MAY-JUL"
     glosa_aj = f"AJUSTE CTS POR DEPOSITO {MESES_ES.get(mes, '')} {anio}"
 
     def _lineas(f, monto, glosa):
