@@ -142,7 +142,17 @@ class Trabajador(Base):
     cuspp = Column(String(50))
     # Seguro de salud: "ESSALUD" (9%) o "SIS" (S/15.00 fijo, solo Micro Empresa)
     seguro_social = Column(String(20), default="ESSALUD", nullable=False, server_default="ESSALUD")
-    
+
+    # Seguros a cargo del empleador (Vida Ley y SCTR) — cada trabajador se marca por
+    # separado. El MONTO no vive aquí: se digita cada mes en Ingreso de Asistencias
+    # (VariablesMes.conceptos_json). La entidad define el código PLAME
+    # (ver core/domain/seguros_empleador.py).
+    seg_vida_ley = Column(Boolean, default=False, server_default='false')
+    seg_sctr_salud = Column(Boolean, default=False, server_default='false')
+    sctr_salud_entidad = Column(String(20), nullable=True)      # EPS | ESSALUD
+    seg_sctr_pension = Column(Boolean, default=False, server_default='false')
+    sctr_pension_entidad = Column(String(20), nullable=True)    # ASEGURADORA | ONP
+
     # Relación Inversa
     empresa = relationship("Empresa", back_populates="trabajadores", foreign_keys=[empresa_id])
     vacaciones = relationship("RegistroVacaciones", backref="trabajador", cascade="all, delete-orphan")
@@ -443,9 +453,49 @@ class ConfiguracionContable(Base):
     cuenta_bono_cese_gasto = Column(String(20), nullable=True)
     cuenta_bono_cese_por_pagar = Column(String(20), nullable=True)
 
+    # Seguros a cargo del empleador (Vida Ley y SCTR): gasto (débito) y por pagar a la
+    # aseguradora/EPS/ONP (crédito). Solo se exigen si algún trabajador tiene aporte ese mes.
+    cuenta_vida_ley_gasto = Column(String(20), nullable=True)
+    cuenta_vida_ley_pasivo = Column(String(20), nullable=True)
+    cuenta_sctr_salud_gasto = Column(String(20), nullable=True)
+    cuenta_sctr_salud_pasivo = Column(String(20), nullable=True)
+    cuenta_sctr_pension_gasto = Column(String(20), nullable=True)
+    cuenta_sctr_pension_pasivo = Column(String(20), nullable=True)
+
     fecha_actualizacion = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     empresa = relationship("Empresa")
+
+
+class ProvisionGratificacion(Base):
+    """
+    Libro de provisiones de gratificación (+ bono extraordinario): una fila por trabajador
+    y por mes provisionado, con lo que EFECTIVAMENTE se contabilizó en el asiento de
+    provisión de ese mes. Es la fuente de verdad de "lo ya registrado": el asiento de
+    julio/diciembre (pago) y el de la liquidación por cese descuentan de aquí, para no
+    reconocer dos veces el mismo gasto.
+
+    monto_grati / monto_bono son el DELTA contabilizado ese mes (pueden ser negativos si
+    hubo que reversar); el acumulado del semestre es la suma de los meses.
+    """
+    __tablename__ = "provisiones_gratificacion"
+    __table_args__ = (
+        UniqueConstraint('empresa_id', 'trabajador_id', 'periodo_key', name='uq_provision_grati'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    trabajador_id = Column(Integer, ForeignKey("trabajadores.id"), nullable=False, index=True)
+    periodo_key = Column(String(10), nullable=False)      # mes provisionado, "MM-YYYY"
+    semestre = Column(String(20), nullable=False)         # "ENE-JUN-2026" / "JUL-DIC-2026"
+    monto_grati = Column(Float, default=0.0)
+    monto_bono = Column(Float, default=0.0)
+    base_computable = Column(Float, default=0.0)          # snapshot, para auditar
+    meses_computados = Column(Integer, default=0)         # meses completos acumulados al cierre del mes
+    fecha_generacion = Column(DateTime, default=datetime.now)
+    generado_por = Column(String(100), nullable=True)
+
+    trabajador = relationship("Trabajador")
 
 
 class LiquidacionCese(Base):

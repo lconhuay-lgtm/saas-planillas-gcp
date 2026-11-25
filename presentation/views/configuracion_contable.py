@@ -83,6 +83,21 @@ def render():
             c_eps = st.text_input("EPS Por Pagar", value=_v('cuenta_eps_por_pagar'))
 
             st.markdown("---")
+            st.markdown("##### Seguros a Cargo del Empleador (Vida Ley y SCTR)")
+            st.caption(
+                "Solo se exigen para los seguros que tengan monto en el periodo. El gasto va al "
+                "débito y lo que se le debe a la aseguradora / EPS / ONP va al crédito, por el "
+                "mismo monto. No afectan el neto del trabajador."
+            )
+            c11, c12 = st.columns(2)
+            c_vl_gasto = c11.text_input("Vida Ley — Gasto (débito)", value=_v('cuenta_vida_ley_gasto'))
+            c_vl_pasivo = c12.text_input("Vida Ley — Por Pagar (crédito)", value=_v('cuenta_vida_ley_pasivo'))
+            c_ss_gasto = c11.text_input("SCTR Salud — Gasto (débito)", value=_v('cuenta_sctr_salud_gasto'))
+            c_ss_pasivo = c12.text_input("SCTR Salud — Por Pagar (crédito)", value=_v('cuenta_sctr_salud_pasivo'))
+            c_sp_gasto = c11.text_input("SCTR Pensión — Gasto (débito)", value=_v('cuenta_sctr_pension_gasto'))
+            c_sp_pasivo = c12.text_input("SCTR Pensión — Por Pagar (crédito)", value=_v('cuenta_sctr_pension_pasivo'))
+
+            st.markdown("---")
             st.markdown("##### Liquidación por Cese")
             st.caption(
                 "CTS y Gratificación trunca nunca se contabilizaron antes (julio/diciembre "
@@ -122,6 +137,12 @@ def render():
                 cfg.cuenta_remuneraciones_por_pagar = c_remun_pagar.strip()
                 cfg.cuenta_prestamos_personal = c_prestamos.strip()
                 cfg.cuenta_eps_por_pagar = c_eps.strip()
+                cfg.cuenta_vida_ley_gasto = c_vl_gasto.strip()
+                cfg.cuenta_vida_ley_pasivo = c_vl_pasivo.strip()
+                cfg.cuenta_sctr_salud_gasto = c_ss_gasto.strip()
+                cfg.cuenta_sctr_salud_pasivo = c_ss_pasivo.strip()
+                cfg.cuenta_sctr_pension_gasto = c_sp_gasto.strip()
+                cfg.cuenta_sctr_pension_pasivo = c_sp_pasivo.strip()
                 cfg.cuenta_cts_gasto = c_cts_gasto.strip()
                 cfg.cuenta_cts_por_pagar = c_cts_pasivo.strip()
                 cfg.cuenta_gratificacion_gasto = c_grati_gasto.strip()

@@ -14,6 +14,7 @@ from infrastructure.database.models import (
 )
 from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 from core.use_cases.calculo_liquidacion_cese import generar_liquidacion_borrador_automatica
+from core.domain import seguros_empleador as seg_emp
 
 
 def _tiene_planilla_cerrada(db, trabajador) -> bool:
@@ -285,6 +286,9 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         a_fam_val, eps_val = False, False
         monto_eps_val = 0.0
         seguro_social_val = "ESSALUD"
+        vida_ley_val = sctr_salud_val = sctr_pension_val = False
+        ent_sctr_salud_val = seg_emp.ENTIDAD_DEFECTO[seg_emp.SCTR_SALUD]
+        ent_sctr_pension_val = seg_emp.ENTIDAD_DEFECTO[seg_emp.SCTR_PENSION]
         tipo_contrato_val = "PLANILLA"
         suspension_4ta_val = False
         # Default según régimen para nuevos ingresos
@@ -318,6 +322,11 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
         eps_val = bool(t.eps)
         monto_eps_val = float(getattr(t, 'monto_eps_trabajador', 0.0) or 0.0)
         seguro_social_val = getattr(t, 'seguro_social', None) or "ESSALUD"
+        vida_ley_val = bool(getattr(t, 'seg_vida_ley', False) or False)
+        sctr_salud_val = bool(getattr(t, 'seg_sctr_salud', False) or False)
+        sctr_pension_val = bool(getattr(t, 'seg_sctr_pension', False) or False)
+        ent_sctr_salud_val = seg_emp.normalizar_entidad(seg_emp.SCTR_SALUD, getattr(t, 'sctr_salud_entidad', None))
+        ent_sctr_pension_val = seg_emp.normalizar_entidad(seg_emp.SCTR_PENSION, getattr(t, 'sctr_pension_entidad', None))
         tipo_contrato_val = getattr(t, 'tipo_contrato', 'PLANILLA') or 'PLANILLA'
         suspension_4ta_val = bool(getattr(t, 'tiene_suspension_4ta', False) or False)
         dias_vac_val = getattr(t, 'dias_vacaciones_anuales', 30)
@@ -538,6 +547,42 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             col_opt2.caption("EPS no está habilitado para esta empresa (ver Panel de Control).")
         tiene_suspension_4ta_val = False
 
+    # ── Sección 6: Seguros a cargo del empleador (Vida Ley / SCTR) ─────────────
+    # Aquí solo se marca a quién aplica cada seguro y con qué entidad está contratado.
+    # El MONTO se digita cada mes en Ingreso de Asistencias → "Seguros del Empleador".
+    seg_vida_ley = seg_sctr_salud = seg_sctr_pension = False
+    ent_sctr_salud = ent_sctr_pension = None
+    if not es_locador:
+        st.markdown("---")
+        st.markdown("##### 6. Seguros a Cargo del Empleador")
+        st.caption(
+            "Marque cada seguro que la empresa paga por este trabajador. El monto de la prima "
+            "se digita cada mes en **Ingreso de Asistencias → Seguros del Empleador**. "
+            "No afectan el neto ni las bases de AFP/ONP, 5ta categoría o EsSalud."
+        )
+        sv1, sv2, sv3 = st.columns(3)
+        seg_vida_ley = sv1.checkbox("Vida Ley", value=vida_ley_val, key=f"{key_prefix}_vida_ley")
+
+        _ent_salud = seg_emp.ENTIDADES[seg_emp.SCTR_SALUD]
+        seg_sctr_salud = sv2.checkbox("SCTR Salud", value=sctr_salud_val, key=f"{key_prefix}_sctr_salud")
+        if seg_sctr_salud:
+            _claves_s = list(_ent_salud)
+            ent_sctr_salud = sv2.selectbox(
+                "Entidad (SCTR Salud)", _claves_s,
+                index=_claves_s.index(ent_sctr_salud_val),
+                format_func=lambda k: _ent_salud[k], key=f"{key_prefix}_ent_sctr_salud",
+            )
+
+        _ent_pension = seg_emp.ENTIDADES[seg_emp.SCTR_PENSION]
+        seg_sctr_pension = sv3.checkbox("SCTR Pensión", value=sctr_pension_val, key=f"{key_prefix}_sctr_pension")
+        if seg_sctr_pension:
+            _claves_p = list(_ent_pension)
+            ent_sctr_pension = sv3.selectbox(
+                "Entidad (SCTR Pensión)", _claves_p,
+                index=_claves_p.index(ent_sctr_pension_val),
+                format_func=lambda k: _ent_pension[k], key=f"{key_prefix}_ent_sctr_pension",
+            )
+
     label_btn = "💾 Guardar Cambios" if es_edicion else "💾 Registrar e Inscribir en la Nube"
     if st.button(label_btn, type="primary", use_container_width=True, key=f"{key_prefix}_btn"):
         if not n_doc or not nombres:
@@ -573,6 +618,11 @@ def _render_form_trabajador(t=None, key_prefix="nuevo"):
             "eps": eps_afecto,
             "monto_eps_trabajador": monto_eps_input if eps_afecto else 0.0,
             "seguro_social": seguro_social,
+            "seg_vida_ley": seg_vida_ley,
+            "seg_sctr_salud": seg_sctr_salud,
+            "sctr_salud_entidad": ent_sctr_salud if seg_sctr_salud else None,
+            "seg_sctr_pension": seg_sctr_pension,
+            "sctr_pension_entidad": ent_sctr_pension if seg_sctr_pension else None,
             "tiene_suspension_4ta": tiene_suspension_4ta_val,
             "dias_vacaciones_anuales": dias_vac_input,
             "correo_electronico": u_correo.lower().strip(),

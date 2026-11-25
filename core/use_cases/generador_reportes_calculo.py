@@ -28,6 +28,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
+from core.domain import seguros_empleador as seg_emp
+
 _MESES_ES_CALC = {
     "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
     "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
@@ -146,8 +148,12 @@ def generar_excel_sabana(df, empresa_nombre, periodo, empresa_ruc=""):
     buffer.seek(0)
     return buffer
 
-def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regimen=""):
-    """Genera la sábana principal de planilla — ajustada a hoja, sin overflow."""
+def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regimen="", auditoria_data=None):
+    """Genera la sábana principal de planilla — ajustada a hoja, sin overflow.
+
+    `auditoria_data` (opcional): snapshot de auditoría de la planilla; si se pasa, el
+    resumen incluye los seguros a cargo del empleador (Vida Ley / SCTR). Sin él, el
+    reporte sale exactamente como antes."""
     periodo_texto = _periodo_legible_calc(periodo)
 
     # 1. Excluir columnas internas/duplicadas y datos bancarios (exclusivos del Reporte Tesorería)
@@ -309,6 +315,21 @@ def generar_pdf_sabana(df, empresa_nombre, periodo, empresa_ruc="", empresa_regi
 
     if aporte_seg_total > 0:
         resumen_data.append(["TOTAL SEGURIDAD SOCIAL (A PAGAR SUNAT)", "", f"S/ {aporte_seg_total:,.2f}"])
+
+    # Seguros a cargo del empleador (Vida Ley / SCTR): se pagan a la aseguradora, EPS, ONP
+    # o EsSalud según cada contrato — no a SUNAT — por eso van en su propio subtotal,
+    # agrupados por entidad. No forman parte de las retenciones a declarar.
+    resumen_seguros = seg_emp.resumen_por_seguro_entidad(auditoria_data)
+    if resumen_seguros:
+        resumen_data.append(["", "", ""])
+        total_seguros_emp = 0.0
+        for _s, _ent, _n, _tot in resumen_seguros:
+            _nom_ent = seg_emp.ENTIDADES[_s].get(_ent, _ent)
+            _etq = seg_emp.ETIQUETAS[_s].upper()
+            _txt = _etq if _s == seg_emp.VIDA_LEY else f"{_etq} - {_nom_ent.upper()}"
+            resumen_data.append([f"APORTE {_txt} (EMPLEADOR)", f"{_n} trabajador(es)", f"{_tot:,.2f}"])
+            total_seguros_emp += _tot
+        resumen_data.append(["TOTAL SEGUROS A CARGO DEL EMPLEADOR", "", f"S/ {total_seguros_emp:,.2f}"])
 
     t_res = Table(resumen_data, colWidths=[250, 150, 150])
     estilos_res = [

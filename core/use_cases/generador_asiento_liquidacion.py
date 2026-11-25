@@ -23,7 +23,7 @@ from core.use_cases.generador_asiento_contable import (
     _AFP_CUENTA_ATTR, _AFP_RUC_RSOCIAL,
 )
 
-VERSION_GENERADOR_LIQ = "2026-09-21-r2"
+VERSION_GENERADOR_LIQ = "2026-11-25-r1"
 
 
 def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
@@ -124,8 +124,24 @@ def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
                             num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
     if tiene_grati:
         monto_grati_bruto = liq.monto_grati_trunca + liq.monto_bono_9
-        filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, monto_grati_bruto, 0.0,
-                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        # Lo ya provisionado mes a mes en el semestre (libro de provisiones) se cancela
+        # contra el pasivo; solo la diferencia es gasto (o recuperación si sobró). Sin
+        # provisiones registradas (p. ej. semestres anteriores al corte de julio 2026) el
+        # comportamiento es el de siempre: todo el monto va a gasto.
+        from core.use_cases import provision_gratificacion as _pg   # import diferido (evita ciclo)
+        _sem, _anio = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_ref', None), liq.fecha_cese_snapshot)
+        _prov_g, _prov_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem, _anio)
+        prov_grati = round(_prov_g + _prov_b, 2)
+        ajuste_grati = round(monto_grati_bruto - prov_grati, 2)
+        if prov_grati > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, prov_grati, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if ajuste_grati > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, ajuste_grati, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        elif ajuste_grati < 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, 0.0, -ajuste_grati,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
     if tiene_cts:
         filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, liq.monto_cts_trunca, 0.0,
                             num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))

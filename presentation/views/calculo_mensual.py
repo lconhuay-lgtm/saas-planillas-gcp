@@ -13,6 +13,7 @@ from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Concepto, ParametroLegal, VariablesMes, PlanillaMensual, Prestamo, CuotaPrestamo, Empresa as EmpresaModel
 from core.use_cases.calculo_honorarios import calcular_recibo_honorarios
 from core.use_cases.calculo_beneficios_sociales import factor_grati_aplicable, tasa_bono_extraordinario
+from core.domain import seguros_empleador as seg_emp
 from core.use_cases.generador_reportes_calculo import (
     generar_excel_sabana, generar_pdf_sabana, generar_pdf_quinta,
     generar_excel_honorarios, generar_pdf_honorarios,
@@ -708,6 +709,13 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
     if etiqueta_seguro == "ESSALUD-EPS":
         credito_eps_patronal = max(h['base_essalud'], p['rmv']) * ((p['tasa_essalud'] - p['tasa_eps']) / 100)
 
+    # Seguros a cargo del empleador (Vida Ley / SCTR): prima completa digitada en
+    # "Ingreso de Asistencias" para los seguros en que el trabajador está marcado.
+    # Igual que el crédito EPS: solo se expone en auditoria (boleta, reportes, asiento
+    # contable y PLAME lo leen de ahí) y NO entra en la sábana ni en neto_pagar — no es
+    # un descuento al trabajador ni modifica ninguna base (AFP/ONP, 5ta, EsSalud).
+    aportes_empleador = seg_emp.calcular_aportes_empleador(row, conceptos_manuales)
+
     neto_pagar = h['ingresos_totales'] - pen['total_pension'] - aj_afp - retencion_quinta - descuentos_manuales
 
     # --- FILA DE LA SÁBANA CORPORATIVA ---
@@ -754,6 +762,8 @@ def _calcular_fila_trabajador(row, p, horas_jornada, mes_calc, anio_calc, mes_id
         "tasa_essalud_pct": round(p['tasa_essalud'], 2),
         "tasa_eps_pct": round(p['tasa_eps'], 2),
         "credito_eps_patronal": round(credito_eps_patronal, 2),  # informativo, ver nota arriba
+        # {VIDA_LEY|SCTR_SALUD|SCTR_PENSION: {etiqueta, entidad, codigo, monto}} — vacío si no aplica
+        "aportes_empleador": aportes_empleador,
         "ingresos": h['desglose_ingresos'], "descuentos": desglose_descuentos,
         "totales": {"ingreso": h['ingresos_totales'], "descuento": (pen['total_pension'] + aj_afp + retencion_quinta + descuentos_manuales), "neto": neto_pagar},
         "quinta": {
@@ -1010,7 +1020,7 @@ def _render_planilla_tab(empresa_id, empresa_nombre, mes_seleccionado, anio_sele
             except Exception: pass
         with col_btn2:
             try:
-                pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s)
+                pdf_buffer = generar_pdf_sabana(df_resultados, empresa_nombre, periodo_key, empresa_ruc=empresa_ruc_s, empresa_regimen=empresa_reg_s, auditoria_data=auditoria_data)
                 st.download_button("📄 Descargar Sábana y Resumen (PDF)", data=pdf_buffer, file_name=f"SABANA_{periodo_key}.pdf", mime="application/pdf", use_container_width=True, key="dl_plan_pdf")
             except Exception: pass
 

@@ -1,9 +1,13 @@
 """
 Generador del Asiento Contable de Planilla — Excel de importación a SISCONT.
 
-Alcance de esta primera fase (confirmado con el usuario):
-  - Solo periodos que NO sean julio (07) ni diciembre (12) — la gratificación de esos
-    meses queda pendiente de un módulo de provisión mensual en una fase futura.
+Alcance (confirmado con el usuario):
+  - Julio (07) y diciembre (12) incluyen el pago de la gratificación + bono extraordinario.
+    Lo ya provisionado mes a mes (libro `provisiones_gratificacion`, ver
+    provision_gratificacion.py) se cancela contra "Gratificación por pagar" y solo la
+    DIFERENCIA va a gasto (o se recupera si la provisión excedió). Sin provisiones
+    registradas — p. ej. julio 2026, el mes de corte — todo el pago se reconoce como gasto
+    en ese mes (el "ajuste en julio").
   - Solo trabajadores de Planilla (5ta categoría) — los locadores (4ta) no entran aquí,
     ellos emiten recibo por honorarios y se registran directo en el sistema contable.
   - Un solo voucher (Num.Voucher=1) por planilla del mes — sin asiento de pago, sin
@@ -23,21 +27,20 @@ from datetime import date
 import pandas as pd
 
 from infrastructure.database.models import PlanillaMensual, Concepto, ConfiguracionContable
+from core.domain import seguros_empleador as seg_emp
 
 # Marcador de versión — súbelo cada vez que se corrija algo en este archivo, para poder
 # confirmar en pantalla (pestaña Asiento Contable) si el código desplegado es el último.
-VERSION_GENERADOR = "2026-08-29-r1"
+VERSION_GENERADOR = "2026-11-25-r1"
 
 MESES_ES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL", 5: "MAYO", 6: "JUNIO",
     7: "JULIO", 8: "AGOSTO", 9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE",
 }
 
-# Julio y diciembre quedan fuera de esta fase (gratificación pendiente de provisión mensual)
-_MESES_SIN_ASIENTO = (7, 12)
-
-# Conceptos de gratificación — excluidos por diseño (nunca deberían tener monto fuera
-# de jul/dic, pero se excluyen explícitamente como seguro adicional)
+# Conceptos de gratificación — NO pasan por el flujo genérico de "concepto -> cuenta":
+# tienen tratamiento propio (cancelan la provisión del libro y la diferencia va a gasto,
+# ver bloque "Gratificación pagada" más abajo).
 _CONCEPTOS_GRATI_EXCLUIDOS = {"Gratificación", "Bono Ext. 9%"}
 
 # Claves de "desglose_descuentos" que NO son conceptos configurables ni préstamos —
@@ -151,14 +154,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     mes_num = int(periodo_key[:2])
     anio_num = int(periodo_key[3:])
 
-    if mes_num in _MESES_SIN_ASIENTO:
-        raise AsientoContableError(
-            f"El periodo {periodo_key} no genera asiento automático todavía — la "
-            f"gratificación de julio/diciembre está pendiente de un módulo de "
-            f"provisión mensual (fase futura). Este periodo se registra manualmente."
-        )
-
-    planilla = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+    planilla =db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
     if not planilla or planilla.estado != 'CERRADA':
         raise AsientoContableError(f"La planilla del periodo {periodo_key} no está cerrada todavía.")
 
@@ -258,6 +254,36 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     if necesita_eps:
         _cuenta_fija('cuenta_eps_por_pagar', "EPS Por Pagar (Configuración Contable)")
 
+    # Gratificación pagada este mes (julio/diciembre): cancela lo provisionado en el libro
+    # y solo la diferencia va a gasto. Con el libro vacío (p. ej. julio 2026, mes de corte)
+    # todo el pago es gasto del mes. Import diferido: provision_gratificacion importa este módulo.
+    from core.use_cases import provision_gratificacion as _pg
+    _sem_pago = _pg.semestre_pagado_en(mes_num)
+    _provisionado = _pg.provisiones_por_dni(db, empresa_id, _sem_pago, anio_num) if _sem_pago else {}
+    grati_trab = {}   # dni -> {"pagado", "provisionado", "ajuste"}
+    for _dni_g, _info_g in auditoria_data.items():
+        _ing_g = (_info_g or {}).get('ingresos', {}) or {}
+        _pagado = round(float(_ing_g.get(_pg.CLAVE_GRATI_PAGADA, 0) or 0)
+                        + float(_ing_g.get(_pg.CLAVE_BONO_PAGADO, 0) or 0), 2)
+        if _pagado <= 0:
+            continue
+        _g, _b = _provisionado.get(str(_dni_g), (0.0, 0.0))
+        _prov = round(_g + _b, 2)
+        grati_trab[str(_dni_g)] = {"pagado": _pagado, "provisionado": _prov, "ajuste": round(_pagado - _prov, 2)}
+    if any(v["ajuste"] != 0 for v in grati_trab.values()):
+        _cuenta_fija(_pg.CUENTA_GASTO, "Gratificación — Gasto (Configuración Contable)")
+    if any(v["provisionado"] > 0 for v in grati_trab.values()):
+        _cuenta_fija(_pg.CUENTA_PASIVO, "Gratificación Por Pagar (Configuración Contable)")
+
+    # Seguros a cargo del empleador (Vida Ley / SCTR): solo se exigen las cuentas de los
+    # seguros que tienen monto este mes.
+    totales_seguros_check = seg_emp.totales_por_seguro(auditoria_data)
+    for _seg, _tot in totales_seguros_check.items():
+        if _tot > 0:
+            _attr_gasto, _attr_pasivo = seg_emp.CUENTAS_CONTABLES[_seg]
+            _cuenta_fija(_attr_gasto, f"{seg_emp.ETIQUETAS[_seg]} — Gasto (Configuración Contable)")
+            _cuenta_fija(_attr_pasivo, f"{seg_emp.ETIQUETAS[_seg]} — Por Pagar (Configuración Contable)")
+
     # ── Validar cuentas de conceptos dinámicos (ingresos y descuentos) ──
     for info in auditoria_data.values():
         for nombre_c, monto in (info.get('ingresos', {}) or {}).items():
@@ -300,6 +326,7 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
     total_onp = 0.0
     total_5ta = 0.0
     total_afp = {k: 0.0 for k in _AFP_CUENTA_ATTR}
+    total_seguros = {s: 0.0 for s in seg_emp.SEGUROS}  # Vida Ley / SCTR a cargo del empleador
 
     # Diagnóstico: Debe/Haber acumulado POR TRABAJADOR (incluye su porción de las
     # cuentas globales, aunque en el archivo salgan como una sola línea totalizada) —
@@ -348,7 +375,30 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
             d["debe"] += monto
             debe_ingresos_trab += monto
 
-        essalud_trab = float(row.get('Aporte Seg. Social', 0) or 0)
+        # Gratificación pagada (julio/diciembre): Debe = pasivo provisionado (se cancela) +
+        # gasto por la diferencia; si la provisión excedió lo pagado, el sobrante se recupera
+        # (Haber a gasto). El total pagado entra a "Remuneraciones por Pagar" vía el residual.
+        g_pag = grati_trab.get(dni)
+        if g_pag:
+            _glosa_g = f"{glosa_asiento} - GRATIFICACION"
+            if g_pag["provisionado"] > 0:
+                filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pg.CUENTA_PASIVO, ''),
+                                    g_pag["provisionado"], 0.0, num_doc_asiento, _glosa_g,
+                                    cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                d["debe"] += g_pag["provisionado"]
+            if g_pag["ajuste"] > 0:
+                filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pg.CUENTA_GASTO, ''),
+                                    g_pag["ajuste"], 0.0, num_doc_asiento, _glosa_g,
+                                    cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                d["debe"] += g_pag["ajuste"]
+            elif g_pag["ajuste"] < 0:
+                filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _pg.CUENTA_GASTO, ''),
+                                    0.0, -g_pag["ajuste"], num_doc_asiento, _glosa_g,
+                                    cod_prov_clie=dni, ruc=dni, r_social=nombre))
+                d["haber"] += -g_pag["ajuste"]
+            debe_ingresos_trab += g_pag["pagado"]
+
+        essalud_trab =float(row.get('Aporte Seg. Social', 0) or 0)
         onp_trab = float(row.get('ONP (13%)', 0) or 0)
         ret5ta_trab = float(row.get('Ret. 5ta Cat.', 0) or 0)
         total_essalud += essalud_trab
@@ -356,6 +406,17 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         total_5ta += ret5ta_trab
         d["debe"] += essalud_trab   # EsSalud es gasto también, aunque salga en línea global
         d["haber"] += essalud_trab + onp_trab + ret5ta_trab
+
+        # Seguros a cargo del empleador: gasto y pasivo por el MISMO monto (cuadra por
+        # construcción) — no salen del neto del trabajador, así que no tocan el residual.
+        for _seg, _ap in (info.get('aportes_empleador', {}) or {}).items():
+            if _seg not in total_seguros:
+                continue
+            _m = float((_ap or {}).get('monto', 0) or 0)
+            if _m > 0:
+                total_seguros[_seg] += _m
+                d["debe"] += _m
+                d["haber"] += _m
 
         monto_afp_calculado = sum(float(row.get(c, 0) or 0) for c in ["AFP Aporte", "AFP Seguro", "AFP Comis."])
 
@@ -418,6 +479,15 @@ def generar_asiento_planilla(db, empresa_id, periodo_key):
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_essalud_pasivo', ''),
                             0.0, total_essalud, num_doc_asiento, glosa_asiento,
                             cod_prov_clie=_RUC_SUNAT, ruc=_RUC_SUNAT, r_social=_NOMBRE_SUNAT))
+    for _seg in seg_emp.SEGUROS:
+        _m = round(total_seguros[_seg], 2)
+        if _m > 0:
+            _attr_gasto, _attr_pasivo = seg_emp.CUENTAS_CONTABLES[_seg]
+            _glosa_seg = f"{glosa_asiento} - {seg_emp.ETIQUETAS[_seg].upper()}"
+            filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _attr_gasto, ''),
+                                _m, 0.0, num_doc_asiento, _glosa_seg))
+            filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, _attr_pasivo, ''),
+                                0.0, _m, num_doc_asiento, _glosa_seg))
     if total_onp > 0:
         filas.append(_fila(11, 1, fecha_asiento, getattr(cfg, 'cuenta_onp', ''),
                             0.0, total_onp, num_doc_asiento, glosa_asiento,

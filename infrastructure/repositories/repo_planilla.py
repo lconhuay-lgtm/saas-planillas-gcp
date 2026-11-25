@@ -112,6 +112,13 @@ def cargar_trabajadores_df(db, empresa_id, mes_calc: int = 0, anio_calc: int = 0
             "CUSPP": t.cuspp or "",
             "Cargo": t.cargo or "",
             "Seguro Social": getattr(t, 'seguro_social', None) or "ESSALUD",
+            # Seguros a cargo del empleador (Vida Ley / SCTR): solo las marcas y la
+            # entidad; el monto del mes sale de conceptos_json (ver seguros_empleador.py)
+            "Seg. Vida Ley": "Sí" if getattr(t, 'seg_vida_ley', False) else "No",
+            "Seg. SCTR Salud": "Sí" if getattr(t, 'seg_sctr_salud', False) else "No",
+            "Seg. SCTR Salud Entidad": getattr(t, 'sctr_salud_entidad', None) or "",
+            "Seg. SCTR Pensión": "Sí" if getattr(t, 'seg_sctr_pension', False) else "No",
+            "Seg. SCTR Pensión Entidad": getattr(t, 'sctr_pension_entidad', None) or "",
             "Banco": t.banco or "",
             "Cuenta Bancaria": t.cuenta_bancaria or "",
             "CCI": t.cci or "",

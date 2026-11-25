@@ -241,6 +241,20 @@ if not st.session_state.get('_tablas_verificadas'):
             "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_dias_sueltos INTEGER DEFAULT 0",
             "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_fecha_efectivo_ini DATE",
             "ALTER TABLE liquidaciones_cese ADD COLUMN IF NOT EXISTS cts_fecha_efectivo_fin DATE",
+            # Seguros a cargo del empleador (Vida Ley y SCTR) — marcas por trabajador
+            # (el monto se digita cada mes en variables_mes.conceptos_json) y cuentas
+            # contables del asiento.
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seg_vida_ley BOOLEAN DEFAULT false",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seg_sctr_salud BOOLEAN DEFAULT false",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS sctr_salud_entidad VARCHAR(20)",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS seg_sctr_pension BOOLEAN DEFAULT false",
+            "ALTER TABLE trabajadores ADD COLUMN IF NOT EXISTS sctr_pension_entidad VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_vida_ley_gasto VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_vida_ley_pasivo VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_salud_gasto VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_salud_pasivo VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_pension_gasto VARCHAR(20)",
+            "ALTER TABLE configuracion_contable ADD COLUMN IF NOT EXISTS cuenta_sctr_pension_pasivo VARCHAR(20)",
         ]
         with engine.connect() as _conn:
             for _sql in _migraciones:

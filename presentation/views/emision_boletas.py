@@ -11,6 +11,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Concepto, VariablesMes, PlanillaMensual
+from core.domain import seguros_empleador as seg_emp
 
 
 def _recuperar_datos_desde_neon(db, empresa_id):
@@ -341,6 +342,21 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
         else:
             apo_data.append([et_seg, f"Base: S/ {base_essalud_mostrar:,.2f}", f"S/ {aporte_seg:,.2f}"])
 
+        # Seguros a cargo del empleador (Vida Ley / SCTR) — informativos, no afectan el
+        # neto. Periodos calculados antes de este cambio no traen la clave: sin líneas.
+        fila_ini_seguros = len(apo_data)
+        _aportes_emp = data_aud.get('aportes_empleador', {}) or {}
+        for _clave_seg in seg_emp.SEGUROS:
+            _ap = _aportes_emp.get(_clave_seg)
+            if not _ap or float(_ap.get('monto', 0) or 0) <= 0:
+                continue
+            _ent = seg_emp.ENTIDADES[_clave_seg].get(_ap.get('entidad'), '')
+            _txt = _ap.get('etiqueta', seg_emp.ETIQUETAS[_clave_seg])
+            if _clave_seg != seg_emp.VIDA_LEY and _ent:
+                _txt = f"{_txt} ({_ent})"
+            apo_data.append([_txt.upper(), "", f"S/ {float(_ap['monto']):,.2f}"])
+        hay_seguros_emp = len(apo_data) > fila_ini_seguros
+
         apo_style = [
             ('BACKGROUND',    (0,0), (-1,0),  C_GRAY),
             ('SPAN',          (0,0), (-1,0)),
@@ -367,6 +383,12 @@ def generar_pdf_boletas_masivas(empresa_info, periodo, df_resultados, df_trabaja
                 ('BACKGROUND', (0,1), (-1,1), C_LIGHT),
                 ('FONTNAME',   (0,1), (-1,1), 'Helvetica'),
                 ('FONTNAME',   (2,1), (2,1),  'Helvetica-Bold'),
+            ]
+        if hay_seguros_emp:
+            apo_style += [
+                ('BACKGROUND', (0, fila_ini_seguros), (-1, -1), C_LIGHT),
+                ('FONTNAME',   (0, fila_ini_seguros), (-1, -1), 'Helvetica'),
+                ('FONTNAME',   (2, fila_ini_seguros), (2, -1),  'Helvetica-Bold'),
             ]
         t_apo = Table(apo_data, colWidths=[W * 0.5, W * 0.3, W * 0.2])
         t_apo.setStyle(TableStyle(apo_style))
