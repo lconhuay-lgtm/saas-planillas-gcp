@@ -3,7 +3,10 @@ import pandas as pd
 import json
 import io
 from infrastructure.database.connection import SessionLocal
-from infrastructure.database.models import Empresa, Trabajador, PlanillaMensual, Prestamo, RegistroVacaciones, LogEnvioBoleta
+from infrastructure.database.models import (
+    Empresa, Trabajador, PlanillaMensual, Prestamo, RegistroVacaciones, LogEnvioBoleta,
+    LiquidacionCese,
+)
 from core.use_cases.calculo_kardex import calcular_saldo_vacacional
 
 def render():
@@ -194,6 +197,69 @@ def render():
                         st.caption(f"• {t.nombres} ({t.num_doc}) — boleta(s) pendiente(s): {periodos_legibles}")
                     else:
                         st.caption(f"• {t.nombres} ({t.num_doc})")
+
+        # Alerta: trabajadores que llegaron por Traslado de Personal y todavía no
+        # arrancan (fecha_ingreso hoy o futura) — recordatorio para revisar sueldo/
+        # cargo antes de la primera planilla en esta empresa.
+        import datetime as _dt_dash
+        trasladados_pend = (
+            db.query(Trabajador)
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                Trabajador.situacion == 'ACTIVO',
+                Trabajador.trabajador_origen_id.isnot(None),
+                Trabajador.fecha_ingreso >= _dt_dash.date.today(),
+            )
+            .all()
+        )
+        if trasladados_pend:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background-color:#EAF1FB; padding:15px; border-radius:10px; border-left: 5px solid #1E4D8C;">'
+                f'<strong>🔄 {len(trasladados_pend)} trabajador(es) llegarán por Traslado de Personal</strong><br>'
+                f'Revise sueldo y cargo antes de calcular su primer periodo en esta empresa.'
+                '</div>', unsafe_allow_html=True
+            )
+            with st.expander("Ver trabajadores por trasladar"):
+                for t in trasladados_pend:
+                    _fi_tr = t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else '—'
+                    st.caption(f"• {t.nombres} ({t.num_doc}) — ingresa el {_fi_tr}")
+
+        # Alerta: trabajadores de Planilla cesados en los últimos 90 días que todavía no
+        # tienen ninguna Liquidación por Cese registrada — un cese legalmente siempre
+        # genera esta obligación (CTS/vacaciones/gratificación truncas). Se limita a 90
+        # días para no arrastrar cesados históricos de antes de que existiera este módulo.
+        limite_liq = _dt_dash.date.today() - _dt_dash.timedelta(days=90)
+        cesados_recientes = (
+            db.query(Trabajador)
+            .filter(
+                Trabajador.empresa_id == empresa_id,
+                Trabajador.situacion == 'CESADO',
+                Trabajador.tipo_contrato != 'LOCADOR',
+                Trabajador.fecha_cese.isnot(None),
+                Trabajador.fecha_cese >= limite_liq,
+            )
+            .all()
+        )
+        ids_con_liq = {
+            row[0] for row in db.query(LiquidacionCese.trabajador_id)
+            .filter(LiquidacionCese.trabajador_id.in_([t.id for t in cesados_recientes]))
+            .all()
+        } if cesados_recientes else set()
+        cesados_sin_liq = [t for t in cesados_recientes if t.id not in ids_con_liq]
+
+        if cesados_sin_liq:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background-color:#FEF2F2; padding:15px; border-radius:10px; border-left: 5px solid #DC2626;">'
+                f'<strong>📄 {len(cesados_sin_liq)} trabajador(es) cesado(s) sin Liquidación registrada</strong><br>'
+                f'Un cese siempre genera la obligación de liquidar CTS, vacaciones y gratificación truncas.'
+                '</div>', unsafe_allow_html=True
+            )
+            with st.expander("Ver trabajadores sin liquidación"):
+                for t in cesados_sin_liq:
+                    _fc_tr = t.fecha_cese.strftime('%d/%m/%Y') if t.fecha_cese else '—'
+                    st.caption(f"• {t.nombres} ({t.num_doc}) — cesó el {_fc_tr}")
 
     finally:
         db.close()

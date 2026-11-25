@@ -2,12 +2,12 @@ import json
 import io
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 
 import calendar as _cal
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import PlanillaMensual, Trabajador, VariablesMes, ParametroLegal
-from core.use_cases.exportador_plame import generar_zip_plame
+from core.use_cases.exportador_plame import generar_zip_plame, resumen_aportes_empleador_plame
 
 _MESES_ES = {
     "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
@@ -254,12 +254,35 @@ def render():
 
             # Cargar conceptos para validación
             try:
+                import calendar as _cal_rep
                 from infrastructure.database.connection import SessionLocal as _SL
-                from infrastructure.database.models import Concepto as _Concepto, Trabajador as _Trab
+                from infrastructure.database.models import Concepto as _Concepto, Trabajador as _Trab, LiquidacionCese as _LiqCese
                 _db = _SL()
                 empresa_id_rep = st.session_state.get('empresa_activa_id')
                 conc_db  = _db.query(_Concepto).filter_by(empresa_id=empresa_id_rep).all()
                 trab_db  = _db.query(_Trab).filter_by(empresa_id=empresa_id_rep).all()
+
+                # Liquidaciones por Cese aprobadas cuya fecha de cese cae en este periodo:
+                # su AFP/ONP sobre vacaciones truncas (y sueldo prop. si aplica) también
+                # debe declararse en AFPnet (solo la porción AFP — ONP no va en este archivo).
+                _ultimo_dia_rep = _cal_rep.monthrange(anio_num, mes_num)[1]
+                liq_periodo_rep = _db.query(_LiqCese).filter(
+                    _LiqCese.empresa_id == empresa_id_rep,
+                    _LiqCese.estado != 'BORRADOR',
+                    _LiqCese.fecha_cese_snapshot >= date(anio_num, mes_num, 1),
+                    _LiqCese.fecha_cese_snapshot <= date(anio_num, mes_num, _ultimo_dia_rep),
+                ).all()
+                liquidaciones_afp_rep = {}
+                for _liq in liq_periodo_rep:
+                    if "AFP" not in str(_liq.sistema_pension_snapshot or '').upper():
+                        continue
+                    _trab_liq = _db.query(_Trab).filter_by(id=_liq.trabajador_id).first()
+                    if not _trab_liq:
+                        continue
+                    _base_extra = float(_liq.monto_vacaciones_truncas or 0.0) + float(_liq.monto_sueldo_proporcional or 0.0)
+                    if _base_extra > 0:
+                        liquidaciones_afp_rep[str(_trab_liq.num_doc)] = liquidaciones_afp_rep.get(str(_trab_liq.num_doc), 0.0) + _base_extra
+
                 _db.close()
                 df_conceptos_rep = pd.DataFrame([{
                     "Nombre del Concepto": c.nombre,
@@ -272,6 +295,7 @@ def render():
                     "Nombres y Apellidos": t.nombres,
                     "Tipo Doc.":        t.tipo_doc or "DNI",
                     "Fecha Ingreso":    t.fecha_ingreso,
+                    "Fecha Cese":       t.fecha_cese,
                     "CUSPP":            t.cuspp or '',
                     "Sistema Pensión":  t.sistema_pension or '',
                 } for t in trab_db])
@@ -279,16 +303,47 @@ def render():
                 st.error(f"Error cargando datos: {e_load}")
                 df_conceptos_rep = pd.DataFrame()
                 df_trabajadores_rep = pd.DataFrame()
+                liquidaciones_afp_rep = {}
+
+            if liquidaciones_afp_rep:
+                st.info(
+                    f"ℹ️ Se incluirán {len(liquidaciones_afp_rep)} Liquidación(es) por Cese de este "
+                    f"periodo (vacaciones truncas y demás conceptos afectos) en el PLAME y/o AFPnet."
+                )
 
             col_p, col_a = st.columns(2)
 
             with col_p:
                 st.markdown("#### Archivos PLAME (Estructura PDT)")
                 st.caption("Genera el paquete oficial (.rem, .jor, .sub, .not) con validación estricta de códigos SUNAT.")
+
+                # Aportes del empleador (Vida Ley / SCTR) en el .REM — opcional y apagado por
+                # defecto hasta validar el layout con una declaración de prueba en el PDT.
+                incluir_aportes_emp = st.checkbox(
+                    "Incluir aportes del empleador (Vida Ley / SCTR) en el .REM",
+                    value=False, key="chk_plame_aportes_emp",
+                    help="Agrega por trabajador los códigos 0803 (Vida Ley), 0810 (SCTR Salud con EPS), "
+                         "0813 (SCTR Pensión con ONP) y 0814 (SCTR Pensión con aseguradora). "
+                         "Valide el archivo con una declaración de prueba antes de usarlo.",
+                )
+                if incluir_aportes_emp:
+                    try:
+                        _res_ap = resumen_aportes_empleador_plame(empresa_id, f"{str(mes_num).zfill(2)}-{anio_num}")
+                        st.caption(f"{_res_ap['exportables']} línea(s) de aportes del empleador se agregarán al .REM.")
+                        if _res_ap["sin_codigo"]:
+                            st.warning(
+                                f"⚠️ {len(_res_ap['sin_codigo'])} aporte(s) NO se exportarán porque su código PLAME "
+                                f"aún no está definido (SCTR Salud con EsSalud): "
+                                + ", ".join(f"{d} ({e})" for d, e, _ in _res_ap["sin_codigo"][:8])
+                                + ("…" if len(_res_ap["sin_codigo"]) > 8 else "")
+                            )
+                    except Exception as _e_ap:
+                        st.caption(f"No se pudo resumir los aportes del empleador: {_e_ap}")
+
                 if st.button("🚀 Generar ZIP PLAME Profesional", type="primary", use_container_width=True, key="btn_plame_v2"):
                     try:
                         with st.spinner("Procesando histórico y validando conceptos..."):
-                            buf_zip = generar_zip_plame(empresa_id, mes_num, anio_num)
+                            buf_zip = generar_zip_plame(empresa_id, mes_num, anio_num, incluir_aportes_empleador=incluir_aportes_emp)
                             nombre_zip = f"0601{anio_num}{str(mes_num).zfill(2)}{empresa_ruc.zfill(11)}.zip"
                             st.success(f"✅ Archivo listo para declarar.")
                             st.download_button(
@@ -311,6 +366,7 @@ def render():
                             anio=anio_num, mes=mes_num,
                             df_planilla=df_planilla, auditoria_data=auditoria,
                             df_trabajadores=df_trabajadores_rep,
+                            liquidaciones_afp=liquidaciones_afp_rep,
                         )
                         nombre_afp = f"AFPnet_{sel_key.replace('-','_')}.xlsx"
                         st.download_button(
@@ -565,12 +621,13 @@ def render():
 
         mes_num_asiento = int(sel_key[:2])
         if mes_num_asiento in (7, 12):
-            st.warning(
-                f"⚠️ El periodo **{_periodo_legible(sel_key)}** no genera asiento automático "
-                f"todavía — la gratificación de julio/diciembre está pendiente de un módulo "
-                f"de provisión mensual (fase futura). Este periodo se registra manualmente."
+            st.info(
+                f"ℹ️ En **{_periodo_legible(sel_key)}** el asiento incluye el **pago de la gratificación** "
+                f"y el bono extraordinario. Lo ya provisionado mes a mes se cancela contra "
+                f"«Gratificación por pagar» y solo la diferencia va a gasto; si todavía no hay "
+                f"provisiones registradas del semestre, todo el pago se reconoce como gasto de este mes."
             )
-        elif estado_sel != "CERRADA":
+        if estado_sel != "CERRADA":
             st.info("ℹ️ El asiento contable solo está disponible para periodos **cerrados**.")
         else:
             if st.button("📒 Generar Asiento Contable (Excel)", type="primary", use_container_width=True, key="btn_gen_asiento"):
@@ -621,6 +678,281 @@ def render():
                         st.warning(f"ℹ️ {ace.mensaje}")
                 except Exception as e_asiento:
                     st.error(f"Error inesperado al generar el asiento: {e_asiento}")
+
+        # ── Provisión mensual de gratificación (+ bono extraordinario) ─────────────
+        from core.use_cases import provision_gratificacion as _pg
+        from core.use_cases.generador_asiento_contable import AsientoContableError as _ACE
+        st.markdown("---")
+        st.markdown("### 📈 Provisión Mensual de Gratificación")
+        st.caption(
+            "Reconoce mes a mes el gasto de la gratificación y el bono extraordinario (voucher "
+            "aparte del asiento de planilla). Lo registrado aquí es lo que el asiento de "
+            "julio/diciembre y la liquidación por cese descuentan para no duplicar el gasto. "
+            f"La provisión arranca en julio 2026. 🔧 `{_pg.VERSION_PROVISION}`"
+        )
+        if not _pg.es_provisionable(sel_key):
+            st.info(f"ℹ️ {_pg.motivo_no_provisionable(sel_key)}")
+        elif estado_sel != "CERRADA":
+            st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
+        else:
+            try:
+                _prev = _pg.calcular_provision_mes(db, empresa_id, sel_key)
+            except _ACE as _e_prev:
+                st.warning(f"ℹ️ {_e_prev.mensaje}")
+                _prev = []
+            _pend = [f for f in _prev if abs(f["delta_total"]) > 0.004]
+            # ¿Este mes ya se registró? (el cálculo compara contra meses ANTERIORES, así que
+            # un mes ya registrado reaparece como "pendiente" — se avisa y se ofrece regenerar)
+            _reg = next((r for r in _pg.resumen_libro(db, empresa_id, int(sel_key[3:])) if r[0] == sel_key), None)
+            if _reg:
+                st.success(
+                    f"✅ La provisión de este periodo ya fue **registrada** el "
+                    f"{_reg[4].strftime('%d/%m/%Y %H:%M') if _reg[4] else '—'}: gratificación "
+                    f"S/ {_reg[2]:,.2f} + bono extraordinario S/ {_reg[3]:,.2f} ({_reg[1]} trabajador(es))."
+                )
+            if not _pend and not _reg:
+                st.success("✅ No hay provisión pendiente de contabilizar en este periodo.")
+            elif _pend:
+                _tot_g = sum(f["delta_grati"] for f in _pend)
+                _tot_b = sum(f["delta_bono"] for f in _pend)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Gratificación a provisionar", f"S/ {_tot_g:,.2f}")
+                c2.metric("Bono extraordinario", f"S/ {_tot_b:,.2f}")
+                c3.metric("Total del mes", f"S/ {_tot_g + _tot_b:,.2f}")
+                with st.expander(f"Detalle por trabajador ({len(_pend)})"):
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "DNI": f["dni"], "Trabajador": f["nombre"],
+                            "Base computable": f["base_computable"], "Meses": f["meses_computados"],
+                            "Acumulado objetivo": round(f["objetivo_grati"] + f["objetivo_bono"], 2),
+                            "Ya provisionado": f["ya_provisionado"], "A provisionar": f["delta_total"],
+                        } for f in _pend]),
+                        use_container_width=True, hide_index=True,
+                    )
+                _etq_btn = ("🔁 Regenerar Provisión (reemplaza la ya registrada)" if _reg
+                            else "📈 Generar Provisión y Registrarla (Excel)")
+                if st.button(_etq_btn, type="primary",
+                             use_container_width=True, key="btn_gen_provision"):
+                    try:
+                        with st.spinner("Armando el asiento de provisión..."):
+                            buf_prov = _pg.generar_asiento_provision(
+                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'))
+                        st.success("✅ Provisión registrada y asiento cuadrado (Debe = Haber).")
+                        st.download_button(
+                            f"📥 Descargar PROVISION_GRATI_{sel_key}.xlsx", data=buf_prov,
+                            file_name=f"ASIENTO_PROVISION_GRATI_{sel_key}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, key="dl_provision",
+                        )
+                    except _ACE as _e_prov:
+                        if _e_prov.cuentas_faltantes:
+                            st.error(f"⚠️ **No se puede generar la provisión** — {_e_prov.mensaje}")
+                            for _c in _e_prov.cuentas_faltantes:
+                                st.markdown(f"- {_c}")
+                            st.info("Vaya a **Configuración Contable** para completar las cuentas y vuelva a intentarlo.")
+                        else:
+                            st.warning(f"ℹ️ {_e_prov.mensaje}")
+                    except Exception as _e_prov2:
+                        st.error(f"Error inesperado al generar la provisión: {_e_prov2}")
+
+        # ── Provisión mensual de vacaciones ────────────────────────────────────────
+        from core.use_cases import provision_vacaciones as _pv
+        st.markdown("---")
+        st.markdown("### 🏖️ Provisión Mensual de Vacaciones")
+        st.caption(
+            "Provisiona cada mes el valor de las vacaciones devengadas y no gozadas (días × sueldo/30). "
+            "Las vacaciones gozadas se cancelan contra este pasivo en el asiento de planilla y las "
+            "vacaciones truncas en la liquidación. **El primer mes (julio 2026) registra de golpe el devengo "
+            "de enero a julio 2026** (ajuste de corte); el saldo de años anteriores NO se provisiona porque "
+            "ya está en la contabilidad de la empresa. Se registran en orden, mes a mes. "
+            f"🔧 `{_pv.VERSION_PROVISION_VAC}`"
+        )
+        if not _pv.es_provisionable(sel_key):
+            st.info(f"ℹ️ {_pv.motivo_no_provisionable(sel_key)}")
+        elif estado_sel != "CERRADA":
+            st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
+        else:
+            try:
+                _prev_v = _pv.calcular_provision_mes(db, empresa_id, sel_key)
+            except _ACE as _e_prev_v:
+                st.warning(f"ℹ️ {_e_prev_v.mensaje}")
+                _prev_v = []
+            _pend_v = [f for f in _prev_v if abs(f["delta"]) > 0.004]
+            _reg_v = next((r for r in _pv.resumen_libro(db, empresa_id, int(sel_key[3:])) if r[0] == sel_key), None)
+            if _reg_v:
+                st.success(
+                    f"✅ La provisión de vacaciones de este periodo ya fue **registrada** el "
+                    f"{_reg_v[4].strftime('%d/%m/%Y %H:%M') if _reg_v[4] else '—'}: "
+                    f"S/ {_reg_v[2]:,.2f} del mes · saldo total S/ {_reg_v[3]:,.2f} ({_reg_v[1]} trabajador(es))."
+                )
+            if not _pend_v and not _reg_v:
+                st.success("✅ No hay provisión de vacaciones pendiente en este periodo.")
+            elif _pend_v:
+                _tot_v = sum(f["delta"] for f in _pend_v)
+                _can_v = sum(f["cancelado"] for f in _pend_v)
+                v1, v2 = st.columns(2)
+                v1.metric("Vacaciones a provisionar", f"S/ {_tot_v:,.2f}")
+                v2.metric("Gozadas (cancelan pasivo)", f"S/ {_can_v:,.2f}")
+                with st.expander(f"Detalle por trabajador ({len(_pend_v)})"):
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "DNI": f["dni"], "Trabajador": f["nombre"], "Días devengados no gozados": f["dias_saldo"],
+                            "Rem. diaria": f["remuneracion_diaria"], "Saldo objetivo": f["objetivo"],
+                            "Saldo previo": f["saldo_previo"], "Gozadas": f["cancelado"], "A provisionar": f["delta"],
+                        } for f in _pend_v]),
+                        use_container_width=True, hide_index=True,
+                    )
+                _etq_v = ("🔁 Regenerar Provisión de Vacaciones (reemplaza la ya registrada)" if _reg_v
+                          else "🏖️ Generar Provisión de Vacaciones y Registrarla (Excel)")
+                if st.button(_etq_v, type="primary", use_container_width=True, key="btn_gen_provision_vac"):
+                    try:
+                        with st.spinner("Armando el asiento de provisión de vacaciones..."):
+                            buf_pv = _pv.generar_asiento_provision(
+                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'))
+                        st.success("✅ Provisión de vacaciones registrada y asiento cuadrado (Debe = Haber).")
+                        st.download_button(
+                            f"📥 Descargar PROVISION_VAC_{sel_key}.xlsx", data=buf_pv,
+                            file_name=f"ASIENTO_PROVISION_VAC_{sel_key}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, key="dl_provision_vac",
+                        )
+                    except _ACE as _e_pv:
+                        if _e_pv.cuentas_faltantes:
+                            st.error(f"⚠️ **No se puede generar la provisión de vacaciones** — {_e_pv.mensaje}")
+                            for _c in _e_pv.cuentas_faltantes:
+                                st.markdown(f"- {_c}")
+                            st.info("Vaya a **Configuración Contable** para completar las cuentas y vuelva a intentarlo.")
+                        else:
+                            st.warning(f"ℹ️ {_e_pv.mensaje}")
+                    except Exception as _e_pv2:
+                        st.error(f"Error inesperado al generar la provisión de vacaciones: {_e_pv2}")
+
+        # ── Provisión mensual de CTS ───────────────────────────────────────────────
+        from core.use_cases import provision_cts as _pc
+        st.markdown("---")
+        st.markdown("### 💼 Provisión Mensual de CTS")
+        st.caption(
+            "Provisiona cada mes la CTS **al corte**: lo que se pagaría si el trabajador cesara el último día "
+            "del mes, calculado con el mismo motor de la liquidación (remuneración variable solo si se percibió en "
+            "≥ 3 meses del semestre; no se proyecta el futuro). **Julio 2026 registra de golpe lo devengado del "
+            "periodo MAY-OCT** (ajuste de corte) y, **si usted lo marca** (casilla de abajo), por única vez la CTS de enero a abril 2026 del "
+            "periodo NOV-ABR (si sigue sin pagar y no se provisionó). En mayo y noviembre se ajusta contra el **depósito real** y empieza "
+            f"el periodo nuevo. 🔧 `{_pc.VERSION_PROVISION_CTS}`"
+        )
+        if not _pc.es_provisionable(sel_key):
+            st.info(f"ℹ️ {_pc.motivo_no_provisionable(sel_key)}")
+        elif estado_sel != "CERRADA":
+            st.info("ℹ️ La provisión solo está disponible para periodos **cerrados**.")
+        else:
+            # Opción ÚNICA de julio 2026: la CTS de NOV-ABR (ene–abr 2026) sigue sin pagar y puede no estar
+            # provisionada. Solo el usuario sabe si la empresa ya la reconoció, así que se pregunta.
+            _inc_reg = False
+            if (int(sel_key[3:]), int(sel_key[:2])) == _pc.INICIO_PROVISION:
+                _inc_reg = st.checkbox(
+                    "Incluir regularización de **enero a abril 2026** (CTS del periodo NOV-ABR, aún sin pagar)",
+                    value=_pc.reg_nov_abr_registrada(db, empresa_id), key=f"cts_incluir_reg_{empresa_id}",
+                    help="Marque esta casilla solo si la empresa NO provisionó la CTS de enero a abril 2026. "
+                         "Se calcula con el depósito de mayo ya registrado (o con la CTS al 30/04/2026) y solo "
+                         "la parte de enero a abril: noviembre–diciembre 2025 no se tocan. Es un ajuste único de "
+                         "este mes: no vuelve a aparecer en meses posteriores.",
+                )
+            try:
+                _prev_c = _pc.calcular_provision_mes(db, empresa_id, sel_key, incluir_reg_nov_abr=_inc_reg)
+            except _ACE as _e_prev_c:
+                st.warning(f"ℹ️ {_e_prev_c.mensaje}")
+                _prev_c = []
+            _pend_c = [f for f in _prev_c if abs(f["delta_provision"]) > 0.004 or abs(f["delta_ajuste"]) > 0.004
+                       or f["reg_monto"] > 0.004]
+            _reg_c = next((r for r in _pc.resumen_libro(db, empresa_id, int(sel_key[3:])) if r[0] == sel_key), None)
+            if _reg_c:
+                st.success(
+                    f"✅ La provisión de CTS de este periodo ya fue **registrada** el "
+                    f"{_reg_c[4].strftime('%d/%m/%Y %H:%M') if _reg_c[4] else '—'}: provisión S/ {_reg_c[2]:,.2f}"
+                    f" · ajuste por depósito S/ {_reg_c[3]:,.2f} ({_reg_c[1]} trabajador(es))."
+                )
+            if not _pend_c and not _reg_c:
+                st.success("✅ No hay provisión de CTS pendiente en este periodo.")
+            elif _pend_c:
+                _tiene_reg = any(f["reg_monto"] > 0.004 for f in _pend_c)
+                c1, c2, c3, c4 = st.columns(4) if _tiene_reg else (*st.columns(3), None)
+                c1.metric("CTS a provisionar", f"S/ {sum(f['delta_provision'] for f in _pend_c):,.2f}")
+                c2.metric("Ajuste por depósito", f"S/ {sum(f['delta_ajuste'] for f in _pend_c):,.2f}")
+                if c4 is not None:
+                    c3.metric("Regulariz. NOV-ABR (ene–abr)", f"S/ {sum(f['reg_monto'] for f in _pend_c):,.2f}",
+                              help="Ajuste ÚNICO de julio 2026: CTS de enero a abril 2026 aún sin pagar ni provisionar.")
+                    c4.metric("Total CTS del mes", f"S/ {sum(f['delta_total'] for f in _pend_c):,.2f}")
+                else:
+                    c3.metric("Total CTS del mes", f"S/ {sum(f['delta_total'] for f in _pend_c):,.2f}")
+                with st.expander(f"Detalle por trabajador ({len(_pend_c)})"):
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "DNI": f["dni"], "Trabajador": f["nombre"], "Periodo CTS": f["periodo_cts"],
+                            "Base CTS": f["base_cts"], "Meses": f["meses"], "CTS al corte": f["objetivo"],
+                            "Ya provisionado": f["ya_provisionado"], "A provisionar": f["delta_provision"],
+                            "Depósito real": f["deposito"], "Ajuste": f["delta_ajuste"],
+                            **({"Regulariz. NOV-ABR": f["reg_monto"], "Fuente regulariz.": f["reg_fuente"]}
+                               if _tiene_reg else {}),
+                        } for f in _pend_c]),
+                        use_container_width=True, hide_index=True,
+                    )
+                _etq_c = ("🔁 Regenerar Provisión de CTS (reemplaza la ya registrada)" if _reg_c
+                          else "💼 Generar Provisión de CTS y Registrarla (Excel)")
+                if st.button(_etq_c, type="primary", use_container_width=True, key="btn_gen_provision_cts"):
+                    try:
+                        with st.spinner("Armando el asiento de provisión de CTS..."):
+                            buf_pc = _pc.generar_asiento_provision(
+                                db, empresa_id, sel_key, generado_por=st.session_state.get('usuario_logueado'),
+                                incluir_reg_nov_abr=_inc_reg)
+                        st.success("✅ Provisión de CTS registrada y asiento cuadrado (Debe = Haber).")
+                        st.download_button(
+                            f"📥 Descargar PROVISION_CTS_{sel_key}.xlsx", data=buf_pc,
+                            file_name=f"ASIENTO_PROVISION_CTS_{sel_key}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True, key="dl_provision_cts",
+                        )
+                    except _ACE as _e_pc:
+                        if _e_pc.cuentas_faltantes:
+                            st.error(f"⚠️ **No se puede generar la provisión de CTS** — {_e_pc.mensaje}")
+                            for _c in _e_pc.cuentas_faltantes:
+                                st.markdown(f"- {_c}")
+                            st.info("Vaya a **Configuración Contable** para completar las cuentas y vuelva a intentarlo.")
+                        else:
+                            st.warning(f"ℹ️ {_e_pc.mensaje}")
+                    except Exception as _e_pc2:
+                        st.error(f"Error inesperado al generar la provisión de CTS: {_e_pc2}")
+
+        _libro_c = _pc.resumen_libro(db, empresa_id, int(sel_key[3:]))
+        if _libro_c:
+            with st.expander(f"📚 Provisiones de CTS registradas en {sel_key[3:]}"):
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Periodo": p, "Trabajadores": n, "Provisión": a, "Ajuste por depósito": b,
+                        "Registrada": fch.strftime('%d/%m/%Y %H:%M') if fch else "",
+                    } for p, n, a, b, fch in _libro_c]),
+                    use_container_width=True, hide_index=True,
+                )
+
+        _libro_v = _pv.resumen_libro(db, empresa_id, int(sel_key[3:]))
+        if _libro_v:
+            with st.expander(f"📚 Provisiones de vacaciones registradas en {sel_key[3:]}"):
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Periodo": p, "Trabajadores": n, "Provisión del mes": a, "Saldo total": s_,
+                        "Registrada": fch.strftime('%d/%m/%Y %H:%M') if fch else "",
+                    } for p, n, a, s_, fch in _libro_v]),
+                    use_container_width=True, hide_index=True,
+                )
+
+        _libro = _pg.resumen_libro(db, empresa_id, int(sel_key[3:]))
+        if _libro:
+            with st.expander(f"📚 Provisiones ya registradas en {sel_key[3:]}"):
+                st.dataframe(
+                    pd.DataFrame([{
+                        "Periodo": p, "Trabajadores": n, "Gratificación": g, "Bono extraordinario": b,
+                        "Registrada": fch.strftime('%d/%m/%Y %H:%M') if fch else "",
+                    } for p, n, g, b, fch in _libro]),
+                    use_container_width=True, hide_index=True,
+                )
 
     db.close()
     # ── TAB: REPORTE PERSONALIZADO ────────────────────────────────────────────

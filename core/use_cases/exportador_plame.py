@@ -1,9 +1,12 @@
 import io
 import zipfile
 import json
+import calendar
+from datetime import date
 import pandas as pd
 from sqlalchemy.orm import Session
-from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto
+from infrastructure.database.models import Empresa, Trabajador, VariablesMes, PlanillaMensual, Concepto, LiquidacionCese
+from core.domain import seguros_empleador as seg_emp
 
 def generar_txt_e14(db: Session, empresa_id: int, mes: int, anio: int) -> str:
     """Genera archivo .JOR (Jornada Laboral)"""
@@ -78,12 +81,29 @@ def generar_txt_e15_e16(db: Session, empresa_id: int, periodo_key: str):
             
     return "\r\n".join(txt_e15), "\r\n".join(txt_e16)
 
-def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
-    """Genera archivo .REM con asignación directa y tríada de AFP obligatoria en cero."""
+def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str, incluir_aportes_empleador: bool = False) -> str:
+    """Genera archivo .REM con asignación directa y tríada de AFP obligatoria en cero.
+
+    incluir_aportes_empleador: si es True agrega, por trabajador, las líneas de Vida Ley y
+    SCTR a cargo del empleador (0803, 0810, 0813, 0814). Es opcional y está APAGADO por
+    defecto hasta validar el layout con una declaración de prueba en el PDT PLAME. Los
+    aportes cuyo código aún no está definido (SCTR Salud con EsSalud) NO se exportan."""
+    mes_int, anio_int = int(periodo_key[:2]), int(periodo_key[3:])
+    ultimo_dia_mes = calendar.monthrange(anio_int, mes_int)[1]
+    liquidaciones_periodo = db.query(LiquidacionCese).filter(
+        LiquidacionCese.empresa_id == empresa_id,
+        LiquidacionCese.estado != 'BORRADOR',
+        LiquidacionCese.fecha_cese_snapshot >= date(anio_int, mes_int, 1),
+        LiquidacionCese.fecha_cese_snapshot <= date(anio_int, mes_int, ultimo_dia_mes),
+    ).all()
+
     planilla = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
-    if not planilla: return ""
-        
-    auditoria = json.loads(planilla.auditoria_json or '{}')
+    # Con liquidaciones pero sin planilla regular (empresa que no corrió planilla ese
+    # mes porque todo su personal cesó): no cortar aquí, seguir para declarar la liquidación.
+    if not planilla and not liquidaciones_periodo:
+        return ""
+
+    auditoria = json.loads(planilla.auditoria_json or '{}') if planilla else {}
     lineas = []
     
     conceptos_bd = db.query(Concepto).filter_by(empresa_id=empresa_id).all()
@@ -200,7 +220,65 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
             for cod_afp in ["0608", "0606", "0601"]:
                 if cod_afp not in codigos_procesados:
                     lineas.append(f"{tipo_doc}|{dni_limpio}|{cod_afp}|0.00|0.00|")
-                
+
+        # 6. APORTES DEL EMPLEADOR (Vida Ley / SCTR) — opcional, leídos del snapshot de la
+        # planilla (periodos cerrados no se recalculan). Serie 08: devengado = pagado
+        # (no aplica la regla de "devengado en cero" de las series 06/07).
+        if incluir_aportes_empleador:
+            for _seg in seg_emp.SEGUROS:
+                _ap = (data.get('aportes_empleador', {}) or {}).get(_seg)
+                if not _ap:
+                    continue
+                _cod = _ap.get('codigo')
+                _monto = float(_ap.get('monto', 0) or 0)
+                if _cod and _monto > 0:
+                    lineas.append(f"{tipo_doc}|{dni_limpio}|{_cod}|{_monto:.2f}|{_monto:.2f}|")
+
+    # ── LIQUIDACIÓN POR CESE: conceptos adicionales del trabajador que cesó este mes ──
+    # Se declaran como líneas adicionales del mismo DNI (el PDT las suma junto con lo
+    # ya declarado arriba si el trabajador también tuvo planilla regular ese mes, p.ej.
+    # su sueldo proporcional). Mismos códigos SUNAT Tabla 22 que ya usa este archivo
+    # para los conceptos equivalentes de planilla regular (Grati=0305, Bono 9%=0303,
+    # CTS=0401), más los nuevos para Vacaciones Truncas (0114) e Incentivo por Cese (0906).
+    for liq in liquidaciones_periodo:
+        t_liq = db.query(Trabajador).filter_by(id=liq.trabajador_id).first()
+        if not t_liq:
+            continue
+        tipo_doc_liq = getattr(t_liq, 'tipo_documento', '01') or '01'
+        dni_liq = "".join(str(t_liq.num_doc).split())
+        if len(dni_liq) > 8 and tipo_doc_liq == '01':
+            tipo_doc_liq = '04'
+
+        conceptos_liq = [
+            ("0114", liq.monto_vacaciones_truncas),
+            ("0305", liq.monto_grati_trunca),
+            # Gratificación ordinaria del semestre anterior pendiente: 0301 (julio, ENE-JUN) o 0302
+            # (diciembre, JUL-DIC — cese en enero). El bono extraordinario va en UNA sola línea 0303 (trunca + pendiente).
+            (("0302" if str(getattr(liq, "periodo_grati_anterior_ref", "") or "").startswith("JUL-DIC") else "0301"),
+             getattr(liq, "monto_grati_anterior", 0) or 0),
+            ("0303", (liq.monto_bono_9 or 0) + (getattr(liq, "monto_bono_anterior", 0) or 0)),
+            ("0401", liq.monto_cts_trunca),
+            ("0906", liq.monto_bono_cese),
+        ]
+        if liq.incluye_sueldo_mes_cese:
+            conceptos_liq.append(("0121", liq.monto_sueldo_proporcional))
+
+        for cod_liq, monto_liq in conceptos_liq:
+            monto_liq = float(monto_liq or 0.0)
+            if monto_liq > 0:
+                lineas.append(f"{tipo_doc_liq}|{dni_liq}|{cod_liq}|{monto_liq:.2f}|{monto_liq:.2f}|")
+
+        # Renta de 5ta sobre la liquidación (0605) — obligatoria, igual que en planilla regular
+        lineas.append(f"{tipo_doc_liq}|{dni_liq}|0605|0.00|{float(liq.monto_retencion_5ta or 0.0):.2f}|")
+
+        # Tríada de AFP de la liquidación (0608/0606/0601) — obligatoria en cero si no aplica
+        sistema_pension_liq = str(liq.sistema_pension_snapshot or '').upper()
+        if "AFP" in sistema_pension_liq:
+            for cod_afp, monto_afp in [
+                ("0608", liq.monto_aporte_afp), ("0606", liq.monto_prima_afp), ("0601", liq.monto_comision_afp),
+            ]:
+                lineas.append(f"{tipo_doc_liq}|{dni_liq}|{cod_afp}|0.00|{float(monto_afp or 0.0):.2f}|")
+
     # ── CTS: en Mayo (05) y Noviembre (11) agregar líneas de depósito ────────
     if _mes_plame in (5, 11):
         try:
@@ -226,7 +304,32 @@ def generar_txt_e18(db: Session, empresa_id: int, periodo_key: str) -> str:
 
     return "\r\n".join(lineas)
 
-def generar_zip_plame(empresa_id: int, mes: int, anio: int) -> io.BytesIO:
+def resumen_aportes_empleador_plame(empresa_id: int, periodo_key: str) -> dict:
+    """
+    Qué pasaría con los aportes del empleador (Vida Ley / SCTR) si se exportan al .REM:
+        {"exportables": n líneas con código, "sin_codigo": [(dni, etiqueta, entidad), ...]}
+    Sirve para que la pantalla de reportes avise ANTES de generar el ZIP.
+    """
+    from infrastructure.database.connection import SessionLocal
+    db = SessionLocal()
+    try:
+        planilla = db.query(PlanillaMensual).filter_by(empresa_id=empresa_id, periodo_key=periodo_key).first()
+        auditoria = json.loads(planilla.auditoria_json or '{}') if planilla else {}
+    finally:
+        db.close()
+    exportables, sin_codigo = 0, []
+    for dni, data in auditoria.items():
+        for _seg, ap in (data.get('aportes_empleador', {}) or {}).items():
+            if float((ap or {}).get('monto', 0) or 0) <= 0:
+                continue
+            if (ap or {}).get('codigo'):
+                exportables += 1
+            else:
+                sin_codigo.append((dni, ap.get('etiqueta', _seg), ap.get('entidad', '')))
+    return {"exportables": exportables, "sin_codigo": sin_codigo}
+
+
+def generar_zip_plame(empresa_id: int, mes: int, anio: int, incluir_aportes_empleador: bool = False) -> io.BytesIO:
     """Orquestador principal de PLAME"""
     from infrastructure.database.connection import SessionLocal
     db = SessionLocal()
@@ -238,7 +341,7 @@ def generar_zip_plame(empresa_id: int, mes: int, anio: int) -> io.BytesIO:
         
         txt_jor = generar_txt_e14(db, empresa_id, mes, anio)
         txt_sub, txt_not = generar_txt_e15_e16(db, empresa_id, periodo_key)
-        txt_rem = generar_txt_e18(db, empresa_id, periodo_key)
+        txt_rem = generar_txt_e18(db, empresa_id, periodo_key, incluir_aportes_empleador=incluir_aportes_empleador)
         
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

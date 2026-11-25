@@ -1,34 +1,118 @@
-import hashlib
+import os
+from datetime import datetime
+
 import streamlit as st
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Usuario
+from infrastructure.services.seguridad import (
+    hash_password, verificar_password, verificar_contra_señuelo, necesita_rehash,
+    validar_politica, esta_bloqueado, registrar_intento_fallido,
+    CLAVES_POR_DEFECTO, MINUTOS_BLOQUEO,
+)
 
 
-def _hash(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
-
-
-def _seed_usuarios(db):
-    """Crea los usuarios base solo si no existen por nombre de usuario."""
-    usuarios_base = [
-        ("admin", "admin123", "admin", "Administrador del Sistema", True),
-        ("analista", "analista123", "analista", "Analista de Planillas", False),
-        ("supervisor", "supervisor123", "supervisor", "Supervisor de Planillas", True),
-    ]
-    
-    for u_name, u_pass, u_rol, u_full, u_total in usuarios_base:
-        existe = db.query(Usuario).filter_by(username=u_name).first()
-        if not existe:
-            nuevo = Usuario(
-                username=u_name, 
-                password_hash=_hash(u_pass),
-                rol=u_rol, 
-                nombre_completo=u_full, 
-                activo=True, 
-                acceso_total=u_total
-            )
-            db.add(nuevo)
+def _crear_admin_inicial(db) -> bool:
+    """
+    Solo si la tabla de usuarios está VACÍA: crea el usuario 'admin' con la clave de
+    la variable de entorno ADMIN_INITIAL_PASSWORD (Secret Manager en Cloud Run) y lo
+    obliga a cambiarla en el primer ingreso. Ya no existen claves fijas en el código.
+    """
+    if db.query(Usuario).count() > 0:
+        return False
+    clave_inicial = (os.getenv("ADMIN_INITIAL_PASSWORD") or "").strip()
+    if not clave_inicial:
+        return False
+    db.add(Usuario(
+        username="admin", password_hash=hash_password(clave_inicial), rol="admin",
+        nombre_completo="Administrador del Sistema", activo=True, acceso_total=True,
+        debe_cambiar_password=True,
+    ))
     db.commit()
+    return True
+
+
+def _autenticar(db, username: str, password: str) -> tuple:
+    """Devuelve (usuario | None, mensaje_error | None)."""
+    usuario = db.query(Usuario).filter_by(username=username, activo=True).first()
+    if not usuario:
+        verificar_contra_señuelo(password)
+        return None, "Usuario o contraseña incorrectos."
+
+    if esta_bloqueado(usuario.bloqueado_hasta):
+        return None, (f"Cuenta bloqueada temporalmente por intentos fallidos. "
+                      f"Intente nuevamente en unos minutos (bloqueo de {MINUTOS_BLOQUEO} min).")
+
+    if not verificar_password(password, usuario.password_hash):
+        intentos, bloqueo = registrar_intento_fallido(usuario.intentos_fallidos)
+        usuario.intentos_fallidos = intentos
+        usuario.bloqueado_hasta = bloqueo
+        db.commit()
+        if bloqueo:
+            return None, (f"Demasiados intentos fallidos: la cuenta quedó bloqueada "
+                          f"{MINUTOS_BLOQUEO} minutos.")
+        return None, "Usuario o contraseña incorrectos."
+
+    # Login correcto: limpiar contadores, migrar hash antiguo y forzar cambio si
+    # todavía usa una de las claves que el sistema sembraba por defecto.
+    usuario.intentos_fallidos = 0
+    usuario.bloqueado_hasta = None
+    usuario.ultimo_login = datetime.now()
+    if password.lower() in CLAVES_POR_DEFECTO:
+        usuario.debe_cambiar_password = True
+    if necesita_rehash(usuario.password_hash):
+        usuario.password_hash = hash_password(password)
+    db.commit()
+    return usuario, None
+
+
+def render_cambio_password(obligatorio: bool = False, key: str = "cambio_pw") -> None:
+    """Formulario para que el usuario conectado cambie su propia contraseña."""
+    username = st.session_state.get('usuario_logueado')
+    if not username:
+        return
+    if obligatorio:
+        st.title("🔑 Cambio de contraseña obligatorio")
+        st.warning("Por seguridad debe definir una contraseña nueva antes de continuar.")
+
+    with st.form(f"form_{key}", clear_on_submit=True):
+        actual = st.text_input("Contraseña actual", type="password")
+        nueva = st.text_input("Contraseña nueva", type="password",
+                              help="Mínimo 10 caracteres, con letras y números.")
+        confirmar = st.text_input("Confirmar contraseña nueva", type="password")
+        enviado = st.form_submit_button("Guardar contraseña", type="primary",
+                                        use_container_width=True)
+    if not enviado:
+        return
+
+    if nueva != confirmar:
+        st.error("La confirmación no coincide con la contraseña nueva.")
+        return
+    error_politica = validar_politica(nueva, username)
+    if error_politica:
+        st.error(error_politica)
+        return
+    if nueva == actual:
+        st.error("La contraseña nueva debe ser distinta de la actual.")
+        return
+
+    db = SessionLocal()
+    try:
+        usuario = db.query(Usuario).filter_by(username=username, activo=True).first()
+        if not usuario or not verificar_password(actual, usuario.password_hash):
+            st.error("La contraseña actual no es correcta.")
+            return
+        usuario.password_hash = hash_password(nueva)
+        usuario.debe_cambiar_password = False
+        usuario.intentos_fallidos = 0
+        usuario.bloqueado_hasta = None
+        db.commit()
+    finally:
+        db.close()
+
+    st.session_state['debe_cambiar_password'] = False
+    st.success("✅ Contraseña actualizada.")
+    if obligatorio:
+        st.rerun()
 
 
 def render():
@@ -180,28 +264,30 @@ def render():
             st.error("Complete usuario y contraseña.")
             return False
 
+        db = SessionLocal()
         try:
-            db = SessionLocal()
-            _seed_usuarios(db)
-            usuario = db.query(Usuario).filter_by(
-                username=username.strip().lower(),
-                password_hash=_hash(password),
-                activo=True,
-            ).first()
-            db.close()
-        except Exception as e:
-            st.error(f"Error de conexión: {e}")
+            _crear_admin_inicial(db)
+            usuario, error_login = _autenticar(db, username.strip().lower(), password)
+            if usuario:
+                datos_sesion = {
+                    'usuario_logueado':      usuario.username,
+                    'usuario_rol':           usuario.rol,
+                    'usuario_nombre':        usuario.nombre_completo or usuario.username,
+                    'debe_cambiar_password': bool(usuario.debe_cambiar_password),
+                }
+        except Exception:
+            db.rollback()
+            st.error("No se pudo validar el acceso. Intente nuevamente en unos minutos.")
             return False
+        finally:
+            db.close()
 
         if usuario:
-            st.session_state['usuario_logueado'] = usuario.username
-            st.session_state['usuario_rol']       = usuario.rol
-            st.session_state['usuario_nombre']    = usuario.nombre_completo or usuario.username
+            st.session_state.update(datos_sesion)
             st.rerun()
             return True
-        else:
-            st.error("Usuario o contraseña incorrectos.")
-            return False
+        st.error(error_login)
+        return False
 
     # ── Pie de página ──────────────────────────────────────────────────────────
     st.markdown(

@@ -1,11 +1,16 @@
 import streamlit as st
-import hashlib
 import json
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Usuario, Empresa, UsuarioEmpresa
+from infrastructure.services.seguridad import hash_password, validar_politica
 
-def _hash(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+# Debe coincidir con las opciones del menú lateral (presentation/components/sidebar.py)
+MODULOS_SISTEMA = [
+    "Dashboard Principal", "Parámetros Legales", "Configuración Contable",
+    "Maestro de Personal", "Maestro de Conceptos", "Ingreso de Asistencias",
+    "Kardex de Vacaciones", "Cálculo de Planilla", "Préstamos y Descuentos",
+    "Emisión de Boletas", "Reportería", "Liquidación por Cese", "Gratificaciones y CTS",
+]
 
 def render():
     """Administración de Identidades y Accesos (IAM) - Enterprise Grade."""
@@ -27,7 +32,9 @@ def render():
             with st.container(border=True):
                 col_id1, col_id2 = st.columns(2)
                 u_username = col_id1.text_input("ID de Usuario (Logon)*", help="Nombre único de acceso al sistema.").lower().strip()
-                u_pass     = col_id2.text_input("Clave Inicial*", type="password", help="Se recomienda una clave alfanumérica compleja.")
+                u_pass     = col_id2.text_input("Clave Inicial*", type="password",
+                                                help="Mínimo 10 caracteres con letras y números. "
+                                                     "El usuario deberá cambiarla en su primer ingreso.")
                 
                 u_nombre   = st.text_input("Nombre y Apellidos del Responsable")
                 u_email    = st.text_input("Correo Corporativo")
@@ -65,6 +72,8 @@ def render():
                         st.error("Error: Los campos marcados con (*) son mandatorios.")
                     elif not u_total and not u_seleccionadas:
                         st.error("Error: Debe asignar al menos una empresa o habilitar el Acceso Global.")
+                    elif validar_politica(u_pass, u_username):
+                        st.error(f"Error: {validar_politica(u_pass, u_username)}")
                     else:
                         # Verificar duplicados
                         existe = db.query(Usuario).filter_by(username=u_username).first()
@@ -73,12 +82,13 @@ def render():
                         else:
                             nuevo = Usuario(
                                 username=u_username, 
-                                password_hash=_hash(u_pass),
+                                password_hash=hash_password(u_pass),
                                 rol=u_rol[0],
                                 nombre_completo=u_nombre,
                                 email=u_email,
                                 acceso_total=u_total,
-                                activo=True
+                                activo=True,
+                                debe_cambiar_password=True,
                             )
                             db.add(nuevo)
                             db.flush()
@@ -119,15 +129,12 @@ def render():
                         e_activo = st.toggle("Cuenta Activa", value=u.activo, key=f"e_act_{u.id}")
 
                         # Restricción de Módulos
-                        modulos_sistema = [
-                            "Dashboard Principal", "Parámetros Legales", "Maestro de Personal", 
-                            "Maestro de Conceptos", "Ingreso de Asistencias", "Kardex de Vacaciones", 
-                            "Cálculo de Planilla", "Préstamos y Descuentos", "Emisión de Boletas", "Reportería"
-                        ]
+                        modulos_sistema = MODULOS_SISTEMA
                         try:
                             restringidos_actual = json.loads(u.modulos_restringidos or '[]')
-                        except:
+                        except (TypeError, ValueError):
                             restringidos_actual = []
+                        restringidos_actual = [m for m in restringidos_actual if m in modulos_sistema]
                         
                         e_bloqueados = st.multiselect(
                             "🚫 Restringir acceso a módulos:",
@@ -149,8 +156,23 @@ def render():
                             key=f"e_emp_{u.id}"
                         )
                         
+                        e_nueva_clave = st.text_input(
+                            "Restablecer contraseña (opcional)", type="password", key=f"e_pw_{u.id}",
+                            help="Déjelo vacío para no cambiarla. Si la define, el usuario deberá "
+                                 "cambiarla en su próximo ingreso y la cuenta se desbloquea.",
+                        )
+
                         if st.button("💾 Guardar Cambios", key=f"btn_upd_{u.id}", use_container_width=True):
                             import json as _json
+                            if e_nueva_clave:
+                                _err_pw = validar_politica(e_nueva_clave, u.username)
+                                if _err_pw:
+                                    st.error(_err_pw)
+                                    st.stop()
+                                u.password_hash = hash_password(e_nueva_clave)
+                                u.debe_cambiar_password = True
+                                u.intentos_fallidos = 0
+                                u.bloqueado_hasta = None
                             u.rol = e_rol
                             u.acceso_total = e_total
                             u.activo = e_activo

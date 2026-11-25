@@ -5,8 +5,16 @@ from sqlalchemy import or_
 from infrastructure.database.connection import SessionLocal
 from infrastructure.database.models import Trabajador, Concepto, VariablesMes, PlanillaMensual
 from core.domain.catalogos_sunat import CATALOGO_T21_SUSPENSIONES
+from core.domain import seguros_empleador as seg_emp
 
-MESES = ["01 - Enero", "02 - Febrero", "03 - Marzo", "04 - Abril", "05 - Mayo", "06 - Junio",
+# Columnas de la grilla "Seguros del Empleador" (una por seguro)
+_COL_SEGURO = {
+    seg_emp.VIDA_LEY: "Vida Ley (S/)",
+    seg_emp.SCTR_SALUD: "SCTR Salud (S/)",
+    seg_emp.SCTR_PENSION: "SCTR Pensión (S/)",
+}
+
+MESES =["01 - Enero", "02 - Febrero", "03 - Marzo", "04 - Abril", "05 - Mayo", "06 - Junio",
          "07 - Julio", "08 - Agosto", "09 - Septiembre", "10 - Octubre", "11 - Noviembre", "12 - Diciembre"]
 
 CONCEPTOS_FIJOS = {"SUELDO BASICO", "ASIGNACION FAMILIAR"}
@@ -252,6 +260,35 @@ def render():
 
                 doc_to_id = {t.num_doc: t.id for t in planilleros}
 
+                # ── Sección D: SEGUROS DEL EMPLEADOR (Vida Ley / SCTR) ────────
+                # Solo trabajadores marcados en el Maestro de Personal. El monto es la
+                # prima completa del mes, digitada a mano (sin prorrateo).
+                doc_to_trab = {t.num_doc: t for t in planilleros}
+                seg_marcas = {t.num_doc: seg_emp.seguros_marcados(seg_emp.marcas_desde_trabajador(t))
+                              for t in planilleros}
+                seg_trabs = [t for t in planilleros if seg_marcas[t.num_doc]]
+                dict_s = {
+                    "Num. Doc.": [t.num_doc for t in seg_trabs],
+                    "Nombres y Apellidos": [t.nombres for t in seg_trabs],
+                    "Aplica": [
+                        " · ".join(
+                            f"{seg_emp.ETIQUETAS[s]} ({seg_emp.ENTIDADES[s][ent]})" if s != seg_emp.VIDA_LEY
+                            else seg_emp.ETIQUETAS[s]
+                            for s, ent in seg_marcas[t.num_doc].items()
+                        ) for t in seg_trabs
+                    ],
+                }
+                for s, col in _COL_SEGURO.items():
+                    dict_s[col] = [
+                        (seg_emp.monto_digitado(conceptos_vals[t.id], s) if s in seg_marcas[t.num_doc] else None)
+                        for t in seg_trabs
+                    ]
+                df_seguros = pd.DataFrame(dict_s)
+                col_cfg_seg = {
+                    col: st.column_config.NumberColumn(label=col, min_value=0.0, step=0.01, format="S/ %.2f")
+                    for col in _COL_SEGURO.values()
+                }
+
                 col_cfg_t = {"Trabajador_ID": None,
                              "Min. Tardanza":  st.column_config.NumberColumn(min_value=0, step=1),
                              "Hrs Extras 25%": st.column_config.NumberColumn(min_value=0.0, step=0.5, format="%.1f"),
@@ -267,7 +304,9 @@ def render():
                                     label=c.nombre, min_value=0.0, step=0.01, format="S/ %.2f")
                                 for c in conceptos_desc}
 
-                tab_t, tab_i, tab_d = st.tabs(["Tiempos y Asistencias", "Ingresos Variables", "Descuentos Directos"])
+                tab_t, tab_i, tab_d, tab_s = st.tabs(
+                    ["Tiempos y Asistencias", "Ingresos Variables", "Descuentos Directos", "Seguros del Empleador"]
+                )
 
                 with tab_t:
                     st.caption(
@@ -309,10 +348,36 @@ def render():
                             column_config=col_cfg_desc, key="ed_descuentos",
                         )
 
+                with tab_s:
+                    st.caption(
+                        "Prima **completa** del mes de **Vida Ley** y **SCTR** a cargo de la empresa "
+                        "(sin prorrateo por días trabajados, ingreso, cese ni suspensión). Aparecen "
+                        "solo los trabajadores marcados en el **Maestro de Personal**, y únicamente se "
+                        "guarda el monto de los seguros en que está marcado cada uno. No afectan el neto."
+                    )
+                    if df_seguros.empty:
+                        st.info("Ningún trabajador tiene Vida Ley ni SCTR marcado. Márquelos en el Maestro de Personal.")
+                        df_s_edit = df_seguros
+                    else:
+                        df_s_edit = st.data_editor(
+                            df_seguros,
+                            disabled=True if es_cerrada else ["Num. Doc.", "Nombres y Apellidos", "Aplica"],
+                            num_rows="fixed", use_container_width=True, hide_index=True,
+                            column_config=col_cfg_seg, key="ed_seguros_emp",
+                        )
+
                 st.markdown("---")
 
                 if not es_cerrada and not es_auditor and st.button(f"Guardar Variables de {periodo_key}", type="primary", use_container_width=True):
                     try:
+                        # Montos de seguros del empleador por DNI (solo trabajadores de la grilla)
+                        seg_por_doc = {}
+                        if not df_s_edit.empty:
+                            for _, fs in df_s_edit.iterrows():
+                                seg_por_doc[fs["Num. Doc."]] = {
+                                    s: float(fs.get(col) or 0.0) for s, col in _COL_SEGURO.items()
+                                }
+
                         for _, fila_t in df_t_edit.iterrows():
                             doc     = fila_t["Num. Doc."]
                             trab_id = doc_to_id.get(doc)
@@ -340,6 +405,13 @@ def render():
                                         if val > 0:
                                             conceptos_data[c.nombre] = val
 
+                            # Seguros del empleador: solo los marcados en el Maestro y con monto > 0
+                            seg_vals = seg_por_doc.get(doc)  # None = trabajador fuera de la grilla
+                            if seg_vals is not None:
+                                for s_key, s_monto in seg_vals.items():
+                                    if s_key in seg_marcas.get(doc, {}) and s_monto > 0:
+                                        conceptos_data[seg_emp.CLAVE_JSON[s_key]] = round(s_monto, 2)
+
                             v_exist = variables_exist.get(trab_id)
                             if v_exist:
                                 v_exist.dias_faltados    = total_falt
@@ -357,7 +429,11 @@ def render():
                                 # Limpiar solo conceptos operativos antiguos (no ajustes)
                                 for c in conceptos_ing + conceptos_desc:
                                     cj_actual.pop(c.nombre, None)
-                                
+                                # Seguros del empleador: se reescriben solo para quienes están en la grilla
+                                if seg_vals is not None:
+                                    for _k_seg in seg_emp.CLAVE_JSON.values():
+                                        cj_actual.pop(_k_seg, None)
+
                                 # Integrar nuevos valores de esta pestaña
                                 cj_actual.update(conceptos_data)
                                 v_exist.conceptos_json = json.dumps(cj_actual)

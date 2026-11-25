@@ -1,0 +1,287 @@
+"""
+Generador del Asiento Contable de Liquidación por Cese — Excel de importación a
+SISCONT (mismo formato que el asiento de planilla). Voucher INDEPENDIENTE, con la
+fecha de cese del trabajador (no se agrupa con el asiento mensual de planilla,
+porque una liquidación puede ocurrir cualquier día del mes).
+
+Solo se puede generar si la LiquidacionCese está APROBADA o PAGADA — nunca desde
+un BORRADOR, que todavía puede cambiar.
+
+Reparto de deducciones entre las cuentas por pagar específicas (ver notas junto a
+cada línea): la retención de 5ta se resta primero de Vacaciones Por Pagar (hasta
+agotarlo) y el remanente de Gratificación Por Pagar, porque ahora ambas están
+afectas (código SUNAT 0114 y 0406/0312). El préstamo pendiente se resta de CTS Por
+Pagar. Si el usuario prefiere otra convención, es un ajuste local a este archivo.
+"""
+import io
+
+import pandas as pd
+
+from infrastructure.database.models import LiquidacionCese, Trabajador, Concepto, ConfiguracionContable
+from core.use_cases import numeracion_vouchers as _nv
+from core.use_cases.generador_asiento_contable import (
+    AsientoContableError, _fila, COLUMNAS_SISCONT, _RUC_SUNAT, _NOMBRE_SUNAT,
+    _AFP_CUENTA_ATTR, _AFP_RUC_RSOCIAL, aviso_cuentas_repetidas,
+)
+
+VERSION_GENERADOR_LIQ = "2026-11-25-r1"
+
+
+def generar_asiento_liquidacion(db, empresa_id, liquidacion_id):
+    """Genera el Excel del Asiento de Liquidación por Cese. Retorna un io.BytesIO."""
+    liq = db.query(LiquidacionCese).filter_by(id=liquidacion_id, empresa_id=empresa_id).first()
+    if not liq:
+        raise AsientoContableError("No se encontró la liquidación indicada.")
+    if liq.estado == "BORRADOR":
+        raise AsientoContableError(
+            "Esta liquidación está en BORRADOR — apruébela antes de generar el asiento "
+            "contable (un borrador todavía puede cambiar)."
+        )
+
+    trabajador = db.query(Trabajador).filter_by(id=liq.trabajador_id).first()
+    if not trabajador:
+        raise AsientoContableError("No se encontró al trabajador de esta liquidación.")
+
+    cfg = db.query(ConfiguracionContable).filter_by(empresa_id=empresa_id).first()
+    faltantes = set()
+
+    def _cuenta(attr, etiqueta):
+        val = ((getattr(cfg, attr, None) if cfg else None) or "").strip()
+        if not val:
+            faltantes.add(etiqueta)
+        return val
+
+    dni = trabajador.num_doc
+    nombre = trabajador.nombres
+    fecha_asiento = liq.fecha_cese_snapshot.strftime('%d/%m/%Y')
+    num_doc_asiento = f"LIQ-{liq.id:06d}"
+    glosa_asiento = f"LIQUIDACION DE BENEFICIOS SOCIALES - {nombre}"
+
+    tiene_vac = liq.monto_vacaciones_truncas > 0
+    # Gratificación = trunca + bono 9 % del semestre de cese, más (si el usuario la incluyó al cesar
+    # en julio) la gratificación enero–junio pendiente con su bono. Todo es el mismo pasivo.
+    grati_bruta_total = round(
+        liq.monto_grati_trunca + liq.monto_bono_9
+        + (getattr(liq, 'monto_grati_anterior', 0) or 0) + (getattr(liq, 'monto_bono_anterior', 0) or 0), 2)
+    tiene_grati = grati_bruta_total > 0
+    tiene_cts = liq.monto_cts_trunca > 0
+    tiene_sueldo = liq.incluye_sueldo_mes_cese and liq.monto_sueldo_proporcional > 0
+    tiene_5ta = liq.monto_retencion_5ta > 0
+    tiene_prestamo = liq.monto_prestamos_pendientes > 0
+    tiene_pension = getattr(liq, 'monto_pension_afp_onp', 0) > 0
+    tiene_essalud_vac = getattr(liq, 'monto_essalud_vacaciones', 0) > 0
+    tiene_bono_cese = getattr(liq, 'monto_bono_cese', 0) > 0
+
+    cuenta_vac_gasto = cuenta_vac_pasivo = ""
+    cuenta_grati_gasto = cuenta_grati_pasivo = ""
+    cuenta_cts_gasto = cuenta_cts_pasivo = ""
+    cuenta_sueldo = cuenta_remun_pagar = ""
+    cuenta_pension = ""
+    ruc_pension = r_social_pension = ""
+    cuenta_bono_cese_gasto = cuenta_bono_cese_pasivo = ""
+
+    if tiene_vac:
+        cuenta_vac_gasto = _cuenta('cuenta_descanso_vacacional', "Vacaciones — Gasto (débito) · Descanso Vacacional (Configuración Contable)")
+        cuenta_vac_pasivo = _cuenta('cuenta_vacaciones_por_pagar', "Vacaciones — Por Pagar (crédito) (Configuración Contable)")
+        _rep_v = aviso_cuentas_repetidas("Vacaciones", cuenta_vac_gasto, cuenta_vac_pasivo)
+        if _rep_v:
+            faltantes.add(_rep_v)
+    if tiene_grati:
+        cuenta_grati_gasto = _cuenta('cuenta_gratificacion_gasto', "Gratificación — Gasto (Configuración Contable)")
+        cuenta_grati_pasivo = _cuenta('cuenta_gratificacion_por_pagar', "Gratificación Por Pagar (Configuración Contable)")
+    if tiene_cts:
+        cuenta_cts_gasto = _cuenta('cuenta_cts_gasto', "CTS — Gasto (Configuración Contable)")
+        cuenta_cts_pasivo = _cuenta('cuenta_cts_por_pagar', "CTS Por Pagar (Configuración Contable)")
+    if tiene_sueldo:
+        conceptos_db = db.query(Concepto).filter_by(empresa_id=empresa_id, nombre="SUELDO BASICO").first()
+        cuenta_sueldo = (conceptos_db.cuenta_contable or "").strip() if conceptos_db else ""
+        if not cuenta_sueldo:
+            faltantes.add('Concepto "SUELDO BASICO" (Maestro de Conceptos)')
+        cuenta_remun_pagar = _cuenta('cuenta_remuneraciones_por_pagar', "Remuneraciones por Pagar (Configuración Contable)")
+    if tiene_5ta:
+        _cuenta('cuenta_retencion_5ta', "Retención 5ta Categoría (Configuración Contable)")
+    if tiene_prestamo:
+        _cuenta('cuenta_prestamos_personal', "Préstamos al Personal (Configuración Contable)")
+    if tiene_pension:
+        sistema_pension = (getattr(liq, 'sistema_pension_snapshot', '') or '').upper()
+        if sistema_pension == "ONP":
+            cuenta_pension = _cuenta('cuenta_onp', "ONP (Configuración Contable)")
+            ruc_pension, r_social_pension = _RUC_SUNAT, _NOMBRE_SUNAT
+        elif sistema_pension in _AFP_CUENTA_ATTR:
+            cuenta_pension = _cuenta(_AFP_CUENTA_ATTR[sistema_pension], f"{sistema_pension} (Configuración Contable)")
+            ruc_pension, r_social_pension = _AFP_RUC_RSOCIAL.get(sistema_pension, ("", ""))
+        else:
+            faltantes.add("Sistema de pensión del trabajador no reconocido (revisar Maestro de Personal)")
+    if tiene_essalud_vac:
+        _cuenta('cuenta_essalud_gasto', "EsSalud - Gasto (Configuración Contable)")
+        _cuenta('cuenta_essalud_pasivo', "EsSalud - Por Pagar (Configuración Contable)")
+    if tiene_bono_cese:
+        cuenta_bono_cese_gasto = _cuenta('cuenta_bono_cese_gasto', "Bono por Cese — Gasto (Configuración Contable)")
+        cuenta_bono_cese_pasivo = _cuenta('cuenta_bono_cese_por_pagar', "Bono por Cese Por Pagar (Configuración Contable)")
+
+    if faltantes:
+        raise AsientoContableError(
+            "Faltan cuentas contables por configurar antes de generar el asiento.",
+            cuentas_faltantes=sorted(faltantes),
+        )
+
+    filas = []
+
+    # ── DEBE: gasto de cada componente, por su monto BRUTO completo ──────────
+    if tiene_vac:
+        # Saldo de "Vacaciones por pagar" ya provisionado mes a mes (libro de vacaciones): se
+        # cancela contra el pasivo y solo la diferencia es gasto (o recuperación si sobró). Sin
+        # provisiones registradas el comportamiento es el de siempre (todo a gasto).
+        from core.use_cases import provision_vacaciones as _pv   # import diferido (evita ciclo)
+        saldo_libro_vac = _pv.saldo_vigente_trabajador(db, empresa_id, liq.trabajador_id)
+        prov_vac = saldo_libro_vac
+        # + días de ejercicios anteriores al corte: su provisión ya está en la contabilidad de la
+        # empresa (fuera del libro del sistema), así que también se cancelan contra el pasivo.
+        valor_previo = _pv.valor_saldo_previo_al_corte(
+            db, liq.trabajador_id, liq.fecha_cese_snapshot,
+            liq.dias_vacaciones_pendientes, liq.monto_vacaciones_truncas)
+        # Tope: lo realmente pagado (el libro del sistema puede exceder, y eso ya se trataba como recuperación)
+        prov_vac = round(max(prov_vac, min(prov_vac + valor_previo, liq.monto_vacaciones_truncas)), 2)
+        ajuste_vac = round(liq.monto_vacaciones_truncas - prov_vac, 2)
+        # La parte del libro cancela la partida de vacaciones del ejercicio (mismo Num.Doc que sus
+        # provisiones); la de años anteriores al corte vive en la contabilidad de la empresa, con sus
+        # propios documentos, así que va con el documento de esta liquidación.
+        parte_libro = round(min(saldo_libro_vac, prov_vac), 2)
+        parte_previa = round(prov_vac - parte_libro, 2)
+        if parte_libro > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, parte_libro, 0.0,
+                                _nv.doc_vacaciones(liq.fecha_cese_snapshot.year), glosa_asiento,
+                                cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if parte_previa > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, parte_previa, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if ajuste_vac > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_gasto, ajuste_vac, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        elif ajuste_vac < 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_gasto, 0.0, -ajuste_vac,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_grati:
+        monto_grati_bruto = grati_bruta_total
+        # Lo ya provisionado mes a mes en el semestre (libro de provisiones) se cancela
+        # contra el pasivo; solo la diferencia es gasto (o recuperación si sobró). Sin
+        # provisiones registradas (p. ej. semestres anteriores al corte de julio 2026) el
+        # comportamiento es el de siempre: todo el monto va a gasto.
+        from core.use_cases import provision_gratificacion as _pg   # import diferido (evita ciclo)
+        _sem, _anio = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_ref', None), liq.fecha_cese_snapshot)
+        _prov_g, _prov_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem, _anio)
+        prov_grati = round(_prov_g + _prov_b, 2)
+        # Cada semestre provisionado se cancela contra su propia partida (Num.Doc del semestre)
+        partidas_grati = [(_nv.doc_gratificacion(_sem, _anio), prov_grati)]
+        # Lo provisionado del semestre ENE-JUN (si hay) también se cancela contra la gratificación pendiente
+        if (getattr(liq, 'monto_grati_anterior', 0) or 0) > 0:
+            _sem_a, _anio_a = _pg.semestre_desde_ref(getattr(liq, 'periodo_grati_anterior_ref', None), liq.fecha_cese_snapshot)
+            if (_sem_a, _anio_a) != (_sem, _anio):
+                _pa_g, _pa_b = _pg.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _sem_a, _anio_a)
+                partidas_grati.append((_nv.doc_gratificacion(_sem_a, _anio_a), round(_pa_g + _pa_b, 2)))
+                prov_grati = round(prov_grati + _pa_g + _pa_b, 2)
+        ajuste_grati = round(monto_grati_bruto - prov_grati, 2)
+        for _doc_g, _monto_g in partidas_grati:
+            if _monto_g > 0:
+                filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, _monto_g, 0.0,
+                                    _doc_g, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if ajuste_grati > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, ajuste_grati, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        elif ajuste_grati < 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_gasto, 0.0, -ajuste_grati,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_cts:
+        # Lo ya provisionado mes a mes del periodo CTS (libro de CTS) se cancela contra el pasivo;
+        # solo la diferencia es gasto (o recuperación si sobró). Sin provisiones registradas
+        # (periodos anteriores al corte de julio 2026) todo va a gasto, como siempre.
+        from core.use_cases import provision_cts as _pc   # import diferido (evita ciclo)
+        _etq_cts = _pc.periodo_desde_ref(getattr(liq, 'periodo_cts_ref', None), liq.fecha_cese_snapshot)
+        prov_cts = _pc.provision_de_trabajador(db, empresa_id, liq.trabajador_id, _etq_cts)
+        ajuste_cts = round(liq.monto_cts_trunca - prov_cts, 2)
+        if prov_cts > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_pasivo, prov_cts, 0.0,
+                                _nv.doc_cts(_etq_cts), glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        if ajuste_cts > 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, ajuste_cts, 0.0,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+        elif ajuste_cts < 0:
+            filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_gasto, 0.0, -ajuste_cts,
+                                num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_sueldo:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_sueldo, liq.monto_sueldo_proporcional, 0.0,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_essalud_vac:
+        filas.append(_fila(11, 1, fecha_asiento, cfg.cuenta_essalud_gasto, liq.monto_essalud_vacaciones, 0.0,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_bono_cese:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_bono_cese_gasto, liq.monto_bono_cese, 0.0,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+
+    # ── HABER: pasivo de cada componente, NETO de las deducciones que le corresponden ──
+    # Retención de 5ta: ahora vacaciones truncas (código 0114) TAMBIÉN están afectas,
+    # junto con grati trunca + bono 9% (códigos 0406/0312) — se resta primero de
+    # Vacaciones Por Pagar (hasta agotarlo), el remanente de Gratificación Por Pagar.
+    ret5ta_de_vac = min(liq.monto_retencion_5ta, liq.monto_vacaciones_truncas) if (tiene_5ta and tiene_vac) else 0.0
+    ret5ta_de_grati = (liq.monto_retencion_5ta - ret5ta_de_vac) if tiene_5ta else 0.0
+
+    # AFP/ONP y EsSalud sobre vacaciones truncas también se restan de Vacaciones Por Pagar.
+    monto_vac_neto = (
+        liq.monto_vacaciones_truncas
+        - (liq.monto_pension_afp_onp if tiene_pension else 0.0)
+        - ret5ta_de_vac
+    ) if tiene_vac else 0.0
+    if tiene_vac and monto_vac_neto > 0:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_vac_pasivo, 0.0, monto_vac_neto,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+
+    monto_grati_neto = (grati_bruta_total - ret5ta_de_grati) if tiene_grati else 0.0
+    if tiene_grati and monto_grati_neto > 0:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_grati_pasivo, 0.0, monto_grati_neto,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+
+    if tiene_5ta:
+        filas.append(_fila(11, 1, fecha_asiento, cfg.cuenta_retencion_5ta, 0.0, liq.monto_retencion_5ta,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=_RUC_SUNAT, ruc=_RUC_SUNAT, r_social=_NOMBRE_SUNAT))
+
+    # El préstamo pendiente se resta de CTS Por Pagar (elección simple: ambos son
+    # beneficios de naturaleza "diferida/fondo", a diferencia de vacaciones que es
+    # efectivo puro por días no gozados). Ajustable aquí si se prefiere otra cuenta.
+    monto_cts_neto = liq.monto_cts_trunca - liq.monto_prestamos_pendientes if tiene_cts else 0.0
+    if tiene_cts and monto_cts_neto > 0:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_cts_pasivo, 0.0, monto_cts_neto,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_prestamo:
+        filas.append(_fila(11, 1, fecha_asiento, cfg.cuenta_prestamos_personal, 0.0, liq.monto_prestamos_pendientes,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+
+    if tiene_pension:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_pension, 0.0, liq.monto_pension_afp_onp,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=ruc_pension, ruc=ruc_pension, r_social=r_social_pension))
+    if tiene_essalud_vac:
+        filas.append(_fila(11, 1, fecha_asiento, cfg.cuenta_essalud_pasivo, 0.0, liq.monto_essalud_vacaciones,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=_RUC_SUNAT, ruc=_RUC_SUNAT, r_social=_NOMBRE_SUNAT))
+    if tiene_bono_cese:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_bono_cese_pasivo, 0.0, liq.monto_bono_cese,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+    if tiene_sueldo:
+        filas.append(_fila(11, 1, fecha_asiento, cuenta_remun_pagar, 0.0, liq.monto_sueldo_proporcional,
+                            num_doc_asiento, glosa_asiento, cod_prov_clie=dni, ruc=dni, r_social=nombre))
+
+    # ── Seguro interno: el asiento SIEMPRE debe cuadrar ──────────────────────
+    total_debe = sum(f["Monto Debe"] for f in filas)
+    total_haber = sum(f["Monto Haber"] for f in filas)
+    if round(total_debe - total_haber, 2) != 0:
+        raise AsientoContableError(
+            f"El asiento no cuadra (Debe: S/ {total_debe:,.2f} vs Haber: S/ {total_haber:,.2f}). "
+            f"No se generó el archivo — este es un error interno, no de configuración."
+        )
+
+    _nv.numerar_filas(db, empresa_id, liq.fecha_cese_snapshot.strftime('%m-%Y'),
+                      _nv.clave_liquidacion(liq.id), filas)
+    df_out = pd.DataFrame(filas, columns=COLUMNAS_SISCONT)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_out.to_excel(writer, index=False, sheet_name='Asiento')
+    buffer.seek(0)
+    return buffer

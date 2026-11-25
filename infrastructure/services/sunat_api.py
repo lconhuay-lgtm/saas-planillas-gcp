@@ -1,4 +1,6 @@
 # infrastructure/services/sunat_api.py
+import os
+
 import requests
 
 def consultar_dni_sunat(dni: str) -> dict:
@@ -12,14 +14,17 @@ def consultar_dni_sunat(dni: str) -> dict:
         return {"success": False, "nombres": "", "mensaje": "El documento debe tener 8 (DNI) u 11 (RUC) dígitos numéricos."}
 
     # --- INTENTO 1: API PRINCIPAL (APIsPERU) ---
+    # El token se lee de la variable de entorno APISPERU_TOKEN (Secret Manager en
+    # Cloud Run, .env en local). Sin token se pasa directo a la API de respaldo.
+    token_apisperu = (os.getenv("APISPERU_TOKEN") or "").strip()
     try:
-        # Token proporcionado por el usuario
-        TOKEN_APISPERU = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6Imxjb25odWF5QGxja2Fkdmlzb3JzLmNvbSJ9.JEjY8CA4Zba_3csTVz_DlilMjXMzNVY9fvr_ZDOJ5bU" 
+        if not token_apisperu:
+            raise RuntimeError("APISPERU_TOKEN no configurado")
         tipo = "ruc" if len(dni) == 11 else "dni"
-        url_principal = f"https://dniruc.apisperu.com/api/v1/{tipo}/{dni}?token={TOKEN_APISPERU}"
-        
+        url_principal = f"https://dniruc.apisperu.com/api/v1/{tipo}/{dni}?token={token_apisperu}"
+
         response = requests.get(url_principal, headers={'Accept': 'application/json'}, timeout=5)
-        
+
         if response.status_code == 200:
             datos = response.json()
             if datos.get("success") is not False: 
@@ -31,8 +36,8 @@ def consultar_dni_sunat(dni: str) -> dict:
                  
                  if nombres_completos:
                     return {"success": True, "nombres": nombres_completos, "mensaje": "Obtenido desde API Principal"}
-    except Exception as e:
-        pass # Silenciamos el error para intentar con el respaldo
+    except Exception:
+        pass  # Sin token o falla de la API principal: se intenta con el respaldo
 
     # --- INTENTO 2: API DE RESPALDO (apis.net.pe) ---
     try:

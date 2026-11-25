@@ -287,13 +287,24 @@ def generar_excel_afpnet(
     df_planilla: pd.DataFrame,
     auditoria_data: dict,
     df_trabajadores: pd.DataFrame,
+    liquidaciones_afp: dict | None = None,
 ) -> io.BytesIO:
     """
     Genera el archivo Excel con las 18 columnas estrictas del formato AFPnet.
     Solo incluye trabajadores con sistema AFP (excluye ONP y NO AFECTO).
+
+    liquidaciones_afp: dict opcional {dni: monto_base_afp_liquidacion} — remuneración
+    asegurable adicional (vacaciones truncas + sueldo proporcional si aplica) de
+    trabajadores con AFP que cesaron este periodo, según su Liquidación por Cese
+    ya aprobada. Se suma a la base del mes si el trabajador ya tenía fila (por
+    haberse procesado también su planilla regular parcial), o crea una fila nueva
+    si el trabajador no tuvo planilla regular este mes.
     """
     if df_trabajadores.empty:
         raise ValueError("No hay datos de trabajadores para generar el archivo AFPnet.")
+
+    liq_afp_map: dict = dict(liquidaciones_afp or {})
+    dnis_con_liq_afp = set(liq_afp_map.keys())
 
     # Mapa doc → trabajador
     trab_map: dict = {}
@@ -352,6 +363,17 @@ def generar_excel_afpnet(
         except Exception:
             inicio_lab = "N"
 
+        # Cese_RL (S si cesó en este mes) — antes quedaba fijo en "N" para todos,
+        # incluso para trabajadores que sí cesaron dentro del periodo declarado.
+        cese_lab = "N"
+        fc = trab.get("Fecha Cese", None)
+        try:
+            fc_date = pd.to_datetime(fc)
+            if pd.notna(fc_date):
+                cese_lab = "S" if (fc_date.year == anio and fc_date.month == mes) else "N"
+        except Exception:
+            cese_lab = "N"
+
         # Lógica de Excepción de Aportar (Columna K del CSV)
         # Solo si el total de días de suspensión iguala a los días del mes
         excepcion = ""
@@ -369,7 +391,9 @@ def generar_excel_afpnet(
             else:
                 excepcion = "L"
 
-        base_afp = float(aud.get("base_afp", 0.0))
+        base_afp = float(aud.get("base_afp", 0.0)) + float(liq_afp_map.pop(dni, 0.0))
+        if dni in dnis_con_liq_afp:
+            cese_lab = "S"
 
         rows.append({
             "Número de secuencia":    seq,
@@ -381,7 +405,7 @@ def generar_excel_afpnet(
             "Nombres":                nombres,
             "Relación Laboral ":      "S",
             "Inicio de RL":           inicio_lab,
-            "Cese de RL":             "N",
+            "Cese de RL":             cese_lab,
             "Excepcion de Aportar":   excepcion,
             "Remuneración asegurable": round(base_afp, 2),
             "Aporte voluntario del afiliado con fin previsional": 0.00,
@@ -389,6 +413,58 @@ def generar_excel_afpnet(
             "Aporte voluntario del empleador": 0.00,
             "Tipo de trabajo o Rubro": "N",
             "AFP":                    "" # Se deja en blanco según sugerencia del CSV
+        })
+        seq += 1
+
+    # Trabajadores con AFP que cesaron este periodo pero NO tuvieron planilla regular
+    # ese mes (por eso no aparecen arriba) — igual deben declararse por su Liquidación
+    # por Cese, con la remuneración asegurable de vacaciones truncas (y sueldo
+    # proporcional si se incluyó).
+    for dni, monto_extra in liq_afp_map.items():
+        if float(monto_extra or 0.0) <= 0:
+            continue
+        trab = trab_map.get(dni)
+        if trab is None:
+            continue
+
+        ap_pat = str(trab.get("Apellido Paterno", "") or "").upper().strip()
+        ap_mat = str(trab.get("Apellido Materno", "") or "").upper().strip()
+        nombres_full = str(trab.get("Nombres y Apellidos", trab.get("nombres", "")) or "").upper().strip()
+        prefix_apellidos = f"{ap_pat} {ap_mat}".strip()
+        nombres = nombres_full[len(prefix_apellidos):].strip() if (ap_pat and nombres_full.startswith(prefix_apellidos)) else nombres_full
+
+        cuspp = str(trab.get("CUSPP", "") or "").strip().ljust(12)[:12]
+        if not cuspp.strip():
+            raise ValueError(
+                f"El trabajador DNI {dni} ({nombres}) tiene AFP pero no tiene CUSPP registrado. "
+                f"Actualice el dato en el Maestro de Personal."
+            )
+
+        inicio_lab_liq = "N"
+        try:
+            fi_liq_date = pd.to_datetime(trab.get("Fecha Ingreso", None))
+            inicio_lab_liq = "S" if (fi_liq_date.year == anio and fi_liq_date.month == mes) else "N"
+        except Exception:
+            inicio_lab_liq = "N"
+
+        rows.append({
+            "Número de secuencia":    seq,
+            "CUSPP":                  cuspp,
+            "Tipo  de documento de identidad": _tipo_doc_afpnet(str(trab.get("Tipo Doc.", "DNI") or "DNI")),
+            "Número de documento de indentidad": dni,
+            "Apellido paterno":       ap_pat,
+            "Apellido materno":       ap_mat,
+            "Nombres":                nombres,
+            "Relación Laboral ":      "S",
+            "Inicio de RL":           inicio_lab_liq,
+            "Cese de RL":             "S",
+            "Excepcion de Aportar":   "",
+            "Remuneración asegurable": round(float(monto_extra), 2),
+            "Aporte voluntario del afiliado con fin previsional": 0.00,
+            "Aporte voluntario del afiliado sin fin previsional": 0.00,
+            "Aporte voluntario del empleador": 0.00,
+            "Tipo de trabajo o Rubro": "N",
+            "AFP":                    ""
         })
         seq += 1
 
